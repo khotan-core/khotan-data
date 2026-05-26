@@ -1,0 +1,115 @@
+{
+  "name": "khotan-data",
+  "version": "0.0.1",
+  "description": "Primitives and functions for data management — ETLs, pipelines, transformations, and more.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./pipeline": {
+      "import": {
+        "types": "./dist/pipeline.d.ts",
+        "default": "./dist/pipeline.js"
+      },
+      "require": {
+        "types": "./dist/pipeline.d.cts",
+        "default": "./dist/pipeline.cjs"
+      }
+    },
+    "./transform": {
+      "import": {
+        "types": "./dist/transform.d.ts",
+        "default": "./dist/transform.js"
+      },
+      "require": {
+        "types": "./dist/transform.d.cts",
+        "default": "./dist/transform.cjs"
+      }
+    },
+    "./extract": {
+      "import": {
+        "types": "./dist/extract.d.ts",
+        "default": "./dist/extract.js"
+      },
+      "require": {
+        "types": "./dist/extract.d.cts",
+        "default": "./dist/extract.cjs"
+      }
+    },
+    "./load": {
+      "import": {
+        "types": "./dist/load.d.ts",
+        "default": "./dist/load.js"
+      },
+      "require": {
+        "types": "./dist/load.d.cts",
+        "default": "./dist/load.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "prepublishOnly": "npm run check && npm run build",
+    "changeset": "changeset",
+    "release": "npm run build && changeset publish"
+  },
+  "keywords": [
+    "data",
+    "etl",
+    "pipeline",
+    "transform",
+    "extract",
+    "load",
+    "typescript",
+    "data-management",
+    "primitives"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "npm@11.12.1",
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.7",
+    "eslint": "^10.4.0",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.0",
+    "vitest": "^4.1.7"
+  }
+}
