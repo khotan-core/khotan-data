@@ -23,9 +23,17 @@ export default tseslint.config(
       ],
       "@typescript-eslint/consistent-type-definitions": ["error", "interface"],
       "@typescript-eslint/no-import-type-side-effects": "error",
+      "@typescript-eslint/require-await": "off",
     },
   },
   {
-    ignores: ["dist/", "node_modules/", "coverage/", "*.config.*"],
+    ignores: [
+      "dist/",
+      "node_modules/",
+      "coverage/",
+      "*.config.*",
+      "**/*.test.ts",
+      "**/*.spec.ts",
+    ],
   },
 );

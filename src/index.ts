@@ -5,7 +5,6 @@ export type {
   Loader,
   LoadResult,
   LoadError,
-  PipelineStep,
   PipelineEvent,
   PipelineEventListener,
   PipelineOptions,
@@ -29,3 +28,10 @@ export {
 } from "./transformers.js";
 
 export { createLoader, toArray, toConsole } from "./loaders.js";
+
+export {
+  fromQuery,
+  fromQueryCursor,
+  fromQueryPaginated,
+} from "./drizzle-extract.js";
+export { toDrizzle, toDrizzleTx } from "./drizzle-load.js";

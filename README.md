@@ -1,6 +1,8 @@
 # khotan-data
 
-Primitives and functions for data management — ETLs, pipelines, transformations, and more.
+Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgres integration.
+
+Built for **Next.js + Drizzle + Postgres** projects. Think better-auth for data management.
 
 ## Install
 
@@ -8,51 +10,185 @@ Primitives and functions for data management — ETLs, pipelines, transformation
 npm install khotan-data
 ```
 
+Requires `drizzle-orm` as a peer dependency (you almost certainly already have it).
+
 ## Quick Start
 
 ```typescript
-import { Pipeline, fromArray, map, filter, toArray } from "khotan-data";
+import { Pipeline, fromQuery, map, filter, toDrizzle } from "khotan-data";
+import { db } from "@/db";
+import { users, analytics } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
-const output: { name: string; score: number }[] = [];
-
-const result = await Pipeline.create("my-pipeline")
+const result = await Pipeline.create("user-analytics")
   .extract(
-    fromArray("source", [
-      { name: "Alice", score: 85 },
-      { name: "Bob", score: 42 },
-      { name: "Charlie", score: 91 },
-    ]),
+    fromQuery("active-users", () =>
+      db.select().from(users).where(eq(users.active, true))
+    ),
   )
-  .transform(filter("passing", (r) => r.score >= 50))
-  .transform(map("normalize", (r) => ({ ...r, score: r.score / 100 })))
-  .load(toArray("sink", output))
+  .transform(filter("adults", (r) => r.age >= 18))
+  .transform(
+    map("enrich", (r) => ({
+      userId: r.id,
+      email: r.email.toLowerCase(),
+      segment: r.age >= 65 ? "senior" : "standard",
+      processedAt: new Date(),
+    })),
+  )
+  .load(
+    toDrizzle("write-analytics", (rows) =>
+      db.insert(analytics).values(rows)
+    ),
+  )
   .run();
+```
 
-console.log(output);
-// [{ name: "Alice", score: 0.85 }, { name: "Charlie", score: 0.91 }]
+## Extractors
 
-console.log(result);
-// { recordsProcessed: 2, recordsLoaded: 2, errors: [], duration: ... }
+Pull data from Drizzle queries:
+
+```typescript
+import { fromQuery, fromQueryPaginated, fromQueryCursor } from "khotan-data/drizzle";
+
+// One-shot query
+const source = fromQuery("users", () =>
+  db.select().from(users).where(eq(users.active, true))
+);
+
+// Auto-paginated for large tables
+const source = fromQueryPaginated("all-orders", {
+  pageSize: 5000,
+  query: (limit, offset) =>
+    db.select().from(orders).limit(limit).offset(offset),
+});
+
+// Full control with async generator
+const source = fromQueryCursor("stream", async function* () {
+  // your custom cursor/streaming logic
+});
+```
+
+Generic extractors for testing and non-DB sources:
+
+```typescript
+import { fromArray, createExtractor } from "khotan-data";
+
+const testSource = fromArray("mock", [{ id: 1 }, { id: 2 }]);
+```
+
+## Transforms
+
+Composable, type-safe record transformations:
+
+```typescript
+import { map, filter, pick, omit, rename, flatMap, compose } from "khotan-data/transform";
+
+// Map fields
+.transform(map("normalize", (r) => ({ ...r, email: r.email.toLowerCase() })))
+
+// Filter records (non-matching records are dropped)
+.transform(filter("active-only", (r) => r.active))
+
+// Pick/omit fields
+.transform(pick("slim", ["id", "name", "email"]))
+.transform(omit("strip-pii", ["ssn", "dob"]))
+
+// Rename fields
+.transform(rename("api-names", { firstName: "first_name" }))
+
+// One-to-many expansion
+.transform(flatMap("explode-tags", (r) =>
+  r.tags.map((tag) => ({ ...r, tag }))
+))
+
+// Compose multiple transforms into one step
+.transform(compose("pipeline", [filterStep, mapStep, renameStep]))
+```
+
+## Loaders
+
+Write data into Drizzle tables:
+
+```typescript
+import { toDrizzle, toDrizzleTx } from "khotan-data/drizzle";
+
+// Simple insert (auto-batches to stay under Postgres parameter limits)
+const loader = toDrizzle("insert", (rows) =>
+  db.insert(analytics).values(rows)
+);
+
+// Upsert
+const loader = toDrizzle("upsert", (rows) =>
+  db
+    .insert(analytics)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: analytics.userId,
+      set: { segment: sql`excluded.segment`, updatedAt: new Date() },
+    })
+);
+
+// Transactional — all-or-nothing per batch
+const loader = toDrizzleTx("tx-insert", db, (tx, rows) =>
+  tx.insert(analytics).values(rows)
+);
+
+// Control batching for wide tables
+const loader = toDrizzle("wide-table", writeFn, {
+  columnsPerRow: 25, // auto-calculates safe batch size
+});
+```
+
+## Pipeline
+
+The `Pipeline` builder is immutable — each method returns a new instance:
+
+```typescript
+const base = Pipeline.create("etl")
+  .extract(source)
+  .transform(filterStep);
+
+// Branch into different outputs
+const toDb = base.load(toDrizzle("db", writeFn)).run();
+const toFile = base.load(toFileSink).run();
+```
+
+### Options
+
+```typescript
+await pipeline.run({
+  batchSize: 500,          // records per load batch (default: 1000)
+  continueOnError: true,   // don't throw on errors, collect them
+  signal: controller.signal, // AbortSignal for cancellation
+});
+```
+
+### Events
+
+```typescript
+pipeline.on((event) => {
+  if (event.type === "error") console.error(event.stepName, event.data);
+  if (event.type === "pipeline:end") console.log("Done:", event.data);
+});
 ```
 
 ## Subpath Imports
 
 ```typescript
 import { Pipeline } from "khotan-data/pipeline";
-import { map, filter, pick, omit, rename } from "khotan-data/transform";
-import { fromArray, createExtractor } from "khotan-data/extract";
-import { toArray, createLoader } from "khotan-data/load";
+import { map, filter } from "khotan-data/transform";
+import { fromQuery, toDrizzle } from "khotan-data/drizzle";
 ```
 
 ## Development
 
 ```bash
-npm install        # install deps
-npm run dev        # watch mode build
-npm run test       # run tests
-npm run test:watch # watch mode tests
-npm run check      # typecheck + lint + format + test
-npm run build      # production build
+npm install
+npm run dev          # watch mode build
+npm run test         # run tests
+npm run test:watch   # watch mode tests
+npm run check        # typecheck + lint + format + test
+npm run build        # production build
 ```
 
 ## License

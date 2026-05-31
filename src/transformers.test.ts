@@ -70,10 +70,10 @@ describe("flatMap", () => {
 
 describe("pick", () => {
   it("picks specified keys", async () => {
-    const t = pick<{ a: number; b: string; c: boolean }, "a" | "c">(
-      "pick-ac",
-      ["a", "c"],
-    );
+    const t = pick<{ a: number; b: string; c: boolean }, "a" | "c">("pick-ac", [
+      "a",
+      "c",
+    ]);
 
     const result = await t.transform({ a: 1, b: "hello", c: true });
     expect(result).toEqual({ a: 1, c: true });
@@ -82,9 +82,7 @@ describe("pick", () => {
 
 describe("omit", () => {
   it("omits specified keys", async () => {
-    const t = omit<{ a: number; b: string; c: boolean }, "b">("omit-b", [
-      "b",
-    ]);
+    const t = omit<{ a: number; b: string; c: boolean }, "b">("omit-b", ["b"]);
 
     const result = await t.transform({ a: 1, b: "hello", c: true });
     expect(result).toEqual({ a: 1, c: true });

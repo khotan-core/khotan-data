@@ -50,16 +50,16 @@ export function flatMap<
   name: string,
   fn: (record: TInput) => TOutput[] | Promise<TOutput[]>,
 ): Transformer<TInput, TOutput> {
-  return createTransformer(name, fn);
+  return createTransformer<TInput, TOutput>(name, fn);
 }
 
 /**
  * Pick specific keys from each record.
  */
-export function pick<
-  T extends DataRecord,
-  K extends keyof T & string,
->(name: string, keys: K[]): Transformer<T, Pick<T, K> & DataRecord> {
+export function pick<T extends DataRecord, K extends keyof T & string>(
+  name: string,
+  keys: K[],
+): Transformer<T, Pick<T, K> & DataRecord> {
   return createTransformer<T, Pick<T, K> & DataRecord>(name, (record: T) => {
     const result = {} as Pick<T, K> & DataRecord;
     for (const key of keys) {
@@ -74,10 +74,10 @@ export function pick<
 /**
  * Omit specific keys from each record.
  */
-export function omit<
-  T extends DataRecord,
-  K extends keyof T & string,
->(name: string, keys: K[]): Transformer<T, Omit<T, K> & DataRecord> {
+export function omit<T extends DataRecord, K extends keyof T & string>(
+  name: string,
+  keys: K[],
+): Transformer<T, Omit<T, K> & DataRecord> {
   const keySet = new Set<string>(keys);
   return createTransformer<T, Omit<T, K> & DataRecord>(name, (record: T) => {
     const result = {} as Omit<T, K> & DataRecord;
@@ -96,8 +96,8 @@ export function omit<
 export function rename<T extends DataRecord>(
   name: string,
   mapping: Record<string, string>,
-): Transformer<T, DataRecord> {
-  return createTransformer(name, (record: T) => {
+): Transformer<T> {
+  return createTransformer<T>(name, (record: T) => {
     const result: DataRecord = {};
     for (const [key, value] of Object.entries(record)) {
       const newKey = mapping[key] ?? key;
@@ -113,9 +113,9 @@ export function rename<T extends DataRecord>(
  */
 export function compose<T extends DataRecord>(
   name: string,
-  transformers: Transformer<DataRecord, DataRecord>[],
-): Transformer<T, DataRecord> {
-  return createTransformer(name, async (record: T) => {
+  transformers: Transformer[],
+): Transformer<T> {
+  return createTransformer<T>(name, async (record: T) => {
     let records: DataRecord[] = [record];
 
     for (const transformer of transformers) {

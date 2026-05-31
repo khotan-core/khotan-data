@@ -1,0 +1,419 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  Plug,
+  PlugError,
+  apiKey,
+  basic,
+  bearer,
+  cursorPagination,
+  custom,
+  keysetPagination,
+  offsetPagination,
+  plug,
+} from "./plug.js";
+
+const BASE = "https://api.example.com";
+
+function jsonResponse(body: unknown, init?: ResponseInit) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+}
+
+describe("plug factory", () => {
+  it("returns a Plug instance", () => {
+    const w = plug({ baseUrl: BASE });
+    expect(w).toBeInstanceOf(Plug);
+  });
+
+  it("exposes all HTTP methods and helpers", () => {
+    const w = plug({ baseUrl: BASE });
+    expect(typeof w.get).toBe("function");
+    expect(typeof w.post).toBe("function");
+    expect(typeof w.put).toBe("function");
+    expect(typeof w.patch).toBe("function");
+    expect(typeof w.delete).toBe("function");
+    expect(typeof w.request).toBe("function");
+    expect(typeof w.paginate).toBe("function");
+    expect(typeof w.withAuth).toBe("function");
+  });
+});
+
+describe("auth strategies", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("bearer — sets Authorization header with static token", async () => {
+    const w = plug({ baseUrl: BASE, auth: bearer("sk_live_123"), retry: false });
+    await w.get("/test");
+    const call = vi.mocked(fetch).mock.calls[0];
+    const headers = call[1]!.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer sk_live_123");
+  });
+
+  it("bearer — calls token function for dynamic tokens", async () => {
+    const tokenFn = vi.fn().mockResolvedValue("dynamic_token");
+    const w = plug({ baseUrl: BASE, auth: bearer(tokenFn), retry: false });
+    await w.get("/test");
+    expect(tokenFn).toHaveBeenCalled();
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer dynamic_token");
+  });
+
+  it("basic — sets Base64-encoded Authorization header", async () => {
+    const w = plug({ baseUrl: BASE, auth: basic("user", "pass"), retry: false });
+    await w.get("/test");
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Basic dXNlcjpwYXNz");
+  });
+
+  it("apiKey — sets custom header by default", async () => {
+    const w = plug({
+      baseUrl: BASE,
+      auth: apiKey("X-API-Key", "key_123"),
+      retry: false,
+    });
+    await w.get("/test");
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("X-API-Key")).toBe("key_123");
+  });
+
+  it("apiKey — appends query param when in=query", async () => {
+    const w = plug({
+      baseUrl: BASE,
+      auth: apiKey("api_key", "key_123", { in: "query" }),
+      retry: false,
+    });
+    await w.get("/test");
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toContain("api_key=key_123");
+  });
+
+  it("custom — calls the provided function with headers", async () => {
+    const fn = vi.fn((headers: Headers) => {
+      headers.set("X-Signature", "sig_abc");
+    });
+    const w = plug({ baseUrl: BASE, auth: custom(fn), retry: false });
+    await w.get("/test");
+    expect(fn).toHaveBeenCalled();
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("X-Signature")).toBe("sig_abc");
+  });
+});
+
+describe("HTTP methods", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ id: "123" }),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("GET sends correct method and URL", async () => {
+    const w = plug({ baseUrl: BASE, retry: false });
+    await w.get("/users/123");
+    const call = vi.mocked(fetch).mock.calls[0];
+    expect(call[0]).toBe(`${BASE}/users/123`);
+    expect(call[1]!.method).toBe("GET");
+  });
+
+  it("POST sends JSON body with Content-Type header", async () => {
+    const w = plug({ baseUrl: BASE, retry: false });
+    await w.post("/users", { body: { name: "Alice" } });
+    const call = vi.mocked(fetch).mock.calls[0];
+    expect(call[1]!.method).toBe("POST");
+    expect(call[1]!.body).toBe('{"name":"Alice"}');
+    const headers = call[1]!.headers as Headers;
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+
+  it("appends query parameters to the URL", async () => {
+    const w = plug({ baseUrl: BASE, retry: false });
+    await w.get("/users", { params: { page: 1, limit: 10 } });
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toContain("page=1");
+    expect(url).toContain("limit=10");
+  });
+
+  it("merges per-request headers with defaults (per-request wins)", async () => {
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      defaultHeaders: { "X-Default": "yes", "X-Override": "default" },
+    });
+    await w.get("/test", { headers: { "X-Override": "custom" } });
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("X-Default")).toBe("yes");
+    expect(headers.get("X-Override")).toBe("custom");
+  });
+
+  it("response is typed and parsed as JSON", async () => {
+    const w = plug({ baseUrl: BASE, retry: false });
+    const result = await w.get<{ id: string }>("/users/123");
+    expect(result).toEqual({ id: "123" });
+  });
+});
+
+describe("retry logic", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("retries on 500 and succeeds on later attempt", async () => {
+    const mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response("Internal Server Error", { status: 500 }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: { attempts: 3, backoff: 1 },
+    });
+
+    const result = await w.get("/test");
+    expect(result).toEqual({ ok: true });
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws after all retries are exhausted", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Server Error", { status: 500 }),
+    );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: { attempts: 3, backoff: 1 },
+    });
+
+    await expect(w.get("/test")).rejects.toThrow(PlugError);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("respects Retry-After header on 429", async () => {
+    const start = Date.now();
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response("Rate limited", {
+          status: 429,
+          headers: { "Retry-After": "0" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: { attempts: 3, backoff: 1 },
+    });
+
+    await w.get("/test");
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it("does not retry when retry is false", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Error", { status: 500 }),
+    );
+
+    const w = plug({ baseUrl: BASE, retry: false });
+    await expect(w.get("/test")).rejects.toThrow(PlugError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry non-retryable status codes", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Not Found", { status: 404 }),
+    );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: { attempts: 3, backoff: 1 },
+    });
+
+    await expect(w.get("/test")).rejects.toThrow(PlugError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("timeout", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("aborts requests that exceed the timeout", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as RequestInit)?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }
+        }),
+    );
+
+    const w = plug({ baseUrl: BASE, retry: false, timeout: 50 });
+    await expect(w.get("/slow")).rejects.toThrow("Request timed out");
+  });
+});
+
+describe("error handling", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("throws PlugError with status, body, url, and method", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('{"error":"not_found"}', {
+        status: 404,
+        statusText: "Not Found",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const w = plug({ baseUrl: BASE, retry: false });
+    try {
+      await w.get("/missing");
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(PlugError);
+      const err = e as PlugError;
+      expect(err.status).toBe(404);
+      expect(err.statusText).toBe("Not Found");
+      expect(err.body).toBe('{"error":"not_found"}');
+      expect(err.url).toContain("/missing");
+      expect(err.method).toBe("GET");
+    }
+  });
+});
+
+describe("withAuth", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns a new instance with swapped auth", async () => {
+    const original = plug({
+      baseUrl: BASE,
+      auth: bearer("original_token"),
+      retry: false,
+    });
+    const swapped = original.withAuth(bearer("new_token"));
+
+    await original.get("/test");
+    const originalHeaders = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(originalHeaders.get("Authorization")).toBe("Bearer original_token");
+
+    await swapped.get("/test");
+    const swappedHeaders = vi.mocked(fetch).mock.calls[1][1]!.headers as Headers;
+    expect(swappedHeaders.get("Authorization")).toBe("Bearer new_token");
+  });
+});
+
+describe("pagination", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("cursor pagination iterates pages correctly", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 1 }, { id: 2 }], meta: { cursor: "abc" } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 3 }], meta: { cursor: null } }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      pagination: cursorPagination({
+        cursorParam: "cursor",
+        cursorPath: "meta.cursor",
+        dataPath: "data",
+      }),
+    });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items")) {
+      pages.push(page);
+    }
+
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(pages[1]).toEqual([{ id: 3 }]);
+  });
+
+  it("offset pagination stops when page is smaller than pageSize", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 1 }, { id: 2 }] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 3 }] }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      pagination: offsetPagination({
+        dataPath: "items",
+        pageSize: 2,
+      }),
+    });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items")) {
+      pages.push(page);
+    }
+
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(pages[1]).toEqual([{ id: 3 }]);
+  });
+
+  it("keyset pagination uses last item id as cursor", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: "a" }, { id: "b" }] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [] }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      pagination: keysetPagination({
+        param: "starting_after",
+        idField: "id",
+        dataPath: "data",
+      }),
+    });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items")) {
+      pages.push(page);
+    }
+
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toEqual([{ id: "a" }, { id: "b" }]);
+
+    const secondUrl = vi.mocked(fetch).mock.calls[1][0] as string;
+    expect(secondUrl).toContain("starting_after=b");
+  });
+
+  it("throws when paginate is called without a pagination strategy", async () => {
+    const w = plug({ baseUrl: BASE, retry: false });
+    const iter = w.paginate("/items");
+    await expect(
+      (async () => {
+        for await (const _page of iter) {
+          // consume
+        }
+      })(),
+    ).rejects.toThrow("Pagination strategy must be configured");
+  });
+});

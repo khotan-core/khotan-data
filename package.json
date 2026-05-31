@@ -1,11 +1,14 @@
 {
   "name": "khotan-data",
   "version": "0.0.1",
-  "description": "Primitives and functions for data management — ETLs, pipelines, transformations, and more.",
+  "description": "Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgres integration.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "khotan": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": {
@@ -37,29 +40,30 @@
         "default": "./dist/transform.cjs"
       }
     },
-    "./extract": {
+    "./drizzle": {
       "import": {
-        "types": "./dist/extract.d.ts",
-        "default": "./dist/extract.js"
+        "types": "./dist/drizzle.d.ts",
+        "default": "./dist/drizzle.js"
       },
       "require": {
-        "types": "./dist/extract.d.cts",
-        "default": "./dist/extract.cjs"
+        "types": "./dist/drizzle.d.cts",
+        "default": "./dist/drizzle.cjs"
       }
     },
-    "./load": {
+    "./factory": {
       "import": {
-        "types": "./dist/load.d.ts",
-        "default": "./dist/load.js"
+        "types": "./dist/factory.d.ts",
+        "default": "./dist/factory.js"
       },
       "require": {
-        "types": "./dist/load.d.cts",
-        "default": "./dist/load.cjs"
+        "types": "./dist/factory.d.cts",
+        "default": "./dist/factory.cjs"
       }
     }
   },
   "files": [
     "dist",
+    "dist/templates",
     "README.md",
     "LICENSE"
   ],
@@ -84,12 +88,13 @@
     "data",
     "etl",
     "pipeline",
-    "transform",
-    "extract",
-    "load",
+    "drizzle",
+    "drizzle-orm",
+    "postgres",
+    "nextjs",
     "typescript",
-    "data-management",
-    "primitives"
+    "transform",
+    "data-management"
   ],
   "author": "",
   "license": "MIT",
@@ -100,16 +105,25 @@
   "engines": {
     "node": ">=18"
   },
-  "packageManager": "npm@11.12.1",
+  "peerDependencies": {
+    "drizzle-orm": ">=0.35.0"
+  },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "@eslint/js": "^10.0.1",
+    "@changesets/cli": "^2.29.4",
+    "@eslint/js": "^9.28.0",
+    "@types/prompts": "^2.4.9",
     "@vitest/coverage-v8": "^4.1.7",
-    "eslint": "^10.4.0",
-    "prettier": "^3.8.3",
+    "drizzle-orm": "^0.45.2",
+    "eslint": "^9.28.0",
+    "prettier": "^3.5.3",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.60.0",
+    "typescript-eslint": "^8.34.0",
     "vitest": "^4.1.7"
+  },
+  "packageManager": "npm@11.12.1",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "prompts": "^2.4.2"
   }
 }

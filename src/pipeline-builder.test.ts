@@ -19,9 +19,7 @@ describe("Pipeline", () => {
   });
 
   it("throws if run without a loader", async () => {
-    const p = Pipeline.create("no-load").extract(
-      fromArray("in", [{ id: 1 }]),
-    );
+    const p = Pipeline.create("no-load").extract(fromArray("in", [{ id: 1 }]));
 
     await expect(p.run()).rejects.toThrow("has no loaders");
   });
@@ -67,9 +65,7 @@ describe("Pipeline", () => {
 
     await Pipeline.create("chained")
       .extract(fromArray("source", [{ value: 1 }, { value: 2 }, { value: 3 }]))
-      .transform(
-        filter("even", (r: { value: number }) => r.value % 2 === 0),
-      )
+      .transform(filter("even", (r: { value: number }) => r.value % 2 === 0))
       .transform(
         map("multiply", (r: { value: number }) => ({
           value: r.value * 10,

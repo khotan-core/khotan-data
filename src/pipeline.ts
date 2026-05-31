@@ -1,5 +1,4 @@
 export type {
-  PipelineStep,
   PipelineEvent,
   PipelineEventListener,
   PipelineOptions,

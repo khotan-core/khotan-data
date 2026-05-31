@@ -23,16 +23,16 @@ import type {
  */
 export class Pipeline<TCurrent extends DataRecord = DataRecord> {
   readonly #name: string;
-  readonly #extractor: Extractor<DataRecord> | null;
-  readonly #transformers: Transformer<DataRecord, DataRecord>[];
-  readonly #loaders: Loader<DataRecord>[];
+  readonly #extractor: Extractor | null;
+  readonly #transformers: Transformer[];
+  readonly #loaders: Loader[];
   readonly #listeners: PipelineEventListener[];
 
   private constructor(
     name: string,
-    extractor: Extractor<DataRecord> | null,
-    transformers: Transformer<DataRecord, DataRecord>[],
-    loaders: Loader<DataRecord>[],
+    extractor: Extractor | null,
+    transformers: Transformer[],
+    loaders: Loader[],
     listeners: PipelineEventListener[],
   ) {
     this.#name = name;
@@ -42,7 +42,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
     this.#listeners = listeners;
   }
 
-  static create(name: string): Pipeline<DataRecord> {
+  static create(name: string): Pipeline {
     return new Pipeline(name, null, [], [], []);
   }
 
@@ -53,12 +53,10 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
   /**
    * Set the data source for this pipeline.
    */
-  extract<T extends DataRecord>(
-    extractor: Extractor<T>,
-  ): Pipeline<T> {
+  extract<T extends DataRecord>(extractor: Extractor<T>): Pipeline<T> {
     return new Pipeline(
       this.#name,
-      extractor as Extractor<DataRecord>,
+      extractor,
       this.#transformers,
       this.#loaders,
       this.#listeners,
@@ -74,10 +72,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
     return new Pipeline(
       this.#name,
       this.#extractor,
-      [
-        ...this.#transformers,
-        transformer as Transformer<DataRecord, DataRecord>,
-      ],
+      [...this.#transformers, transformer],
       this.#loaders,
       this.#listeners,
     );
@@ -91,7 +86,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
       this.#name,
       this.#extractor,
       this.#transformers,
-      [...this.#loaders, loader as Loader<DataRecord>],
+      [...this.#loaders, loader],
       this.#listeners,
     );
   }
@@ -125,11 +120,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
       );
     }
 
-    const {
-      batchSize = 1000,
-      continueOnError = false,
-      signal,
-    } = options;
+    const { batchSize = 1000, continueOnError = false, signal } = options;
 
     const startTime = performance.now();
     const errors: PipelineStepError[] = [];
@@ -173,8 +164,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
             data: result,
           });
         } catch (err) {
-          const error =
-            err instanceof Error ? err : new Error(String(err));
+          const error = err instanceof Error ? err : new Error(String(err));
           errors.push({ stepName: loader.name, error });
 
           if (!continueOnError) {
@@ -213,9 +203,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
               });
 
               const result = await transformer.transform(record);
-              const transformed = Array.isArray(result)
-                ? result
-                : [result];
+              const transformed = Array.isArray(result) ? result : [result];
               nextRecords.push(...transformed);
 
               this.#emit({
@@ -225,8 +213,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
                 data: transformed,
               });
             } catch (err) {
-              const error =
-                err instanceof Error ? err : new Error(String(err));
+              const error = err instanceof Error ? err : new Error(String(err));
               errors.push({
                 stepName: transformer.name,
                 error,
@@ -258,7 +245,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
       }
 
       await flushBatch();
-    } catch (err) {
+    } catch {
       if (!continueOnError) {
         const duration = performance.now() - startTime;
         this.#emit({
