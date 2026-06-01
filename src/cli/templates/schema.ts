@@ -193,20 +193,17 @@ export const khotanPlugsRelations = relations(khotanPlugs, ({ many }) => ({
   syncs: many(khotanSyncs),
 }));
 
-export const khotanSyncsRelations = relations(
-  khotanSyncs,
-  ({ one, many }) => ({
-    plug: one(khotanPlugs, {
-      fields: [khotanSyncs.plugId],
-      references: [khotanPlugs.id],
-    }),
-    resource: one(khotanResources, {
-      fields: [khotanSyncs.resourceId],
-      references: [khotanResources.id],
-    }),
-    runs: many(khotanRuns),
+export const khotanSyncsRelations = relations(khotanSyncs, ({ one, many }) => ({
+  plug: one(khotanPlugs, {
+    fields: [khotanSyncs.plugId],
+    references: [khotanPlugs.id],
   }),
-);
+  resource: one(khotanResources, {
+    fields: [khotanSyncs.resourceId],
+    references: [khotanResources.id],
+  }),
+  runs: many(khotanRuns),
+}));
 
 export const khotanRunsRelations = relations(khotanRuns, ({ one }) => ({
   sync: one(khotanSyncs, {
@@ -223,15 +220,12 @@ export const khotanResourcesRelations = relations(
   }),
 );
 
-export const khotanMappingsRelations = relations(
-  khotanMappings,
-  ({ one }) => ({
-    resource: one(khotanResources, {
-      fields: [khotanMappings.resourceId],
-      references: [khotanResources.id],
-    }),
+export const khotanMappingsRelations = relations(khotanMappings, ({ one }) => ({
+  resource: one(khotanResources, {
+    fields: [khotanMappings.resourceId],
+    references: [khotanResources.id],
   }),
-);
+}));
 
 // ---------------------------------------------------------------------------
 // Type helpers

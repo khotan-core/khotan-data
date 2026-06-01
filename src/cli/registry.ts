@@ -14,7 +14,7 @@ export interface ComponentFile {
    * - "components" — components/khotan/ relative to project root
    * - "app" — app/api/khotan/[...all]/ relative to project root (or src/app if src layout)
    */
-  outputBase: "outputDir" | "components" | "app";
+  outputBase: "outputDir" | "components" | "app" | "appRoot";
 }
 
 export interface ComponentDeps {
@@ -35,19 +35,33 @@ export interface ComponentEntry {
   requiresShadcn?: boolean;
   /** Dependencies this component requires in the user's project */
   dependencies?: ComponentDeps;
+  /** Other khotan components/blocks that must be scaffolded first */
+  requires?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Components vs Blocks
+// ---------------------------------------------------------------------------
+// Components are reusable building blocks: library code, UI primitives, schema
+// definitions. They never create routes or pages on their own.
+//
+// Blocks are sample routes/pages composed from components. They wire components
+// into the app router so you can see them running immediately.
+//
+// Both use the same ComponentEntry shape and are addable via `khotan add`.
+// ---------------------------------------------------------------------------
 
 const COMPONENTS: Record<string, ComponentEntry> = {
   plug: {
     name: "plug",
-    description: "Self-contained fetch wrapper with auth, retry, and pagination",
+    description:
+      "Self-contained fetch wrapper with auth, retry, and pagination",
     templatePath: path.resolve(__dirname, "templates", "plug.ts"),
     outputFile: "plug.ts",
   },
   schema: {
     name: "schema",
-    description:
-      "Drizzle table definitions for khotan plugs, syncs, and runs",
+    description: "Drizzle table definitions for khotan plugs, syncs, and runs",
     templatePath: path.resolve(__dirname, "templates", "schema.ts"),
     outputFile: "khotan.ts",
     dependencies: {
@@ -83,11 +97,48 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
 };
 
+const BLOCKS: Record<string, ComponentEntry> = {
+  "config-page-1": {
+    name: "config-page-1",
+    description: "Page route at /config that renders the KhotanHub dashboard",
+    requires: ["hub"],
+    files: [
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "config-page.tsx",
+        ),
+        outputFile: "config/page.tsx",
+        outputBase: "appRoot",
+      },
+    ],
+  },
+};
+
+export type EntryKind = "component" | "block";
+
 export function getComponent(name: string): ComponentEntry | undefined {
   return COMPONENTS[name];
 }
 
-export function getTemplateContent(entry: ComponentEntry | ComponentFile): string {
+export function getBlock(name: string): ComponentEntry | undefined {
+  return BLOCKS[name];
+}
+
+export function getEntry(
+  name: string,
+): { entry: ComponentEntry; kind: EntryKind } | undefined {
+  const comp = COMPONENTS[name];
+  if (comp) return { entry: comp, kind: "component" };
+  const block = BLOCKS[name];
+  if (block) return { entry: block, kind: "block" };
+  return undefined;
+}
+
+export function getTemplateContent(
+  entry: ComponentEntry | ComponentFile,
+): string {
   const templatePath = "templatePath" in entry ? entry.templatePath : undefined;
   if (!templatePath) {
     throw new Error("No templatePath on entry");
@@ -99,6 +150,12 @@ export function listComponents(): ComponentEntry[] {
   return Object.values(COMPONENTS);
 }
 
-export function isMultiFile(entry: ComponentEntry): entry is ComponentEntry & { files: ComponentFile[] } {
+export function listBlocks(): ComponentEntry[] {
+  return Object.values(BLOCKS);
+}
+
+export function isMultiFile(
+  entry: ComponentEntry,
+): entry is ComponentEntry & { files: ComponentFile[] } {
   return Array.isArray(entry.files) && entry.files.length > 0;
 }

@@ -95,3 +95,23 @@ The CLI SHALL execute package install commands using the detected package manage
 #### Scenario: Install as dev dependency
 - **WHEN** the CLI installs `drizzle-kit`
 - **THEN** it SHALL be installed as a dev dependency (`--save-dev` / `-D`)
+
+### Requirement: khotan-data self-install
+The `init` command SHALL ensure `khotan-data` is installed as a dependency in the consumer's project. This runs after config creation in both the basic and `--full` init flows. The `add` command lazily triggers init when no config exists, which cascades into the `khotan-data` install.
+
+#### Scenario: Init installs khotan-data when missing
+- **WHEN** a user runs `npx khotan init` and `khotan-data` is not in `package.json`
+- **THEN** the CLI SHALL install `khotan-data` as a regular dependency using the detected package manager
+
+#### Scenario: Init skips khotan-data when already installed
+- **WHEN** a user runs `npx khotan init` and `khotan-data` is already in `package.json`
+- **THEN** the CLI SHALL NOT re-install `khotan-data`
+
+#### Scenario: Add triggers lazy init cascade
+- **WHEN** a user runs `npx khotan add <component>` and no `khotan.config.ts` exists
+- **THEN** the CLI SHALL run the init flow (config creation + `khotan-data` install) before proceeding with the add
+- **AND** the CLI SHALL NOT exit with an error
+
+#### Scenario: Full init includes khotan-data
+- **WHEN** a user runs `npx khotan init --full`
+- **THEN** the setup summary SHALL include the `khotan-data` install step alongside drizzle, shadcn, and config steps

@@ -219,10 +219,7 @@ describe("checkShadcnComponents", () => {
   });
 
   it("falls back to default paths when components.json has no aliases", () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "components.json"),
-      JSON.stringify({}),
-    );
+    fs.writeFileSync(path.join(tmpDir, "components.json"), JSON.stringify({}));
 
     const uiDir = path.join(tmpDir, "src", "components", "ui");
     fs.mkdirSync(uiDir, { recursive: true });

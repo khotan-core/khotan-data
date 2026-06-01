@@ -60,6 +60,10 @@ export default defineConfig([
         path.resolve("src", "cli", "templates", "khotan-config.ts"),
         path.resolve(templatesDir, "khotan-config.ts"),
       );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "config-page.tsx"),
+        path.resolve(templatesDir, "config-page.tsx"),
+      );
     },
   },
 ]);

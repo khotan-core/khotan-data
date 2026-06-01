@@ -1,6 +1,6 @@
 ## Purpose
 
-The khotan CLI scaffolds data components into the user's project following the shadcn model — run a command, get owned code. It provides `init` and `add` commands for project setup and component installation.
+The khotan CLI scaffolds components and blocks into the user's project following the shadcn model — run a command, get owned code. It provides `init` and `add` commands for project setup and component/block installation.
 
 ## Requirements
 
@@ -19,10 +19,19 @@ The CLI SHALL provide an `init` command that scaffolds a `khotan.config.ts` file
 - **THEN** the CLI SHALL create a `khotan.config.ts` file in the project root with default configuration (outputDir: `src/lib/khotan`, empty components array)
 - **AND** the CLI SHALL print a success message with the created file path
 
+#### Scenario: Init auto-installs khotan-data
+- **WHEN** a user runs `npx khotan init` and `khotan-data` is not in the consumer's `package.json` dependencies
+- **THEN** the CLI SHALL automatically install `khotan-data` using the detected package manager after creating `khotan.config.ts`
+
+#### Scenario: Init skips khotan-data install when already present
+- **WHEN** a user runs `npx khotan init` and `khotan-data` is already in the consumer's `package.json`
+- **THEN** the CLI SHALL skip the `khotan-data` install step
+
 #### Scenario: Init when config already exists
 - **WHEN** a user runs `npx khotan init` in a project that already has a `khotan.config.ts`
 - **THEN** the CLI SHALL warn the user that a config already exists
 - **AND** the CLI SHALL NOT overwrite the existing config
+- **AND** the CLI SHALL still check and install `khotan-data` if missing
 
 #### Scenario: Init with --full flag in new project
 - **WHEN** a user runs `npx khotan init --full` in a project with no `components.json` and no `drizzle-orm` installed
@@ -49,14 +58,15 @@ The CLI SHALL provide an `init` command that scaffolds a `khotan.config.ts` file
 - **AND** the CLI SHALL continue with remaining steps
 - **AND** the CLI SHALL print a summary at the end noting which steps succeeded and which failed
 
-### Requirement: Add command
-The CLI SHALL provide an `add <component>` command that scaffolds a component file into the user's project at the configured output directory.
+### Requirement: Components vs Blocks
+The add command supports two categories of addable items — **components** and **blocks**. See the [registry spec](../registry/spec.md) for the full definition of each category and the registry API. In the CLI context, both are scaffolded identically via `khotan add <name>`.
 
-#### Scenario: Add wire component
-- **WHEN** a user runs `npx khotan add wire` in a project with a valid `khotan.config.ts`
-- **THEN** the CLI SHALL create a `wire.ts` file at `<outputDir>/wire.ts` (e.g., `src/lib/khotan/wire.ts`)
-- **AND** the CLI SHALL create the output directory if it does not exist
-- **AND** the CLI SHALL print a success message with the created file path and a usage hint
+#### Scenario: Unknown name shows both categories
+- **WHEN** a user runs `npx khotan add unknown-thing`
+- **THEN** the CLI SHALL display an error listing available components and blocks as separate groups
+
+### Requirement: Add command
+The CLI SHALL provide an `add <name>` command that scaffolds a component or block into the user's project at the configured output directory.
 
 #### Scenario: Add hub component
 - **WHEN** a user runs `npx khotan add hub` in a project with a valid `khotan.config.ts`
@@ -66,8 +76,43 @@ The CLI SHALL provide an `add <component>` command that scaffolds a component fi
 #### Scenario: Add schema component with Drizzle config detection
 - **WHEN** a user runs `npx khotan add schema` in a project with a `drizzle.config.ts` that specifies a schema path
 - **THEN** the CLI SHALL read `drizzle.config.ts` to determine the schema directory
-- **AND** the CLI SHALL place `schema.ts` in the detected Drizzle schema directory (e.g., `src/db/schema/khotan.ts` or `db/schema/khotan.ts`)
-- **AND** the CLI SHALL print a re-export hint using the detected path
+- **AND** the CLI SHALL place `khotan.ts` in the detected Drizzle schema directory (e.g., `src/db/khotan.ts` or `db/schema/khotan.ts`)
+
+#### Scenario: Add schema updates drizzle.config.ts when schema is a single file
+- **WHEN** a user runs `npx khotan add schema` and `drizzle.config.ts` has `schema` pointing to a single file (e.g., `"./src/db/schema.ts"`)
+- **THEN** the CLI SHALL warn that Drizzle Kit won't pick up `khotan.ts` with a single-file schema
+- **AND** the CLI SHALL prompt the user to update the schema value to a glob (e.g., `"./src/db/*"`)
+- **AND** if accepted, the CLI SHALL rewrite the schema value in `drizzle.config.ts` preserving the quote style
+- **AND** the CLI SHALL print a confirmation of what was changed
+
+#### Scenario: Add schema skips drizzle.config.ts update when schema is already a glob
+- **WHEN** a user runs `npx khotan add schema` and `drizzle.config.ts` has `schema` pointing to a glob or directory
+- **THEN** the CLI SHALL NOT prompt about `drizzle.config.ts`
+- **AND** the CLI SHALL NOT modify `drizzle.config.ts`
+
+#### Scenario: Add schema updates barrel file with prompt
+- **WHEN** a user runs `npx khotan add schema` and an `index.ts` barrel file exists in the detected schema directory
+- **AND** the barrel file does not already re-export from `./khotan`
+- **THEN** the CLI SHALL prompt the user to add `export * from "./khotan"` to the barrel file
+- **AND** if accepted, the CLI SHALL append the re-export and print a confirmation
+
+#### Scenario: Add schema skips barrel update when already present
+- **WHEN** a user runs `npx khotan add schema` and the barrel `index.ts` already contains a re-export from `./khotan`
+- **THEN** the CLI SHALL NOT modify the barrel file
+- **AND** the CLI SHALL print a message indicating the barrel already re-exports khotan
+
+#### Scenario: Add schema prints re-export hint when no barrel exists
+- **WHEN** a user runs `npx khotan add schema` and no `index.ts` barrel file exists in the schema directory
+- **THEN** the CLI SHALL print a re-export hint with the correct import path for the user to add manually
+
+#### Scenario: Add schema --yes auto-accepts config updates
+- **WHEN** a user runs `npx khotan add schema --yes`
+- **THEN** the CLI SHALL auto-accept the drizzle.config.ts update and barrel update without prompting
+
+#### Scenario: Add schema skips config updates in non-interactive mode
+- **WHEN** a user runs `npx khotan add schema` in a non-TTY environment without `--yes`
+- **THEN** the CLI SHALL skip the drizzle.config.ts and barrel updates
+- **AND** the CLI SHALL print what the user needs to do manually
 
 #### Scenario: Add schema when Drizzle config not found
 - **WHEN** a user runs `npx khotan add schema` and no `drizzle.config.ts` exists
@@ -82,12 +127,14 @@ The CLI SHALL provide an `add <component>` command that scaffolds a component fi
 - **WHEN** a user runs `npx khotan add plug` in a project with a valid `khotan.config.ts`
 - **THEN** the CLI SHALL create a `plug.ts` file at `<outputDir>/plug.ts`
 
-#### Scenario: Add when config is missing
-- **WHEN** a user runs `npx khotan add wire` in a project with no `khotan.config.ts`
-- **THEN** the CLI SHALL display an error telling the user to run `npx khotan init` first
+#### Scenario: Add when config is missing (lazy init cascade)
+- **WHEN** a user runs `npx khotan add plug` in a project with no `khotan.config.ts`
+- **THEN** the CLI SHALL automatically run the init flow (creating `khotan.config.ts` and installing `khotan-data`)
+- **AND** the CLI SHALL proceed with the add command after init completes successfully
+- **AND** the CLI SHALL print a message indicating init is running before proceeding
 
 #### Scenario: Add when component already exists
-- **WHEN** a user runs `npx khotan add wire` and `wire.ts` already exists at the output path
+- **WHEN** a user runs `npx khotan add plug` and `plug.ts` already exists at the output path
 - **THEN** the CLI SHALL warn the user that the file already exists
 - **AND** the CLI SHALL prompt the user to confirm overwrite before proceeding
 
@@ -103,12 +150,17 @@ The CLI `add` command SHALL support components that scaffold multiple files to d
 - **WHEN** a multi-file component is being scaffolded and some files already exist
 - **THEN** the CLI SHALL prompt for overwrite confirmation for each existing file individually (or all at once with `--force`)
 
+#### Scenario: Add config-page-1 block
+- **WHEN** a user runs `npx khotan add config-page-1` in a project with a valid `khotan.config.ts`
+- **THEN** the CLI SHALL create `app/config/page.tsx` (or `src/app/config/page.tsx` for src layout)
+- **AND** the page SHALL import and render the `<KhotanHub />` component
+
 ### Requirement: Add command creates valid component
-- **WHEN** a user runs `npx khotan add wire` successfully
-- **THEN** the created `wire.ts` file SHALL be valid TypeScript that compiles without errors
+- **WHEN** a user runs `npx khotan add plug` successfully
+- **THEN** the created `plug.ts` file SHALL be valid TypeScript that compiles without errors
 - **AND** the file SHALL have zero runtime imports from `khotan-data`
 - **AND** the file SHALL be fully self-contained
 
-#### Scenario: Scaffolded wire compiles
-- **WHEN** the user runs `tsc --noEmit` on their project after adding wire
-- **THEN** the wire.ts file SHALL produce no type errors
+#### Scenario: Scaffolded plug compiles
+- **WHEN** the user runs `tsc --noEmit` on their project after adding plug
+- **THEN** the plug.ts file SHALL produce no type errors

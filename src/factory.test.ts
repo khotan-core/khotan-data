@@ -25,9 +25,20 @@ interface StoredMapping {
 }
 
 function createMockAdapter(): KhotanAdapter {
-  const plugStore = new Map<string, { id: string; name: string; baseUrl: string; authType: string }>();
+  const plugStore = new Map<
+    string,
+    { id: string; name: string; baseUrl: string; authType: string }
+  >();
   const syncStore = new Map<string, StoredSync>();
-  const resourceStore = new Map<string, { id: string; name: string; connectField: string; description: string | null }>();
+  const resourceStore = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      connectField: string;
+      description: string | null;
+    }
+  >();
   const mappingStore = new Map<string, StoredMapping>();
   let plugCounter = 0;
   let syncCounter = 0;
@@ -36,7 +47,9 @@ function createMockAdapter(): KhotanAdapter {
 
   return {
     upsertPlug: vi.fn(async (plug) => {
-      const existing = [...plugStore.values()].find((p) => p.name === plug.name);
+      const existing = [...plugStore.values()].find(
+        (p) => p.name === plug.name,
+      );
       if (existing) {
         existing.baseUrl = plug.baseUrl;
         existing.authType = plug.authType;
@@ -57,7 +70,14 @@ function createMockAdapter(): KhotanAdapter {
         return { id: existing.id };
       }
       const id = `sync-${++syncCounter}`;
-      syncStore.set(id, { id, plugId: sync.plugId, name: sync.name, type: sync.type, schedule: sync.schedule ?? null, resourceId: null });
+      syncStore.set(id, {
+        id,
+        plugId: sync.plugId,
+        name: sync.name,
+        type: sync.type,
+        schedule: sync.schedule ?? null,
+        resourceId: null,
+      });
       return { id };
     }),
 
@@ -66,7 +86,8 @@ function createMockAdapter(): KhotanAdapter {
         ...p,
         enabled: true,
         status: "idle",
-        syncCount: [...syncStore.values()].filter((s) => s.plugId === p.id).length,
+        syncCount: [...syncStore.values()].filter((s) => s.plugId === p.id)
+          .length,
       }));
     }),
 
@@ -88,22 +109,32 @@ function createMockAdapter(): KhotanAdapter {
     listRuns: vi.fn(async () => []),
 
     upsertResource: vi.fn(async (resource) => {
-      const existing = [...resourceStore.values()].find((r) => r.name === resource.name);
+      const existing = [...resourceStore.values()].find(
+        (r) => r.name === resource.name,
+      );
       if (existing) {
         existing.connectField = resource.connectField;
         existing.description = resource.description ?? null;
         return { id: existing.id };
       }
       const id = `resource-${++resourceCounter}`;
-      resourceStore.set(id, { id, name: resource.name, connectField: resource.connectField, description: resource.description ?? null });
+      resourceStore.set(id, {
+        id,
+        name: resource.name,
+        connectField: resource.connectField,
+        description: resource.description ?? null,
+      });
       return { id };
     }),
 
     listResources: vi.fn(async () => {
       return [...resourceStore.values()].map((r) => ({
         ...r,
-        syncCount: [...syncStore.values()].filter((s) => s.resourceId === r.id).length,
-        mappingCount: [...mappingStore.values()].filter((m) => m.resourceId === r.id).length,
+        syncCount: [...syncStore.values()].filter((s) => s.resourceId === r.id)
+          .length,
+        mappingCount: [...mappingStore.values()].filter(
+          (m) => m.resourceId === r.id,
+        ).length,
       }));
     }),
 
@@ -125,7 +156,9 @@ function createMockAdapter(): KhotanAdapter {
         }
       }
       const existing = [...mappingStore.values()].find(
-        (m) => m.resourceId === mapping.resourceId && m.connectValue === mapping.connectValue,
+        (m) =>
+          m.resourceId === mapping.resourceId &&
+          m.connectValue === mapping.connectValue,
       );
       if (existing) {
         existing.refs = { ...existing.refs, ...mapping.refs };
@@ -133,7 +166,13 @@ function createMockAdapter(): KhotanAdapter {
         return { id: existing.id, created: false };
       }
       const id = `mapping-${++mappingCounter}`;
-      mappingStore.set(id, { id, resourceId: mapping.resourceId, connectValue: mapping.connectValue, refs: mapping.refs, metadata: mapping.metadata ?? null });
+      mappingStore.set(id, {
+        id,
+        resourceId: mapping.resourceId,
+        connectValue: mapping.connectValue,
+        refs: mapping.refs,
+        metadata: mapping.metadata ?? null,
+      });
       return { id, created: true };
     }),
 
@@ -142,19 +181,31 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     listMappings: vi.fn(async (resourceId: string) => {
-      return [...mappingStore.values()].filter((m) => m.resourceId === resourceId);
+      return [...mappingStore.values()].filter(
+        (m) => m.resourceId === resourceId,
+      );
     }),
 
     deleteMapping: vi.fn(async (id: string) => {
       mappingStore.delete(id);
     }),
 
-    lookupMapping: vi.fn(async ({ resourceId, plugName, ref }: { resourceId: string; plugName: string; ref: string }) => {
-      const found = [...mappingStore.values()].find(
-        (m) => m.resourceId === resourceId && m.refs[plugName] === ref,
-      );
-      return found ?? null;
-    }),
+    lookupMapping: vi.fn(
+      async ({
+        resourceId,
+        plugName,
+        ref,
+      }: {
+        resourceId: string;
+        plugName: string;
+        ref: string;
+      }) => {
+        const found = [...mappingStore.values()].find(
+          (m) => m.resourceId === resourceId && m.refs[plugName] === ref,
+        );
+        return found ?? null;
+      },
+    ),
 
     updateSyncResourceId: vi.fn(async (syncId: string, resourceId: string) => {
       const sync = syncStore.get(syncId);
@@ -182,11 +233,21 @@ describe("khotan factory", () => {
   describe("registration validation", () => {
     it("throws on duplicate plug names", () => {
       const plugs: PlugRegistration[] = [
-        { name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer" },
-        { name: "stripe", baseUrl: "https://api.stripe.com/v2", authType: "bearer" },
+        {
+          name: "stripe",
+          baseUrl: "https://api.stripe.com",
+          authType: "bearer",
+        },
+        {
+          name: "stripe",
+          baseUrl: "https://api.stripe.com/v2",
+          authType: "bearer",
+        },
       ];
 
-      expect(() => khotan({ adapter, plugs })).toThrow('Duplicate plug name: "stripe"');
+      expect(() => khotan({ adapter, plugs })).toThrow(
+        'Duplicate plug name: "stripe"',
+      );
     });
 
     it("accepts an empty plugs array", () => {
@@ -197,8 +258,16 @@ describe("khotan factory", () => {
 
     it("accepts unique plug names", () => {
       const plugs: PlugRegistration[] = [
-        { name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer" },
-        { name: "github", baseUrl: "https://api.github.com", authType: "bearer" },
+        {
+          name: "stripe",
+          baseUrl: "https://api.stripe.com",
+          authType: "bearer",
+        },
+        {
+          name: "github",
+          baseUrl: "https://api.github.com",
+          authType: "bearer",
+        },
       ];
 
       expect(() => khotan({ adapter, plugs })).not.toThrow();
@@ -221,7 +290,9 @@ describe("khotan factory", () => {
           name: "shopify",
           baseUrl: "https://shopify.com",
           authType: "bearer",
-          syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }],
+          syncs: [
+            { name: "products-inflow", type: "inflow", resource: "products" },
+          ],
         },
       ];
 
@@ -239,7 +310,9 @@ describe("khotan factory", () => {
           name: "shopify",
           baseUrl: "https://shopify.com",
           authType: "bearer",
-          syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }],
+          syncs: [
+            { name: "products-inflow", type: "inflow", resource: "products" },
+          ],
         },
       ];
 
@@ -286,7 +359,11 @@ describe("khotan factory", () => {
 
     it("runs only once even when called multiple times", async () => {
       const plugs: PlugRegistration[] = [
-        { name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer" },
+        {
+          name: "stripe",
+          baseUrl: "https://api.stripe.com",
+          authType: "bearer",
+        },
       ];
 
       const instance = khotan({ adapter, plugs });
@@ -297,7 +374,11 @@ describe("khotan factory", () => {
 
     it("handles plugs without syncs", async () => {
       const plugs: PlugRegistration[] = [
-        { name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer" },
+        {
+          name: "stripe",
+          baseUrl: "https://api.stripe.com",
+          authType: "bearer",
+        },
       ];
 
       const instance = khotan({ adapter, plugs });
@@ -309,14 +390,20 @@ describe("khotan factory", () => {
 
     it("upserts resources before plugs and syncs", async () => {
       const resources: ResourceRegistration[] = [
-        { name: "products", connectField: "sku", description: "Product catalog" },
+        {
+          name: "products",
+          connectField: "sku",
+          description: "Product catalog",
+        },
       ];
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
           baseUrl: "https://shopify.com",
           authType: "bearer",
-          syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }],
+          syncs: [
+            { name: "products-inflow", type: "inflow", resource: "products" },
+          ],
         },
       ];
 
@@ -342,7 +429,9 @@ describe("khotan factory", () => {
           name: "shopify",
           baseUrl: "https://shopify.com",
           authType: "bearer",
-          syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }],
+          syncs: [
+            { name: "products-inflow", type: "inflow", resource: "products" },
+          ],
         },
       ];
 
@@ -400,7 +489,9 @@ describe("khotan factory", () => {
 
     it("GET /api/khotan/plugs/:id returns plug with syncs", async () => {
       await instance.init();
-      const res = await instance.handler(makeRequest("/api/khotan/plugs/plug-1"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/plug-1"),
+      );
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.name).toBe("stripe");
@@ -408,7 +499,9 @@ describe("khotan factory", () => {
     });
 
     it("GET /api/khotan/plugs/:id returns 404 for unknown plug", async () => {
-      const res = await instance.handler(makeRequest("/api/khotan/plugs/nonexistent"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/nonexistent"),
+      );
       expect(res.status).toBe(404);
     });
 
@@ -420,7 +513,9 @@ describe("khotan factory", () => {
     });
 
     it("GET /api/khotan/syncs/:id/runs lists runs", async () => {
-      const res = await instance.handler(makeRequest("/api/khotan/syncs/sync-1/runs"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/syncs/sync-1/runs"),
+      );
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data)).toBe(true);
@@ -434,7 +529,9 @@ describe("khotan factory", () => {
     });
 
     it("returns 404 for POST requests (no POST routes defined)", async () => {
-      const res = await instance.handler(makeRequest("/api/khotan/plugs", "POST"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs", "POST"),
+      );
       expect(res.status).toBe(404);
     });
 
@@ -464,7 +561,9 @@ describe("khotan factory", () => {
             name: "shopify",
             baseUrl: "https://shopify.com",
             authType: "bearer",
-            syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }],
+            syncs: [
+              { name: "products-inflow", type: "inflow", resource: "products" },
+            ],
           },
         ],
         resources: [{ name: "products", connectField: "sku" }],
@@ -662,10 +761,14 @@ describe("toNextJsHandler", () => {
   });
 
   it("delegates POST to the factory handler", async () => {
-    const mockHandler = vi.fn(async () => Response.json({ created: true }, { status: 201 }));
+    const mockHandler = vi.fn(async () =>
+      Response.json({ created: true }, { status: 201 }),
+    );
     const handlers = toNextJsHandler(mockHandler);
 
-    const req = new Request("http://localhost/api/khotan/syncs/1/trigger", { method: "POST" });
+    const req = new Request("http://localhost/api/khotan/syncs/1/trigger", {
+      method: "POST",
+    });
     const res = await handlers.POST(req);
     expect(res.status).toBe(201);
     expect(mockHandler).toHaveBeenCalledWith(req);

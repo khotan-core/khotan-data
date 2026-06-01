@@ -165,15 +165,11 @@ export function KhotanHub() {
               selectedPlugId === plug.id ? "border-primary" : ""
             }`}
             onClick={() =>
-              setSelectedPlugId(
-                selectedPlugId === plug.id ? null : plug.id,
-              )
+              setSelectedPlugId(selectedPlugId === plug.id ? null : plug.id)
             }
           >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                {plug.name}
-              </CardTitle>
+              <CardTitle className="text-sm font-medium">{plug.name}</CardTitle>
               <Badge variant={statusVariant[plug.status] ?? "secondary"}>
                 {plug.status}
               </Badge>
@@ -218,14 +214,10 @@ export function KhotanHub() {
                 <TableBody>
                   {plugSyncs.map((sync) => (
                     <TableRow key={sync.id}>
-                      <TableCell className="font-medium">
-                        {sync.name}
-                      </TableCell>
+                      <TableCell className="font-medium">{sync.name}</TableCell>
                       <TableCell>
                         <Badge
-                          variant={
-                            syncTypeVariant[sync.type] ?? "outline"
-                          }
+                          variant={syncTypeVariant[sync.type] ?? "outline"}
                         >
                           {sync.type}
                         </Badge>
@@ -245,9 +237,7 @@ export function KhotanHub() {
                             {sync.lastRunStatus}
                           </Badge>
                         ) : (
-                          <span className="text-muted-foreground">
-                            never
-                          </span>
+                          <span className="text-muted-foreground">never</span>
                         )}
                       </TableCell>
                       <TableCell>

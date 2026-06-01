@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { resolveDrizzleSchemaDir } from "./drizzle-detect.js";
+import {
+  resolveDrizzleSchemaDir,
+  detectSingleFileSchema,
+  updateDrizzleConfigSchema,
+} from "./drizzle-detect.js";
 
 describe("resolveDrizzleSchemaDir", () => {
   let tmpDir: string;
@@ -97,5 +101,104 @@ describe("resolveDrizzleSchemaDir", () => {
       `export default { schema: "src/db/schema" };`,
     );
     expect(resolveDrizzleSchemaDir(tmpDir)).toBe("src/db/schema");
+  });
+});
+
+describe("detectSingleFileSchema", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "khotan-drizzle-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("detects single file schema and returns glob replacement", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      `export default { schema: "./src/db/schema.ts" };`,
+    );
+    const result = detectSingleFileSchema(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.currentValue).toBe("./src/db/schema.ts");
+    expect(result!.globValue).toBe("./src/db/*");
+  });
+
+  it("returns null for glob schema", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      `export default { schema: "./src/db/schema/*" };`,
+    );
+    expect(detectSingleFileSchema(tmpDir)).toBeNull();
+  });
+
+  it("returns null for directory schema", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      `export default { schema: "./src/db/schema" };`,
+    );
+    expect(detectSingleFileSchema(tmpDir)).toBeNull();
+  });
+
+  it("returns null when no config exists", () => {
+    expect(detectSingleFileSchema(tmpDir)).toBeNull();
+  });
+
+  it("preserves ./ prefix in glob value", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      `export default { schema: "./db/schema.ts" };`,
+    );
+    const result = detectSingleFileSchema(tmpDir);
+    expect(result!.globValue).toBe("./db/*");
+  });
+
+  it("handles path without ./ prefix", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      `export default { schema: "src/db/schema.ts" };`,
+    );
+    const result = detectSingleFileSchema(tmpDir);
+    expect(result!.currentValue).toBe("src/db/schema.ts");
+    expect(result!.globValue).toBe("src/db/*");
+  });
+});
+
+describe("updateDrizzleConfigSchema", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "khotan-drizzle-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("replaces single file schema with glob", () => {
+    const configPath = path.join(tmpDir, "drizzle.config.ts");
+    fs.writeFileSync(
+      configPath,
+      `import { defineConfig } from "drizzle-kit";\nexport default defineConfig({ schema: "./src/db/schema.ts", out: "./drizzle" });`,
+    );
+    updateDrizzleConfigSchema(configPath, "./src/db/schema.ts", "./src/db/*");
+    const content = fs.readFileSync(configPath, "utf-8");
+    expect(content).toContain('"./src/db/*"');
+    expect(content).not.toContain("schema.ts");
+    expect(content).toContain("drizzle-kit");
+    expect(content).toContain("./drizzle");
+  });
+
+  it("preserves quote style", () => {
+    const configPath = path.join(tmpDir, "drizzle.config.ts");
+    fs.writeFileSync(
+      configPath,
+      `export default { schema: './db/schema.ts' };`,
+    );
+    updateDrizzleConfigSchema(configPath, "./db/schema.ts", "./db/*");
+    const content = fs.readFileSync(configPath, "utf-8");
+    expect(content).toContain("'./db/*'");
   });
 });

@@ -4,6 +4,59 @@ Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgr
 
 Built for **Next.js + Drizzle + Postgres** projects. Think better-auth for data management.
 
+## CLI
+
+Scaffold components into your Next.js + Drizzle project:
+
+```bash
+# Initialize khotan config
+npx khotan init
+
+# Full setup (drizzle + shadcn + config in one go)
+npx khotan init --full
+
+# Add components (reusable building blocks — never create pages)
+npx khotan add schema    # Drizzle table definitions (plugs, syncs, runs, resources, mappings)
+npx khotan add plug      # Fetch wrapper with auth, retry, pagination
+npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
+
+# Add blocks (sample pages composed from components)
+npx khotan add config-page-1   # /config page that renders the KhotanHub dashboard
+
+# Options
+npx khotan add schema --force   # Overwrite existing files
+npx khotan add hub --yes        # Auto-accept dependency install prompts
+```
+
+## Factory (Runtime Engine)
+
+Register plugs, syncs, and resources — the factory upserts them on boot and serves a REST API:
+
+```typescript
+import { khotan, drizzleAdapter, toNextJsHandler } from "khotan-data/factory";
+import { db } from "@/db";
+
+const khotanData = khotan({
+  adapter: drizzleAdapter(db),
+  resources: [
+    { name: "products", connectField: "sku" },
+  ],
+  plugs: [
+    {
+      name: "shopify",
+      baseUrl: "https://myshop.myshopify.com/admin/api",
+      authType: "bearer",
+      syncs: [
+        { name: "products-inflow", type: "inflow", resource: "products" },
+      ],
+    },
+  ],
+});
+
+// Next.js App Router: app/api/khotan/[...all]/route.ts
+export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler);
+```
+
 ## Install
 
 ```bash

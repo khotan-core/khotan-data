@@ -24,6 +24,7 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-definitions": ["error", "interface"],
       "@typescript-eslint/no-import-type-side-effects": "error",
       "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
   {
@@ -34,6 +35,7 @@ export default tseslint.config(
       "*.config.*",
       "**/*.test.ts",
       "**/*.spec.ts",
+      "src/cli/templates/**",
     ],
   },
 );

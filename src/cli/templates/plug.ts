@@ -133,10 +133,9 @@ export function offsetPagination(config: {
   return {
     type: "offset",
     getNextParams(_response, currentParams) {
-      const data = getByPath(
-        _response,
-        config.dataPath,
-      ) as unknown[] | undefined;
+      const data = getByPath(_response, config.dataPath) as
+        | unknown[]
+        | undefined;
       if (!data || data.length < config.pageSize) return null;
       const currentOffset =
         typeof currentParams[offsetParam] === "number"
@@ -161,10 +160,9 @@ export function keysetPagination(config: {
   return {
     type: "keyset",
     getNextParams(response) {
-      const data = getByPath(
-        response,
-        config.dataPath,
-      ) as Record<string, unknown>[] | undefined;
+      const data = getByPath(response, config.dataPath) as
+        | Record<string, unknown>[]
+        | undefined;
       if (!data || data.length === 0) return null;
       const lastItem = data[data.length - 1];
       const id = lastItem?.[config.idField];
@@ -352,10 +350,7 @@ export class Plug {
     return this.with({ auth });
   }
 
-  private buildUrl(
-    path: string,
-    params?: Record<string, unknown>,
-  ): string {
+  private buildUrl(path: string, params?: Record<string, unknown>): string {
     const base = this.config.baseUrl.replace(/\/+$/, "");
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
     const url = new URL(`${base}${cleanPath}`);
@@ -410,10 +405,7 @@ export class Plug {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         if (this.config.timeout) {
-          timeoutId = setTimeout(
-            () => controller.abort(),
-            this.config.timeout,
-          );
+          timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
         }
 
         const externalSignal = options?.signal;
@@ -520,7 +512,9 @@ export class Plug {
       }
     }
 
-    throw lastError ?? new Error(`Request failed after ${maxAttempts} attempts`);
+    throw (
+      lastError ?? new Error(`Request failed after ${maxAttempts} attempts`)
+    );
   }
 }
 

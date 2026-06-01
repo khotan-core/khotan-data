@@ -48,7 +48,11 @@ describe("auth strategies", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("bearer — sets Authorization header with static token", async () => {
-    const w = plug({ baseUrl: BASE, auth: bearer("sk_live_123"), retry: false });
+    const w = plug({
+      baseUrl: BASE,
+      auth: bearer("sk_live_123"),
+      retry: false,
+    });
     await w.get("/test");
     const call = vi.mocked(fetch).mock.calls[0];
     const headers = call[1]!.headers as Headers;
@@ -65,7 +69,11 @@ describe("auth strategies", () => {
   });
 
   it("basic — sets Base64-encoded Authorization header", async () => {
-    const w = plug({ baseUrl: BASE, auth: basic("user", "pass"), retry: false });
+    const w = plug({
+      baseUrl: BASE,
+      auth: basic("user", "pass"),
+      retry: false,
+    });
     await w.get("/test");
     const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
     expect(headers.get("Authorization")).toBe("Basic dXNlcjpwYXNz");
@@ -249,7 +257,9 @@ describe("timeout", () => {
           const signal = (init as RequestInit)?.signal;
           if (signal) {
             signal.addEventListener("abort", () => {
-              reject(new DOMException("The operation was aborted.", "AbortError"));
+              reject(
+                new DOMException("The operation was aborted.", "AbortError"),
+              );
             });
           }
         }),
@@ -305,11 +315,13 @@ describe("withAuth", () => {
     const swapped = original.withAuth(bearer("new_token"));
 
     await original.get("/test");
-    const originalHeaders = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    const originalHeaders = vi.mocked(fetch).mock.calls[0][1]!
+      .headers as Headers;
     expect(originalHeaders.get("Authorization")).toBe("Bearer original_token");
 
     await swapped.get("/test");
-    const swappedHeaders = vi.mocked(fetch).mock.calls[1][1]!.headers as Headers;
+    const swappedHeaders = vi.mocked(fetch).mock.calls[1][1]!
+      .headers as Headers;
     expect(swappedHeaders.get("Authorization")).toBe("Bearer new_token");
   });
 });
@@ -348,12 +360,8 @@ describe("pagination", () => {
 
   it("offset pagination stops when page is smaller than pageSize", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        jsonResponse({ items: [{ id: 1 }, { id: 2 }] }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ items: [{ id: 3 }] }),
-      );
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 1 }, { id: 2 }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 3 }] }));
 
     const w = plug({
       baseUrl: BASE,
@@ -376,12 +384,8 @@ describe("pagination", () => {
 
   it("keyset pagination uses last item id as cursor", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        jsonResponse({ data: [{ id: "a" }, { id: "b" }] }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ data: [] }),
-      );
+      .mockResolvedValueOnce(jsonResponse({ data: [{ id: "a" }, { id: "b" }] }))
+      .mockResolvedValueOnce(jsonResponse({ data: [] }));
 
     const w = plug({
       baseUrl: BASE,

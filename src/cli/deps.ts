@@ -17,7 +17,7 @@ const PM_INFO: Record<PackageManager, PackageManagerInfo> = {
   npm: { name: "npm", installCmd: "npm install", devFlag: "--save-dev" },
 };
 
-const LOCKFILE_PRIORITY: Array<{ file: string; pm: PackageManager }> = [
+const LOCKFILE_PRIORITY: { file: string; pm: PackageManager }[] = [
   { file: "bun.lock", pm: "bun" },
   { file: "pnpm-lock.yaml", pm: "pnpm" },
   { file: "yarn.lock", pm: "yarn" },
@@ -33,10 +33,7 @@ export function detectPackageManager(cwd: string): PackageManagerInfo {
   return PM_INFO.npm;
 }
 
-export function checkNpmPackages(
-  cwd: string,
-  packages: string[],
-): string[] {
+export function checkNpmPackages(cwd: string, packages: string[]): string[] {
   const pkgPath = path.join(cwd, "package.json");
 
   if (!fs.existsSync(pkgPath)) {
@@ -77,9 +74,7 @@ export function checkShadcnComponents(
 
       const aliasPath = config.aliases?.components;
       if (aliasPath) {
-        const resolved = aliasPath
-          .replace(/^@\//, "src/")
-          .replace(/^~\//, "");
+        const resolved = aliasPath.replace(/^@\//, "src/").replace(/^~\//, "");
         uiDir = path.join(cwd, resolved, "ui");
       }
     } catch {
@@ -100,7 +95,7 @@ export function checkShadcnComponents(
   }
 
   return components.filter((name) => {
-    const filePath = path.join(uiDir!, `${name}.tsx`);
+    const filePath = path.join(uiDir, `${name}.tsx`);
     return !fs.existsSync(filePath);
   });
 }
@@ -125,7 +120,7 @@ export function installPackages(
     const e = err as { stderr?: string; stdout?: string };
     return {
       success: false,
-      error: e.stderr || e.stdout || "Install command failed",
+      error: e.stderr ?? e.stdout ?? "Install command failed",
     };
   }
 }
@@ -147,7 +142,7 @@ export function installShadcnComponents(
     const e = err as { stderr?: string; stdout?: string };
     return {
       success: false,
-      error: e.stderr || e.stdout || "shadcn install failed",
+      error: e.stderr ?? e.stdout ?? "shadcn install failed",
     };
   }
 }

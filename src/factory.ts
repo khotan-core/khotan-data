@@ -62,8 +62,7 @@ const khotanSyncs = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    plugId: text("plug_id")
-      .notNull(),
+    plugId: text("plug_id").notNull(),
     name: text("name").notNull(),
     type: text("type", {
       enum: ["inflow", "outflow", "relay", "webhook"],
@@ -95,8 +94,7 @@ const khotanRuns = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    syncId: text("sync_id")
-      .notNull(),
+    syncId: text("sync_id").notNull(),
     runType: text("run_type", {
       enum: ["full", "delta", "backfill", "reconcile", "dry-run"],
     }).notNull(),
@@ -192,20 +190,20 @@ export interface KhotanAdapter {
     type: string;
     schedule?: string | null;
   }): Promise<{ id: string }>;
-  listPlugs(): Promise<Array<Record<string, unknown>>>;
+  listPlugs(): Promise<Record<string, unknown>[]>;
   getPlug(id: string): Promise<Record<string, unknown> | null>;
-  getPlugSyncs(plugId: string): Promise<Array<Record<string, unknown>>>;
-  listSyncs(): Promise<Array<Record<string, unknown>>>;
-  listRuns(syncId: string): Promise<Array<Record<string, unknown>>>;
+  getPlugSyncs(plugId: string): Promise<Record<string, unknown>[]>;
+  listSyncs(): Promise<Record<string, unknown>[]>;
+  listRuns(syncId: string): Promise<Record<string, unknown>[]>;
 
   upsertResource(resource: {
     name: string;
     connectField: string;
     description?: string | null;
   }): Promise<{ id: string }>;
-  listResources(): Promise<Array<Record<string, unknown>>>;
+  listResources(): Promise<Record<string, unknown>[]>;
   getResource(id: string): Promise<Record<string, unknown> | null>;
-  getResourceSyncs(resourceId: string): Promise<Array<Record<string, unknown>>>;
+  getResourceSyncs(resourceId: string): Promise<Record<string, unknown>[]>;
 
   upsertMapping(mapping: {
     id?: string;
@@ -215,7 +213,7 @@ export interface KhotanAdapter {
     metadata?: Record<string, unknown> | null;
   }): Promise<{ id: string; created: boolean }>;
   getMapping(id: string): Promise<Record<string, unknown> | null>;
-  listMappings(resourceId: string): Promise<Array<Record<string, unknown>>>;
+  listMappings(resourceId: string): Promise<Record<string, unknown>[]>;
   deleteMapping(id: string): Promise<void>;
   lookupMapping(params: {
     resourceId: string;
@@ -499,9 +497,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
     },
 
     async deleteMapping(id) {
-      await db
-        .delete(khotanMappings)
-        .where(eq(khotanMappings.id, id));
+      await db.delete(khotanMappings).where(eq(khotanMappings.id, id));
     },
 
     async lookupMapping({ resourceId, plugName, ref }) {
@@ -605,9 +601,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   }
 
   async function init(): Promise<void> {
-    if (!initPromise) {
-      initPromise = doInit();
-    }
+    initPromise ??= doInit();
     return initPromise;
   }
 
@@ -696,10 +690,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const mappingId = segments[mappingsIdx + 1]!;
         const mapping = await adapter.getMapping(mappingId);
         if (!mapping) {
-          return Response.json(
-            { error: "Mapping not found" },
-            { status: 404 },
-          );
+          return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
         return Response.json(mapping);
       }
@@ -719,10 +710,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         };
         const mapping = await adapter.lookupMapping(body);
         if (!mapping) {
-          return Response.json(
-            { error: "Mapping not found" },
-            { status: 404 },
-          );
+          return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
         return Response.json(mapping);
       }
