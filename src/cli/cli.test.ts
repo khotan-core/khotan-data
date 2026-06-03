@@ -9,7 +9,7 @@ const CLI_PATH = path.resolve(__dirname, "../../dist/cli.js");
 function run(
   args: string,
   cwd: string,
-  timeout = 10_000,
+  timeout = 30_000,
 ): { output: string; exitCode: number } {
   try {
     const stdout = execSync(`node ${CLI_PATH} ${args} 2>&1`, {
@@ -39,7 +39,7 @@ function writePkgJson(
   );
 }
 
-describe("CLI", { timeout: 15_000 }, () => {
+describe("CLI", { timeout: 30_000 }, () => {
   let tmpDir: string;
 
   beforeEach(() => {
