@@ -2,6 +2,7 @@ import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
 import prompts from "prompts";
+import { fileURLToPath } from "node:url";
 import {
   getEntry,
   listComponents,
@@ -62,10 +63,7 @@ function resolveOutputBase(
           : "app/api/khotan/[...all]",
       );
     case "appRoot":
-      return path.resolve(
-        cwd,
-        hasSrcLayout(cwd) ? "src/app" : "app",
-      );
+      return path.resolve(cwd, hasSrcLayout(cwd) ? "src/app" : "app");
     case "outputDir":
     default:
       return path.resolve(cwd, outputDir);
@@ -205,7 +203,10 @@ async function checkAndInstallDeps(
 
 export const addCommand = new Command("add")
   .description("Add a component or block to your project")
-  .argument("<name>", "Component or block to add (e.g., plug, schema, hub, config-page-1)")
+  .argument(
+    "<name>",
+    "Component or block to add (e.g., plug, schema, hub, config-page-1)",
+  )
   .option("-f, --force", "Overwrite existing files without prompting")
   .option("-y, --yes", "Auto-accept all install prompts")
   .action(
@@ -230,11 +231,13 @@ export const addCommand = new Command("add")
       const result = getEntry(componentName);
 
       if (!result) {
-        const components = listComponents().map((c) => c.name).join(", ");
-        const blocks = listBlocks().map((b) => b.name).join(", ");
-        console.error(
-          `✗ Unknown name "${componentName}".`,
-        );
+        const components = listComponents()
+          .map((c) => c.name)
+          .join(", ");
+        const blocks = listBlocks()
+          .map((b) => b.name)
+          .join(", ");
+        console.error(`✗ Unknown name "${componentName}".`);
         console.error(`  Components: ${components}`);
         console.error(`  Blocks:     ${blocks}`);
         process.exit(1);
@@ -269,7 +272,7 @@ export const addCommand = new Command("add")
               console.log(`\nAdding required component: ${reqName}...`);
               const { execSync } = await import("node:child_process");
               execSync(
-                `node ${process.argv[1]} add ${reqName}${opts.force ? " --force" : ""}${opts.yes ? " --yes" : ""}`,
+                `node ${process.argv[1] ?? ""} add ${reqName}${opts.force ? " --force" : ""}${opts.yes ? " --yes" : ""}`,
                 { cwd, stdio: "inherit" },
               );
               console.log("");
@@ -322,6 +325,29 @@ export const addCommand = new Command("add")
           }
         }
 
+        // Hub: scaffold the khotan config only if it doesn't exist yet
+        if (componentName === "hub") {
+          const cliDir = path.dirname(fileURLToPath(import.meta.url));
+          const configTemplatePath = path.resolve(
+            cliDir,
+            "templates",
+            "khotan-config.ts",
+          );
+          const configOutputPath = path.join(
+            path.resolve(cwd, config.outputDir),
+            "khotan.ts",
+          );
+          if (!fs.existsSync(configOutputPath)) {
+            fs.mkdirSync(path.dirname(configOutputPath), { recursive: true });
+            fs.copyFileSync(configTemplatePath, configOutputPath);
+            createdFiles.push(path.relative(cwd, configOutputPath));
+          } else {
+            console.log(
+              `✓ ${path.relative(cwd, configOutputPath)} already exists, skipping`,
+            );
+          }
+        }
+
         if (createdFiles.length > 0) {
           console.log(`\n✓ Created ${String(createdFiles.length)} files:`);
           for (const f of createdFiles) {
@@ -330,30 +356,21 @@ export const addCommand = new Command("add")
         }
 
         if (componentName === "hub") {
-          const configPageEntry = getEntry("config-page-1");
-          const hasConfigPage =
-            configPageEntry &&
-            isScaffolded(configPageEntry.entry, cwd, config.outputDir);
-
           console.log("\nNext steps:");
           console.log("  1. Update the db import in your khotan config file");
           console.log("  2. Register your plugs and syncs in the config");
-          if (hasConfigPage) {
-            console.log(
-              "  3. Start the dev server and visit /config",
-            );
-          } else {
-            console.log(
-              "  3. Run `npx khotan add config-page-1` to add a /config page, or render <KhotanHub /> wherever you like",
-            );
-          }
+          console.log(
+            "  3. Render <KhotanHub /> on a page, or `npx khotan add config-page-1` for a ready-made /config route",
+          );
         }
 
         return;
       }
 
       if (!component.templatePath || !component.outputFile) {
-        console.error(`✗ ${kind === "block" ? "Block" : "Component"} "${componentName}" has no template.`);
+        console.error(
+          `✗ ${kind === "block" ? "Block" : "Component"} "${componentName}" has no template.`,
+        );
         process.exit(1);
       }
 
@@ -474,9 +491,7 @@ export const addCommand = new Command("add")
               );
               console.log(`✓ Updated ${relBarrel} with khotan re-export`);
             } else {
-              console.log(
-                `  Skipped. Add this to ${relBarrel} manually:\n`,
-              );
+              console.log(`  Skipped. Add this to ${relBarrel} manually:\n`);
               console.log(`    export * from "./khotan";`);
             }
           }

@@ -89,6 +89,17 @@ export function KhotanHub() {
     }
   }
 
+  async function toggleSync(syncId: string, enabled: boolean) {
+    setSyncs((prev) =>
+      prev.map((s) => (s.id === syncId ? { ...s, enabled } : s)),
+    );
+    await fetch(`/api/khotan/syncs/${syncId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -178,13 +189,10 @@ export function KhotanHub() {
               <p className="text-xs text-muted-foreground truncate">
                 {plug.baseUrl}
               </p>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
-                  {plug.authType} · {plug.syncCount} sync
-                  {plug.syncCount !== 1 ? "s" : ""}
-                </span>
-                <Switch checked={plug.enabled} disabled />
-              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {plug.authType} · {plug.syncCount} sync
+                {plug.syncCount !== 1 ? "s" : ""}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -241,7 +249,10 @@ export function KhotanHub() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Switch checked={sync.enabled} disabled />
+                        <Switch
+                          checked={sync.enabled}
+                          onCheckedChange={(v) => toggleSync(sync.id, v)}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}

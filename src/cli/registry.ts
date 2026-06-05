@@ -88,11 +88,6 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputFile: "route.ts",
         outputBase: "app",
       },
-      {
-        templatePath: path.resolve(__dirname, "templates", "khotan-config.ts"),
-        outputFile: "khotan.ts",
-        outputBase: "outputDir",
-      },
     ],
   },
 };
@@ -104,11 +99,7 @@ const BLOCKS: Record<string, ComponentEntry> = {
     requires: ["hub"],
     files: [
       {
-        templatePath: path.resolve(
-          __dirname,
-          "templates",
-          "config-page.tsx",
-        ),
+        templatePath: path.resolve(__dirname, "templates", "config-page.tsx"),
         outputFile: "config/page.tsx",
         outputBase: "appRoot",
       },

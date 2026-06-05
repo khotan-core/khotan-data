@@ -27,9 +27,15 @@ interface StoredMapping {
 function createMockAdapter(): KhotanAdapter {
   const plugStore = new Map<
     string,
-    { id: string; name: string; baseUrl: string; authType: string }
+    {
+      id: string;
+      name: string;
+      baseUrl: string;
+      authType: string;
+      enabled: boolean;
+    }
   >();
-  const syncStore = new Map<string, StoredSync>();
+  const syncStore = new Map<string, StoredSync & { enabled: boolean }>();
   const resourceStore = new Map<
     string,
     {
@@ -56,7 +62,7 @@ function createMockAdapter(): KhotanAdapter {
         return { id: existing.id };
       }
       const id = `plug-${++plugCounter}`;
-      plugStore.set(id, { id, ...plug });
+      plugStore.set(id, { id, ...plug, enabled: true });
       return { id };
     }),
 
@@ -77,6 +83,7 @@ function createMockAdapter(): KhotanAdapter {
         type: sync.type,
         schedule: sync.schedule ?? null,
         resourceId: null,
+        enabled: true,
       });
       return { id };
     }),
@@ -84,7 +91,6 @@ function createMockAdapter(): KhotanAdapter {
     listPlugs: vi.fn(async () => {
       return [...plugStore.values()].map((p) => ({
         ...p,
-        enabled: true,
         status: "idle",
         syncCount: [...syncStore.values()].filter((s) => s.plugId === p.id)
           .length,
@@ -210,6 +216,16 @@ function createMockAdapter(): KhotanAdapter {
     updateSyncResourceId: vi.fn(async (syncId: string, resourceId: string) => {
       const sync = syncStore.get(syncId);
       if (sync) sync.resourceId = resourceId;
+    }),
+
+    togglePlugEnabled: vi.fn(async (plugId: string, enabled: boolean) => {
+      const plug = plugStore.get(plugId);
+      if (plug) plug.enabled = enabled;
+    }),
+
+    toggleSyncEnabled: vi.fn(async (syncId: string, enabled: boolean) => {
+      const sync = syncStore.get(syncId);
+      if (sync) sync.enabled = enabled;
     }),
   };
 }
@@ -737,16 +753,232 @@ describe("khotan factory", () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe("PATCH toggle endpoints", () => {
+    let instance: ReturnType<typeof khotan>;
+
+    beforeEach(() => {
+      instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+            syncs: [{ name: "products", type: "inflow" }],
+          },
+        ],
+      });
+    });
+
+    it("PATCH .../plugs/:id toggles plug enabled", async () => {
+      await instance.init();
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/plug-1", "PATCH", { enabled: false }),
+      );
+      expect(res.status).toBe(200);
+      expect(adapter.togglePlugEnabled).toHaveBeenCalledWith("plug-1", false);
+    });
+
+    it("PATCH .../plugs/:id returns 404 for unknown plug", async () => {
+      await instance.init();
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/nonexistent", "PATCH", {
+          enabled: true,
+        }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("PATCH .../syncs/:id toggles sync enabled", async () => {
+      await instance.init();
+      const res = await instance.handler(
+        makeRequest("/api/khotan/syncs/sync-1", "PATCH", { enabled: false }),
+      );
+      expect(res.status).toBe(200);
+      expect(adapter.toggleSyncEnabled).toHaveBeenCalledWith("sync-1", false);
+      const data = await res.json();
+      expect(data).toHaveProperty("id", "sync-1");
+      expect(data).toHaveProperty("enabled", false);
+    });
+
+    it("PATCH .../syncs/:id ignores non-boolean enabled", async () => {
+      await instance.init();
+      const res = await instance.handler(
+        makeRequest("/api/khotan/syncs/sync-1", "PATCH", { enabled: "yes" }),
+      );
+      expect(res.status).toBe(200);
+      expect(adapter.toggleSyncEnabled).not.toHaveBeenCalled();
+    });
+
+    it("PATCH returns 404 for unmatched routes", async () => {
+      const res = await instance.handler(
+        makeRequest("/api/khotan/unknown", "PATCH", { enabled: true }),
+      );
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("config-driven filtering", () => {
+    it("GET /plugs excludes plugs not in config", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+          },
+        ],
+      });
+      await instance.init();
+
+      // Manually insert an orphaned plug into the store via adapter
+      await adapter.upsertPlug({
+        name: "orphaned",
+        baseUrl: "https://orphaned.com",
+        authType: "bearer",
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+      const data = await res.json();
+      expect(data).toHaveLength(1);
+      expect(data[0].name).toBe("stripe");
+    });
+
+    it("GET /plugs/:id returns 404 for orphaned plug", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+          },
+        ],
+      });
+      await instance.init();
+
+      await adapter.upsertPlug({
+        name: "orphaned",
+        baseUrl: "https://orphaned.com",
+        authType: "bearer",
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/plug-2"),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("GET /syncs excludes syncs from unregistered plugs", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+            syncs: [{ name: "payments", type: "inflow" }],
+          },
+        ],
+      });
+      await instance.init();
+
+      // Insert an orphaned plug with a sync
+      const { id: orphanPlugId } = await adapter.upsertPlug({
+        name: "orphaned",
+        baseUrl: "https://orphaned.com",
+        authType: "bearer",
+      });
+      await adapter.upsertSync({
+        plugId: orphanPlugId,
+        name: "orphan-sync",
+        type: "inflow",
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/syncs"));
+      const data = await res.json();
+      const names = data.map((s: { name: string }) => s.name);
+      expect(names).toContain("payments");
+      expect(names).not.toContain("orphan-sync");
+    });
+
+    it("GET /resources excludes unregistered resources", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [],
+        resources: [{ name: "products", connectField: "sku" }],
+      });
+      await instance.init();
+
+      await adapter.upsertResource({
+        name: "orphaned-resource",
+        connectField: "id",
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/resources"));
+      const data = await res.json();
+      expect(data).toHaveLength(1);
+      expect(data[0].name).toBe("products");
+    });
+
+    it("GET /resources/:id returns 404 for orphaned resource", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [],
+        resources: [{ name: "products", connectField: "sku" }],
+      });
+      await instance.init();
+
+      await adapter.upsertResource({
+        name: "orphaned-resource",
+        connectField: "id",
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/resources/resource-2"),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("PATCH /plugs/:id returns 404 for orphaned plug", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+          },
+        ],
+      });
+      await instance.init();
+
+      await adapter.upsertPlug({
+        name: "orphaned",
+        baseUrl: "https://orphaned.com",
+        authType: "bearer",
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/plugs/plug-2", "PATCH", { enabled: false }),
+      );
+      expect(res.status).toBe(404);
+      expect(adapter.togglePlugEnabled).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("toNextJsHandler", () => {
-  it("wraps handler into GET/POST/PUT/DELETE exports", () => {
+  it("wraps handler into GET/POST/PUT/PATCH/DELETE exports", () => {
     const mockHandler = vi.fn(async () => Response.json({ ok: true }));
     const handlers = toNextJsHandler(mockHandler);
 
     expect(handlers).toHaveProperty("GET");
     expect(handlers).toHaveProperty("POST");
     expect(handlers).toHaveProperty("PUT");
+    expect(handlers).toHaveProperty("PATCH");
     expect(handlers).toHaveProperty("DELETE");
   });
 
@@ -771,6 +1003,20 @@ describe("toNextJsHandler", () => {
     });
     const res = await handlers.POST(req);
     expect(res.status).toBe(201);
+    expect(mockHandler).toHaveBeenCalledWith(req);
+  });
+
+  it("delegates PATCH to the factory handler", async () => {
+    const mockHandler = vi.fn(async () => Response.json({ updated: true }));
+    const handlers = toNextJsHandler(mockHandler);
+
+    const req = new Request("http://localhost/api/khotan/plugs/1", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: false }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await handlers.PATCH(req);
+    expect(res.status).toBe(200);
     expect(mockHandler).toHaveBeenCalledWith(req);
   });
 });

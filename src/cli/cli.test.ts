@@ -458,6 +458,96 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       const result = run("add hub --force", tmpDir);
       expect(result.output).toContain("Next steps:");
+      expect(result.output).toContain("config-page-1");
+    });
+
+    it("preserves existing khotan.ts config on hub install", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge", "table", "switch"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+      run("init", tmpDir);
+
+      // Pre-create khotan.ts with user content
+      const configDir = path.join(tmpDir, "lib", "khotan");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, "khotan.ts"),
+        'const MY_PLUGS = "cin7";',
+      );
+
+      const result = run("add hub --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("already exists, skipping");
+
+      const content = fs.readFileSync(
+        path.join(configDir, "khotan.ts"),
+        "utf-8",
+      );
+      expect(content).toBe('const MY_PLUGS = "cin7";');
+    });
+
+    it("creates khotan.ts config when it does not exist", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge", "table", "switch"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+      run("init", tmpDir);
+      const result = run("add hub --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 3 files");
+
+      const configPath = path.join(tmpDir, "lib", "khotan", "khotan.ts");
+      expect(fs.existsSync(configPath)).toBe(true);
+      const content = fs.readFileSync(configPath, "utf-8");
+      expect(content).toContain("khotan");
+      expect(content).toContain("drizzleAdapter");
+    });
+
+    it("route template exposes PATCH method", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge", "table", "switch"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+      run("init", tmpDir);
+      run("add hub --force", tmpDir);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "khotan",
+        "[...all]",
+        "route.ts",
+      );
+      const content = fs.readFileSync(routePath, "utf-8");
+      expect(content).toContain("PATCH");
+    });
+
+    it("hub.tsx uses PATCH for sync toggles", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge", "table", "switch"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+      run("init", tmpDir);
+      run("add hub --force", tmpDir);
+
+      const hubPath = path.join(tmpDir, "components", "khotan", "hub.tsx");
+      const content = fs.readFileSync(hubPath, "utf-8");
+      expect(content).toContain('"PATCH"');
+      expect(content).not.toContain('method: "PUT"');
     });
   });
 
@@ -467,7 +557,10 @@ describe("CLI", { timeout: 30_000 }, () => {
         ? path.join(dir, "src", "components", "khotan")
         : path.join(dir, "components", "khotan");
       fs.mkdirSync(hubDir, { recursive: true });
-      fs.writeFileSync(path.join(hubDir, "hub.tsx"), "export function KhotanHub() {}");
+      fs.writeFileSync(
+        path.join(hubDir, "hub.tsx"),
+        "export function KhotanHub() {}",
+      );
     }
 
     it("scaffolds config/page.tsx in src layout", () => {
@@ -478,13 +571,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Created 1 files");
 
-      const pagePath = path.join(
-        tmpDir,
-        "src",
-        "app",
-        "config",
-        "page.tsx",
-      );
+      const pagePath = path.join(tmpDir, "src", "app", "config", "page.tsx");
       expect(fs.existsSync(pagePath)).toBe(true);
 
       const content = fs.readFileSync(pagePath, "utf-8");
@@ -761,12 +848,117 @@ describe("CLI", { timeout: 30_000 }, () => {
     });
   });
 
+  describe("generate", () => {
+    it("scaffolds khotan.ts schema at detected Drizzle directory", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
+      );
+      run("init", tmpDir);
+      const result = run("generate", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Detected Drizzle schema directory");
+
+      const schemaPath = path.join(tmpDir, "db", "khotan.ts");
+      expect(fs.existsSync(schemaPath)).toBe(true);
+      const content = fs.readFileSync(schemaPath, "utf-8");
+      expect(content).toContain("khotan_plugs");
+    });
+
+    it("updates single-file drizzle config to glob", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/schema.ts" };`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "db", "index.ts"),
+        `export * from "./schema";\n`,
+      );
+      run("init", tmpDir);
+      const result = run("generate", tmpDir);
+      expect(result.exitCode).toBe(0);
+
+      const drizzleConfig = fs.readFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        "utf-8",
+      );
+      expect(drizzleConfig).toContain("./db/*");
+    });
+
+    it("appends khotan re-export to barrel file", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "db", "index.ts"),
+        `export * from "./schema";\n`,
+      );
+      run("init", tmpDir);
+      const result = run("generate", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("khotan re-export");
+
+      const barrel = fs.readFileSync(
+        path.join(tmpDir, "db", "index.ts"),
+        "utf-8",
+      );
+      expect(barrel).toContain('export * from "./khotan"');
+    });
+
+    it("skips barrel update when khotan re-export already present", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "db", "index.ts"),
+        `export * from "./schema";\nexport * from "./khotan";\n`,
+      );
+      run("init", tmpDir);
+      const result = run("generate", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("already re-exports khotan");
+    });
+
+    it("runs init automatically if no config exists", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "khotan-data": "^0.0.1",
+        "drizzle-orm": "^0.35.0",
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
+      );
+      const result = run("generate", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Running init");
+      expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(true);
+    });
+  });
+
   describe("help", () => {
     it("shows usage when run with no args", () => {
       const result = run("", tmpDir);
       expect(result.output).toContain("Usage:");
       expect(result.output).toContain("init");
       expect(result.output).toContain("add");
+      expect(result.output).toContain("generate");
+      expect(result.output).toContain("migrate");
     });
   });
 });

@@ -160,7 +160,9 @@ function ensureKhotanDataInstalled(cwd: string): StepResult {
     return { name: "Install khotan-data", status: "success" };
   }
 
-  console.error(`✗ Failed to install khotan-data: ${result.error ?? "unknown error"}`);
+  console.error(
+    `✗ Failed to install khotan-data: ${result.error ?? "unknown error"}`,
+  );
   return { name: "Install khotan-data", status: "failed", error: result.error };
 }
 

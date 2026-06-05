@@ -86,7 +86,9 @@ export function updateDrizzleConfigSchema(
 ): void {
   const content = fs.readFileSync(configPath, "utf-8");
   const updated = content.replace(
-    new RegExp(`(schema:\\s*)(["'\`])${oldValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\2`),
+    new RegExp(
+      `(schema:\\s*)(["'\`])${oldValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\2`,
+    ),
     `$1$2${newValue}$2`,
   );
   fs.writeFileSync(configPath, updated, "utf-8");

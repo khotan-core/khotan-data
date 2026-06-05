@@ -222,6 +222,8 @@ export interface KhotanAdapter {
   }): Promise<Record<string, unknown> | null>;
 
   updateSyncResourceId(syncId: string, resourceId: string): Promise<void>;
+  togglePlugEnabled(plugId: string, enabled: boolean): Promise<void>;
+  toggleSyncEnabled(syncId: string, enabled: boolean): Promise<void>;
 }
 
 export interface KhotanConfig {
@@ -517,6 +519,20 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .set({ resourceId, updatedAt: new Date() })
         .where(eq(khotanSyncs.id, syncId));
     },
+
+    async togglePlugEnabled(plugId, enabled) {
+      await db
+        .update(khotanPlugs)
+        .set({ enabled, updatedAt: new Date() })
+        .where(eq(khotanPlugs.id, plugId));
+    },
+
+    async toggleSyncEnabled(syncId, enabled) {
+      await db
+        .update(khotanSyncs)
+        .set({ enabled, updatedAt: new Date() })
+        .where(eq(khotanSyncs.id, syncId));
+    },
   };
 }
 
@@ -623,24 +639,35 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       // GET .../plugs
       if (plugsIdx !== -1 && plugsIdx === segments.length - 1) {
         const data = await adapter.listPlugs();
-        return Response.json(data);
+        const filtered = data.filter(
+          (p) => typeof p["name"] === "string" && plugNames.has(p["name"]),
+        );
+        return Response.json(filtered);
       }
 
       // GET .../plugs/:id
       if (plugsIdx !== -1 && plugsIdx === segments.length - 2) {
         const plugId = segments[plugsIdx + 1]!;
         const plug = await adapter.getPlug(plugId);
-        if (!plug) {
+        if (
+          !plug ||
+          typeof plug["name"] !== "string" ||
+          !plugNames.has(plug["name"])
+        ) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
         const syncs = await adapter.getPlugSyncs(plugId);
         return Response.json({ ...plug, syncs });
       }
 
-      // GET .../syncs
+      // GET .../syncs — only syncs belonging to registered plugs
       if (syncsIdx !== -1 && syncsIdx === segments.length - 1) {
         const data = await adapter.listSyncs();
-        return Response.json(data);
+        const filtered = data.filter(
+          (s) =>
+            typeof s["plugName"] === "string" && plugNames.has(s["plugName"]),
+        );
+        return Response.json(filtered);
       }
 
       // GET .../syncs/:id/runs
@@ -654,10 +681,13 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         return Response.json(data);
       }
 
-      // GET .../resources
+      // GET .../resources — only resources registered in config
       if (resourcesIdx !== -1 && resourcesIdx === segments.length - 1) {
         const data = await adapter.listResources();
-        return Response.json(data);
+        const filtered = data.filter(
+          (r) => typeof r["name"] === "string" && resourceNames.has(r["name"]),
+        );
+        return Response.json(filtered);
       }
 
       // GET .../resources/:id/mappings
@@ -675,7 +705,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       if (resourcesIdx !== -1 && resourcesIdx === segments.length - 2) {
         const resourceId = segments[resourcesIdx + 1]!;
         const resource = await adapter.getResource(resourceId);
-        if (!resource) {
+        if (
+          !resource ||
+          typeof resource["name"] !== "string" ||
+          !resourceNames.has(resource["name"])
+        ) {
           return Response.json(
             { error: "Resource not found" },
             { status: 404 },
@@ -731,6 +765,37 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       }
     }
 
+    if (request.method === "PATCH") {
+      // PATCH .../plugs/:id
+      if (plugsIdx !== -1 && plugsIdx === segments.length - 2) {
+        const plugId = segments[plugsIdx + 1]!;
+        const plug = await adapter.getPlug(plugId);
+        if (
+          !plug ||
+          typeof plug["name"] !== "string" ||
+          !plugNames.has(plug["name"])
+        ) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json()) as { enabled?: boolean };
+        if (typeof body.enabled === "boolean") {
+          await adapter.togglePlugEnabled(plugId, body.enabled);
+        }
+        const updated = await adapter.getPlug(plugId);
+        return Response.json(updated);
+      }
+
+      // PATCH .../syncs/:id
+      if (syncsIdx !== -1 && syncsIdx === segments.length - 2) {
+        const syncId = segments[syncsIdx + 1]!;
+        const body = (await request.json()) as { enabled?: boolean };
+        if (typeof body.enabled === "boolean") {
+          await adapter.toggleSyncEnabled(syncId, body.enabled);
+        }
+        return Response.json({ id: syncId, ...body });
+      }
+    }
+
     if (request.method === "PUT") {
       // PUT .../mappings/:id
       if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
@@ -773,6 +838,7 @@ interface NextJsRouteHandlers {
   GET: (req: NextJsRequest) => Promise<Response>;
   POST: (req: NextJsRequest) => Promise<Response>;
   PUT: (req: NextJsRequest) => Promise<Response>;
+  PATCH: (req: NextJsRequest) => Promise<Response>;
   DELETE: (req: NextJsRequest) => Promise<Response>;
 }
 
@@ -787,6 +853,7 @@ export function toNextJsHandler(
     GET: handle,
     POST: handle,
     PUT: handle,
+    PATCH: handle,
     DELETE: handle,
   };
 }
