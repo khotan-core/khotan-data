@@ -62,6 +62,8 @@ The schema file SHALL export TypeScript type helpers derived from all tables: `K
 ### Requirement: khotan_wires table
 The schema SHALL define a `khotan_wires` Drizzle table with the following columns: `id` (text, primary key, default UUID), `plug_id` (text, not null, references khotan_plugs.id), `remote_id` (text, not null — the subscription ID on the external service), `callback_url` (text, not null — the URL events are sent to), `event_types` (jsonb, not null — array of subscribed event type strings), `status` (text, not null, default 'active' — one of 'active', 'disabled'), `metadata` (jsonb, nullable), `created_at` (timestamp with timezone, default now), `updated_at` (timestamp with timezone, default now).
 
+Note: The factory's internal schema mirror adds a "pending" status to the enum and defaults to "pending" for its 2-step lifecycle (create row → subscribe → update to active). The user-facing template schema uses only "active" and "disabled" since the factory handles the transitional state internally.
+
 #### Scenario: Table has correct columns and defaults
 - **WHEN** the schema file is loaded by Drizzle
 - **THEN** the `khotan_wires` table SHALL have all specified columns with their types and defaults

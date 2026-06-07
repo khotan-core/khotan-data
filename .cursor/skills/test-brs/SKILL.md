@@ -31,6 +31,7 @@ This creates a real copy in node_modules — no symlinks, no Turbopack resolutio
 **Do NOT use:**
 - `npm link` — Turbopack can't resolve symlinked package exports
 - `npm install ../path` — npm creates a `file:` symlink, same problem
+- **Relative paths to tgz** — npm resolves relative paths from the lockfile root, not cwd. Always use the absolute path: `npm install /Users/coreyberther/Projects/Personal/khotan-data/khotan-data-0.1.0.tgz`
 
 ## Key Files
 
@@ -81,3 +82,13 @@ Run from `/Users/coreyberther/Projects/brs-khotan-connector`:
 - Factory auto-upserts plugs on first API request — no explicit init needed
 - API responses are config-filtered: only plugs/syncs/resources in the config are returned, DB orphans are hidden
 - `npm run dev` uses Turbopack by default — `serverExternalPackages` in next.config.ts needed for the file link
+
+## User Perspective Rule
+
+**Always test as a real user would.** Do NOT directly edit files in the test app that are scaffolded or installed by the khotan CLI or package. Instead:
+
+- **Scaffolded files** (e.g. `plug.ts`, `hub.tsx`, schema) — re-scaffold via CLI commands (`npx khotan add plug --force`)
+- **User-owned config** (e.g. `khotan.ts`, custom contracts, client files) — can be edited directly, since a real user writes these themselves
+- **node_modules** — never edit; redeploy via `npm pack` + install
+
+If a template change in khotan-data adds new functionality (like new getters on Plug), test it by re-scaffolding the component, not by hand-patching the test app's copy.

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { configTemplate } from "../config-template.js";
 import {
@@ -11,14 +12,20 @@ import {
   installShadcnComponents,
 } from "../deps.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 function resolveOutputDir(projectRoot: string): string {
   if (fs.existsSync(path.join(projectRoot, "src", "app"))) {
-    return "src/lib/khotan";
+    return "src/khotan";
   }
   if (fs.existsSync(path.join(projectRoot, "app"))) {
-    return "lib/khotan";
+    return "khotan";
   }
-  return "src/lib/khotan";
+  return "src/khotan";
+}
+
+function hasSrcLayout(cwd: string): boolean {
+  return fs.existsSync(path.join(cwd, "src", "app"));
 }
 
 interface StepResult {
@@ -30,6 +37,53 @@ interface StepResult {
 const DRIZZLE_PACKAGES = ["drizzle-orm", "postgres"];
 const DRIZZLE_DEV_PACKAGES = ["drizzle-kit"];
 const SHADCN_COMPONENTS = ["card", "badge", "table", "switch"];
+
+/**
+ * Scaffold the core khotan files (khotan.ts instance + route.ts).
+ * Never overwrites existing files. Returns list of created file paths.
+ */
+export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
+  const created: string[] = [];
+
+  const khotanConfigTemplatePath = path.resolve(
+    __dirname,
+    "templates",
+    "khotan-config.ts",
+  );
+  const routeTemplatePath = path.resolve(
+    __dirname,
+    "templates",
+    "khotan-route.ts",
+  );
+
+  // Scaffold khotan.ts (instance config) — never overwrite
+  const khotanTsPath = path.join(path.resolve(cwd, outputDir), "khotan.ts");
+  if (!fs.existsSync(khotanTsPath)) {
+    fs.mkdirSync(path.dirname(khotanTsPath), { recursive: true });
+    fs.copyFileSync(khotanConfigTemplatePath, khotanTsPath);
+    created.push(path.relative(cwd, khotanTsPath));
+  } else {
+    console.log(`✓ ${path.relative(cwd, khotanTsPath)} already exists, skipping`);
+  }
+
+  // Scaffold route.ts (API catch-all) — never overwrite
+  const routeDir = path.resolve(
+    cwd,
+    hasSrcLayout(cwd)
+      ? "src/app/api/khotan/[...all]"
+      : "app/api/khotan/[...all]",
+  );
+  const routePath = path.join(routeDir, "route.ts");
+  if (!fs.existsSync(routePath)) {
+    fs.mkdirSync(routeDir, { recursive: true });
+    fs.copyFileSync(routeTemplatePath, routePath);
+    created.push(path.relative(cwd, routePath));
+  } else {
+    console.log(`✓ ${path.relative(cwd, routePath)} already exists, skipping`);
+  }
+
+  return created;
+}
 
 async function runFullSetup(cwd: string): Promise<StepResult[]> {
   const results: StepResult[] = [];
@@ -128,16 +182,23 @@ async function runFullSetup(cwd: string): Promise<StepResult[]> {
     results.push({ name: "Install shadcn components", status: "skipped" });
   }
 
-  // Step 4: Create khotan config
+  // Step 4: Create khotan config + core files
   const configPath = path.resolve(cwd, "khotan.config.ts");
+  const outputDir = resolveOutputDir(cwd);
   if (!fs.existsSync(configPath)) {
-    const outputDir = resolveOutputDir(cwd);
     fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
     console.log(`\n✓ Created khotan.config.ts (outputDir: ${outputDir})`);
     results.push({ name: "Create khotan.config.ts", status: "success" });
   } else {
     console.log("\n✓ khotan.config.ts already exists, skipping");
     results.push({ name: "Create khotan.config.ts", status: "skipped" });
+  }
+
+  const coreFiles = scaffoldCoreFiles(cwd, outputDir);
+  if (coreFiles.length > 0) {
+    results.push({ name: `Scaffold ${coreFiles.join(", ")}`, status: "success" });
+  } else {
+    results.push({ name: "Scaffold core files", status: "skipped" });
   }
 
   // Step 5: Install khotan-data package
@@ -168,20 +229,20 @@ function ensureKhotanDataInstalled(cwd: string): StepResult {
 
 /**
  * Core init logic reusable from the add command.
- * Creates khotan.config.ts and installs khotan-data if missing.
+ * Creates khotan.config.ts, khotan.ts, route.ts, and installs khotan-data.
+ * Never overwrites existing files.
  * Returns true if the config file exists after running.
  */
 export async function runInit(cwd: string): Promise<boolean> {
   const configPath = path.resolve(cwd, "khotan.config.ts");
+  const outputDir = resolveOutputDir(cwd);
 
-  if (fs.existsSync(configPath)) {
-    return true;
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
+    console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
   }
 
-  const outputDir = resolveOutputDir(cwd);
-  fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
-  console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
-
+  scaffoldCoreFiles(cwd, outputDir);
   ensureKhotanDataInstalled(cwd);
 
   return fs.existsSync(configPath);
@@ -227,18 +288,30 @@ export const initCommand = new Command("init")
     }
 
     const configPath = path.resolve(cwd, "khotan.config.ts");
+    const outputDir = resolveOutputDir(cwd);
 
     if (fs.existsSync(configPath)) {
-      console.warn(
-        `⚠ khotan.config.ts already exists at ${configPath}. Skipping.`,
-      );
-      ensureKhotanDataInstalled(cwd);
-      return;
+      console.log(`✓ khotan.config.ts already exists, skipping`);
+    } else {
+      fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
+      console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
     }
 
-    const outputDir = resolveOutputDir(cwd);
-    fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
-    console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
+    const coreFiles = scaffoldCoreFiles(cwd, outputDir);
 
     ensureKhotanDataInstalled(cwd);
+
+    const allFiles = [
+      ...(fs.existsSync(configPath) && coreFiles.length === 0
+        ? []
+        : ["khotan.config.ts"]),
+      ...coreFiles,
+    ];
+
+    if (allFiles.length > 0 || coreFiles.length > 0) {
+      console.log("\nNext steps:");
+      console.log("  1. Update the db import in your khotan config file");
+      console.log("  2. Run `npx khotan add plug` to add the HTTP client");
+      console.log("  3. Run `npx khotan migrate` to create database tables");
+    }
   });

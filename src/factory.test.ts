@@ -251,13 +251,11 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
         },
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com/v2",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com/v2", authType: "bearer" },
         },
       ];
 
@@ -276,13 +274,11 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
         },
         {
           name: "github",
-          baseUrl: "https://api.github.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.github.com", authType: "bearer" },
         },
       ];
 
@@ -304,8 +300,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
-          baseUrl: "https://shopify.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://shopify.com", authType: "bearer" },
           syncs: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
@@ -324,8 +319,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
-          baseUrl: "https://shopify.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://shopify.com", authType: "bearer" },
           syncs: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
@@ -341,8 +335,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
           syncs: [
             { name: "products-inflow", type: "inflow", schedule: "0 * * * *" },
             { name: "invoices-inflow", type: "inflow" },
@@ -377,8 +370,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
         },
       ];
 
@@ -392,8 +384,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
         },
       ];
 
@@ -415,8 +406,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
-          baseUrl: "https://shopify.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://shopify.com", authType: "bearer" },
           syncs: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
@@ -443,8 +433,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
-          baseUrl: "https://shopify.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://shopify.com", authType: "bearer" },
           syncs: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
@@ -464,8 +453,7 @@ describe("khotan factory", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
-          baseUrl: "https://api.stripe.com",
-          authType: "bearer",
+          plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
           syncs: [{ name: "payments", type: "inflow" }],
         },
       ];
@@ -486,8 +474,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
             syncs: [{ name: "products", type: "inflow" }],
           },
         ],
@@ -575,8 +562,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "shopify",
-            baseUrl: "https://shopify.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://shopify.com", authType: "bearer" },
             syncs: [
               { name: "products-inflow", type: "inflow", resource: "products" },
             ],
@@ -763,8 +749,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
             syncs: [{ name: "products", type: "inflow" }],
           },
         ],
@@ -826,8 +811,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
           },
         ],
       });
@@ -852,8 +836,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
           },
         ],
       });
@@ -877,8 +860,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
             syncs: [{ name: "payments", type: "inflow" }],
           },
         ],
@@ -948,8 +930,7 @@ describe("khotan factory", () => {
         plugs: [
           {
             name: "stripe",
-            baseUrl: "https://api.stripe.com",
-            authType: "bearer",
+            plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
           },
         ],
       });

@@ -1,7 +1,29 @@
 ## ADDED Requirements
 
+### Requirement: defineContract type-narrowing function
+The `khotan-data/plug` subpath export SHALL provide a `defineContract()` function that accepts a contract router object and returns it with literal types preserved (via `const` generic inference).
+
+#### Scenario: Define a contract
+- **WHEN** a user calls `defineContract({ getProduct: { method: "GET", path: "/products/:id", responses: { 200: schema } } })`
+- **THEN** the function SHALL return the same object with path literals preserved for type inference
+
+#### Scenario: Nested routers
+- **WHEN** a user nests a `ContractRouter` inside another `ContractRouter`
+- **THEN** `createPlugClient` SHALL recursively create nested client objects
+
+### Requirement: Schema interface (zod-version-agnostic)
+The module SHALL define a `Schema<TOutput, TInput>` interface requiring only `parse(data: unknown): TOutput`. This works with zod v3, v4, or any validator implementing `.parse()`.
+
+#### Scenario: zod v3 schema
+- **WHEN** a user defines responses with `z.object({...})` from zod v3
+- **THEN** the type system SHALL correctly infer output types
+
+#### Scenario: zod v4 schema
+- **WHEN** a user defines responses with `z.object({...})` from zod v4
+- **THEN** the type system SHALL correctly infer output types (no `AnyZodObject` or other v3-only internals used)
+
 ### Requirement: createPlugClient adapter function
-The `khotan-data/plug` subpath export SHALL provide a `createPlugClient()` function that accepts a ts-rest contract and a Plug instance, and returns a typed client object where each contract endpoint is a callable async function.
+The `khotan-data/plug` subpath export SHALL provide a `createPlugClient()` function that accepts a contract and a Plug instance, and returns a typed client object where each contract endpoint is a callable async function.
 
 #### Scenario: Create a typed client from contract and plug
 - **WHEN** a user calls `createPlugClient(contract, plugInstance)`
@@ -10,11 +32,11 @@ The `khotan-data/plug` subpath export SHALL provide a `createPlugClient()` funct
 
 #### Scenario: Endpoint function has correct return type
 - **WHEN** a user calls `client.getProduct({ params: { id: "123" } })`
-- **THEN** the return type SHALL be inferred from the contract's response Zod schema (e.g., `z.infer<typeof responseSchema>`)
+- **THEN** the return type SHALL be a union of `{ status: K, body: SchemaOutput<responses[K]> }` for each defined status code
 
 #### Scenario: Endpoint function has correct input type
 - **WHEN** a contract endpoint defines `params`, `query`, or `body` schemas
-- **THEN** the corresponding client function SHALL require those fields in its input argument with types inferred from the Zod schemas
+- **THEN** the corresponding client function SHALL require those fields in its input argument with types inferred from the schemas
 
 ### Requirement: Path parameter interpolation
 The adapter SHALL interpolate path parameters from the `:param` syntax in the contract's path using the provided `params` object.
@@ -29,7 +51,7 @@ The adapter SHALL interpolate path parameters from the `:param` syntax in the co
 
 #### Scenario: Missing path parameter
 - **WHEN** a contract defines `path: "/products/:id"` and the user omits the `id` param
-- **THEN** TypeScript SHALL report a compile error (enforced by ts-rest's type inference)
+- **THEN** TypeScript SHALL report a compile error (enforced by `PathParams` type extraction)
 
 ### Requirement: Query parameter forwarding
 The adapter SHALL pass `query` fields as query parameters on GET requests (and other methods when specified).
@@ -50,22 +72,22 @@ The adapter SHALL pass the `body` field as the request body for POST, PUT, PATCH
 - **THEN** the adapter SHALL pass the body object to `plug.request("POST", path, { body: ... })`
 
 #### Scenario: Body validation before request
-- **WHEN** a contract endpoint defines a body Zod schema and the user provides an invalid body
-- **THEN** the adapter SHALL throw a Zod validation error before making the HTTP request
+- **WHEN** a contract endpoint defines a body schema and the user provides an invalid body
+- **THEN** the adapter SHALL throw a validation error before making the HTTP request
 
 ### Requirement: Request input validation
-The adapter SHALL validate all request inputs (params, query, body) against their respective Zod schemas before making the HTTP request.
+The adapter SHALL validate all request inputs (params, query, body) against their respective schemas before making the HTTP request.
 
 #### Scenario: Invalid query param
 - **WHEN** a contract defines `query: z.object({ page: z.number() })` and the user passes `{ query: { page: "abc" } }`
 - **THEN** the adapter SHALL throw a ZodError without making an HTTP request
 
 #### Scenario: Valid input passes through
-- **WHEN** all input fields pass Zod validation
+- **WHEN** all input fields pass schema validation
 - **THEN** the adapter SHALL proceed to make the HTTP request
 
 ### Requirement: Response validation
-The adapter SHALL validate the HTTP response against the contract's response Zod schema and return the validated, typed result.
+The adapter SHALL validate the HTTP response against the contract's response schema and return the validated, typed result.
 
 #### Scenario: Valid response
 - **WHEN** the API returns JSON matching the response schema
@@ -79,9 +101,13 @@ The adapter SHALL validate the HTTP response against the contract's response Zod
 - **WHEN** the API returns extra fields not in the response schema
 - **THEN** the adapter SHALL strip unknown fields (Zod default behavior) and return only schema-defined fields
 
-#### Scenario: Skip response validation
-- **WHEN** a user passes `{ validateResponse: false }` as an option to the client function
-- **THEN** the adapter SHALL skip response Zod validation and return the raw parsed response
+#### Scenario: Skip response validation per-request
+- **WHEN** a user passes `{ validateResponse: false }` in the call arguments
+- **THEN** the adapter SHALL skip response schema validation and return the raw parsed response
+
+#### Scenario: Skip response validation globally
+- **WHEN** a user passes `{ validateResponse: false }` as a `PlugClientOptions` to `createPlugClient`
+- **THEN** all responses SHALL skip validation unless overridden per-request
 
 ### Requirement: Delegates to Plug execution layer
 The adapter SHALL delegate all HTTP execution to the provided Plug instance, inheriting its auth, retry, timeout, hooks, and pagination configuration.
@@ -99,7 +125,7 @@ The adapter SHALL delegate all HTTP execution to the provided Plug instance, inh
 - **THEN** requests made through the adapter SHALL respect that timeout
 
 ### Requirement: Status-code-aware responses
-The adapter SHALL support ts-rest's status-code-discriminated response types, returning the result with a `status` and `body` field.
+The adapter SHALL support status-code-discriminated response types, returning the result with a `status` and `body` field.
 
 #### Scenario: Successful response with status
 - **WHEN** the API returns HTTP 200 and the contract defines `responses: { 200: schema }`
@@ -115,11 +141,11 @@ The adapter SHALL support ts-rest's status-code-discriminated response types, re
 - **THEN** the adapter SHALL throw a PlugError as normal (existing Plug behavior)
 
 ### Requirement: Subpath export
-The `khotan-data` package SHALL expose a `khotan-data/plug` subpath export that provides `createPlugClient`.
+The `khotan-data` package SHALL expose a `khotan-data/plug` subpath export that provides `createPlugClient` and `defineContract`.
 
 #### Scenario: Import from subpath
-- **WHEN** a user writes `import { createPlugClient } from "khotan-data/plug"`
-- **THEN** the function SHALL be available and correctly typed
+- **WHEN** a user writes `import { createPlugClient, defineContract } from "khotan-data/plug"`
+- **THEN** both functions SHALL be available and correctly typed
 
 ### Requirement: Per-request headers
 The adapter SHALL forward per-request `headers` from the call arguments to the Plug's request.

@@ -56,8 +56,44 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     name: "plug",
     description:
       "Self-contained fetch wrapper with auth, retry, and pagination",
-    templatePath: path.resolve(__dirname, "templates", "plug.ts"),
-    outputFile: "plug.ts",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "plug.ts"),
+        outputFile: "plugs/plug.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "plug.example.ts"),
+        outputFile: "plugs/plug.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+    dependencies: {
+      npmPackages: ["zod"],
+    },
+  },
+  wire: {
+    name: "wire",
+    description:
+      "Webhook subscription lifecycle management using Plug for HTTP",
+    requires: ["plug", "schema"],
+    requiresShadcn: true,
+    dependencies: {
+      npmPackages: ["drizzle-orm"],
+      shadcnComponents: ["card", "badge", "button"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "wire.ts"),
+        outputFile: "wires/wire.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "wire-panel.tsx"),
+        outputFile: "wire.tsx",
+        outputBase: "components",
+      },
+    ],
   },
   schema: {
     name: "schema",
@@ -70,12 +106,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   hub: {
     name: "hub",
-    description:
-      "Dashboard UI, API route, and config for managing plugs and syncs",
+    description: "Dashboard UI for managing plugs and syncs",
     requiresShadcn: true,
     dependencies: {
       npmPackages: ["drizzle-orm"],
-      shadcnComponents: ["card", "badge", "table", "switch"],
+      shadcnComponents: ["card", "badge", "table", "switch", "button", "input", "label"],
     },
     files: [
       {
@@ -84,9 +119,31 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "components",
       },
       {
-        templatePath: path.resolve(__dirname, "templates", "khotan-route.ts"),
-        outputFile: "route.ts",
-        outputBase: "app",
+        templatePath: path.resolve(__dirname, "templates", "wire-panel.tsx"),
+        outputFile: "wire.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "var-panel.tsx"),
+        outputFile: "var-panel.tsx",
+        outputBase: "components",
+      },
+    ],
+  },
+  "plug-debugger": {
+    name: "plug-debugger",
+    description:
+      "Dev-only debug panel for testing plug requests interactively",
+    requiresShadcn: true,
+    requires: ["plug"],
+    dependencies: {
+      shadcnComponents: ["card", "badge", "button", "input", "label"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "plug-debugger.tsx"),
+        outputFile: "plug-debugger.tsx",
+        outputBase: "components",
       },
     ],
   },

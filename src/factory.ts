@@ -1,4 +1,11 @@
 import { eq, desc, sql, count } from "drizzle-orm";
+
+declare const process: { env: Record<string, string | undefined> };
+
+const _khotanDebug = typeof process !== "undefined" && process.env?.["KHOTAN_DEBUG"];
+function kd(scope: string, ...args: unknown[]) {
+  if (_khotanDebug) console.log(`[khotan:${scope}]`, ...args);
+}
 import {
   boolean,
   index,
@@ -32,7 +39,7 @@ const khotanPlugs = pgTable("khotan_plugs", {
     .default("idle")
     .notNull(),
   statusMessage: text("status_message"),
-  encryptedCredentials: text("encrypted_credentials"),
+  encryptedVars: text("encrypted_vars"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -88,13 +95,43 @@ const khotanSyncs = pgTable(
   ],
 );
 
+const khotanWires = pgTable(
+  "khotan_wires",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    plugId: text("plug_id").notNull(),
+    remoteId: text("remote_id").notNull(),
+    callbackUrl: text("callback_url").notNull(),
+    eventTypes: jsonb("event_types").notNull().$type<string[]>(),
+    status: text("status", {
+      enum: ["active", "disabled", "pending"],
+    })
+      .default("pending")
+      .notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("khotan_wires_plug_id_idx").on(table.plugId),
+    index("khotan_wires_status_idx").on(table.status),
+  ],
+);
+
 const khotanRuns = pgTable(
   "khotan_runs",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    syncId: text("sync_id").notNull(),
+    syncId: text("sync_id"),
+    wireId: text("wire_id"),
     runType: text("run_type", {
       enum: ["full", "delta", "backfill", "reconcile", "dry-run"],
     }).notNull(),
@@ -119,6 +156,7 @@ const khotanRuns = pgTable(
   },
   (table) => [
     index("khotan_runs_sync_id_idx").on(table.syncId),
+    index("khotan_runs_wire_id_idx").on(table.wireId),
     index("khotan_runs_status_idx").on(table.status),
     index("khotan_runs_sync_id_started_at_idx").on(
       table.syncId,
@@ -155,6 +193,70 @@ const khotanMappings = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Encryption — AES-256-GCM for var store
+// ---------------------------------------------------------------------------
+
+async function deriveKey(secret: string): Promise<CryptoKey> {
+  const encoded = new TextEncoder().encode(secret);
+  const hash = await crypto.subtle.digest("SHA-256", encoded);
+  return crypto.subtle.importKey(
+    "raw",
+    hash,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptVars(
+  plaintext: string,
+  secret: string,
+): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(secret);
+  const encoded = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoded,
+  );
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return bytesToHex(combined);
+}
+
+async function decryptVars(
+  encrypted: string,
+  secret: string,
+): Promise<string> {
+  const combined = hexToBytes(encrypted);
+  const iv = combined.slice(0, 12);
+  const ciphertext = combined.slice(12);
+  const key = await deriveKey(secret);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext,
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -171,11 +273,45 @@ export interface SyncRegistration {
   resource?: string;
 }
 
+export interface WireSubscribeContext {
+  plug: { get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T> };
+  callbackUrl: string;
+  events: string[];
+  wireVars: Record<string, string>;
+  setWireVars(updates: Record<string, string>): Promise<void>;
+}
+
+export interface WireUnsubscribeContext {
+  plug: { get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T> };
+  remoteId: string;
+  wireVars: Record<string, string>;
+  setWireVars(updates: Record<string, string>): Promise<void>;
+}
+
+export interface WireRegistration {
+  events: string[];
+  onSubscribe(ctx: WireSubscribeContext): Promise<{ remoteId: string }>;
+  onUnsubscribe(ctx: WireUnsubscribeContext): Promise<void>;
+  onVerify?(ctx: { headers: Headers; body: unknown; wireVars: Record<string, string> }): Promise<boolean>;
+}
+
+export interface VarField {
+  readonly key: string;
+  label: string;
+  type: "text" | "password" | "url";
+  secret?: boolean;
+  hidden?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
 export interface PlugRegistration {
   name: string;
-  baseUrl: string;
-  authType: "bearer" | "basic" | "apiKey" | "custom";
+  plug: { baseUrl: string; authType: string; varFields?: readonly VarField[]; get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T> };
+  vars?: VarField[];
   syncs?: SyncRegistration[];
+  endpoints?: Record<string, { method: string; path: string }>;
+  wires?: WireRegistration[];
 }
 
 export interface KhotanAdapter {
@@ -224,19 +360,51 @@ export interface KhotanAdapter {
   updateSyncResourceId(syncId: string, resourceId: string): Promise<void>;
   togglePlugEnabled(plugId: string, enabled: boolean): Promise<void>;
   toggleSyncEnabled(syncId: string, enabled: boolean): Promise<void>;
+
+  insertWire(wire: {
+    plugId: string;
+    remoteId: string;
+    callbackUrl: string;
+    eventTypes: string[];
+  }): Promise<{ id: string }>;
+  upsertWire(wire: { plugId: string }): Promise<{ id: string }>;
+  getActiveWire(plugId: string): Promise<Record<string, unknown> | null>;
+  getPlugWire(plugId: string): Promise<Record<string, unknown> | null>;
+  getWire(wireId: string): Promise<Record<string, unknown> | null>;
+  updateWireStatus(wireId: string, status: "active" | "disabled" | "pending"): Promise<void>;
+  updateWireDetails(wireId: string, details: { remoteId: string; callbackUrl: string; eventTypes: string[]; status: "active" }): Promise<void>;
+  getWireMetadata(wireId: string): Promise<string | null>;
+  updateWireMetadata(wireId: string, metadata: string): Promise<void>;
+  getEncryptedCredentials(plugId: string): Promise<string | null>;
+  setEncryptedCredentials(plugId: string, encrypted: string): Promise<void>;
+  clearEncryptedCredentials(plugId: string): Promise<void>;
 }
 
 export interface KhotanConfig {
   adapter: KhotanAdapter;
   plugs: PlugRegistration[];
   resources?: ResourceRegistration[];
+  secret?: string;
 }
 
 export type KhotanHandler = (request: Request) => Promise<Response>;
 
+export interface WireInstance {
+  create(callbackUrl: string): Promise<Record<string, unknown>>;
+  delete(wireId: string): Promise<void>;
+  get(): Promise<Record<string, unknown> | null>;
+}
+
 export interface KhotanInstance {
   handler: KhotanHandler;
   init(): Promise<void>;
+  wire(plugName: string): WireInstance;
+  getVars(plugName: string): Promise<Record<string, string>>;
+  setVars(plugName: string, vars: Record<string, string>): Promise<void>;
+  clearVars(plugName: string): Promise<void>;
+  hasVars(plugName: string): Promise<boolean>;
+  getVarFields(plugName: string): readonly VarField[];
+  getPlug(plugName: string): PlugRegistration["plug"];
 }
 
 // ---------------------------------------------------------------------------
@@ -533,12 +701,146 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .set({ enabled, updatedAt: new Date() })
         .where(eq(khotanSyncs.id, syncId));
     },
+
+    async insertWire(wire) {
+      const rows = await db
+        .insert(khotanWires)
+        .values({
+          plugId: wire.plugId,
+          remoteId: wire.remoteId,
+          callbackUrl: wire.callbackUrl,
+          eventTypes: wire.eventTypes,
+          status: "active",
+        })
+        .returning();
+      return { id: rows[0]!.id };
+    },
+
+    async upsertWire(wire) {
+      const existing = await db
+        .select({ id: khotanWires.id })
+        .from(khotanWires)
+        .where(eq(khotanWires.plugId, wire.plugId))
+        .limit(1);
+
+      if (existing.length > 0) {
+        return { id: existing[0]!.id };
+      }
+
+      const rows = await db
+        .insert(khotanWires)
+        .values({
+          plugId: wire.plugId,
+          remoteId: "",
+          callbackUrl: "",
+          eventTypes: [],
+          status: "pending",
+        })
+        .returning();
+      return { id: rows[0]!.id };
+    },
+
+    async getActiveWire(plugId) {
+      const rows = await db
+        .select()
+        .from(khotanWires)
+        .where(
+          sql`${khotanWires.plugId} = ${plugId} and ${khotanWires.status} = 'active'`,
+        )
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async getPlugWire(plugId) {
+      const rows = await db
+        .select()
+        .from(khotanWires)
+        .where(eq(khotanWires.plugId, plugId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async getWire(wireId) {
+      const rows = await db
+        .select()
+        .from(khotanWires)
+        .where(eq(khotanWires.id, wireId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async updateWireStatus(wireId, status) {
+      await db
+        .update(khotanWires)
+        .set({ status, updatedAt: new Date() })
+        .where(eq(khotanWires.id, wireId));
+    },
+
+    async updateWireDetails(wireId, details) {
+      await db
+        .update(khotanWires)
+        .set({
+          remoteId: details.remoteId,
+          callbackUrl: details.callbackUrl,
+          eventTypes: details.eventTypes,
+          status: details.status,
+          updatedAt: new Date(),
+        })
+        .where(eq(khotanWires.id, wireId));
+    },
+
+    async getWireMetadata(wireId) {
+      const rows = await db
+        .select({ metadata: khotanWires.metadata })
+        .from(khotanWires)
+        .where(eq(khotanWires.id, wireId))
+        .limit(1);
+      const meta = rows[0]?.metadata;
+      if (!meta) return null;
+      return typeof meta === "string" ? meta : JSON.stringify(meta);
+    },
+
+    async updateWireMetadata(wireId, metadata) {
+      await db
+        .update(khotanWires)
+        .set({ metadata, updatedAt: new Date() })
+        .where(eq(khotanWires.id, wireId));
+    },
+
+    async getEncryptedCredentials(plugId) {
+      const rows = await db
+        .select({ encryptedVars: khotanPlugs.encryptedVars })
+        .from(khotanPlugs)
+        .where(eq(khotanPlugs.id, plugId))
+        .limit(1);
+      return rows[0]?.encryptedVars ?? null;
+    },
+
+    async setEncryptedCredentials(plugId, encrypted) {
+      await db
+        .update(khotanPlugs)
+        .set({ encryptedVars: encrypted, updatedAt: new Date() })
+        .where(eq(khotanPlugs.id, plugId));
+    },
+
+    async clearEncryptedCredentials(plugId) {
+      await db
+        .update(khotanPlugs)
+        .set({ encryptedVars: null, updatedAt: new Date() })
+        .where(eq(khotanPlugs.id, plugId));
+    },
   };
 }
 
 // ---------------------------------------------------------------------------
 // khotan factory
 // ---------------------------------------------------------------------------
+
+function extractEventTypes(body: Record<string, unknown>): string[] {
+  const candidates = body["eventTypes"] ?? body["event_types"] ?? body["events"] ?? body["enabled_events"];
+  if (Array.isArray(candidates)) return candidates as string[];
+  return [];
+}
 
 export function khotan(config: KhotanConfig): KhotanInstance {
   const { adapter, plugs, resources = [] } = config;
@@ -592,8 +894,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     for (const plug of plugs) {
       const { id: plugId } = await adapter.upsertPlug({
         name: plug.name,
-        baseUrl: plug.baseUrl,
-        authType: plug.authType,
+        baseUrl: plug.plug.baseUrl,
+        authType: plug.plug.authType,
       });
 
       if (plug.syncs) {
@@ -611,6 +913,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           }
         }
       }
+
+      if (plug.wires) {
+        for (const _wire of plug.wires) {
+          await adapter.upsertWire({ plugId });
+        }
+      }
     }
 
     initialized = true;
@@ -619,6 +927,139 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   async function init(): Promise<void> {
     initPromise ??= doInit();
     return initPromise;
+  }
+
+  function wire(plugName: string): WireInstance {
+    const plugReg = plugs.find((p) => p.name === plugName);
+    if (!plugReg) {
+      throw new Error(`Plug "${plugName}" not registered`);
+    }
+    if (!plugReg.wires || plugReg.wires.length === 0) {
+      throw new Error(`Plug "${plugName}" has no wire configuration`);
+    }
+    const wireConfig = plugReg.wires[0]!;
+
+    function createBoundPlug(vars: Record<string, string>, _setVars?: (updates: Record<string, string>) => Promise<void>) {
+      const plug = plugReg!.plug;
+      const opts = (extra?: { body?: unknown; headers?: Record<string, string>; params?: Record<string, unknown> }) => ({
+        ...extra,
+        vars,
+        ...(_setVars && { _setVars }),
+      });
+      return {
+        get<T>(path: string, extra?: { params?: Record<string, unknown>; headers?: Record<string, string> }) { return plug.get<T>(path, opts(extra)); },
+        post<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.post<T>(path, opts(extra)); },
+        put<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.put<T>(path, opts(extra)); },
+        patch<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.patch<T>(path, opts(extra)); },
+        delete<T>(path: string, extra?: { headers?: Record<string, string> }) { return plug.delete<T>(path, opts(extra)); },
+      };
+    }
+
+    async function getWireVars(wireId: string): Promise<Record<string, string>> {
+      const raw = await adapter.getWireMetadata(wireId);
+      if (!raw) return {};
+      if (!secret) {
+        try { return JSON.parse(raw) as Record<string, string>; } catch { return {}; }
+      }
+      try {
+        const decrypted = await decryptVars(raw, secret);
+        return JSON.parse(decrypted) as Record<string, string>;
+      } catch {
+        try { return JSON.parse(raw) as Record<string, string>; } catch { return {}; }
+      }
+    }
+
+    async function setWireVars(wireId: string, vars: Record<string, string>): Promise<void> {
+      const serialized = JSON.stringify(vars);
+      const toStore = secret ? await encryptVars(serialized, secret) : serialized;
+      await adapter.updateWireMetadata(wireId, toStore);
+    }
+
+    return {
+      async create(callbackUrl: string) {
+        await init();
+        kd("wire", `${plugName}: creating subscription, callbackUrl=${callbackUrl}`);
+
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new Error(`Plug "${plugName}" not found in database`);
+        }
+        const plugId = dbPlug["id"] as string;
+
+        const existingWire = await adapter.getPlugWire(plugId);
+        const wireId = existingWire
+          ? (existingWire["id"] as string)
+          : (await adapter.insertWire({ plugId, remoteId: "", callbackUrl, eventTypes: wireConfig.events })).id;
+
+        const vars = secret ? await getVars(plugName) : {};
+        const _setVars = secret ? (updates: Record<string, string>) => setVars(plugName, { ...vars, ...updates }) : undefined;
+        const boundPlug = createBoundPlug(vars, _setVars);
+
+        const wireVars = await getWireVars(wireId);
+
+        const result = await wireConfig.onSubscribe({
+          plug: boundPlug,
+          callbackUrl,
+          events: wireConfig.events,
+          wireVars,
+          setWireVars: (updates) => setWireVars(wireId, { ...wireVars, ...updates }),
+        });
+
+        kd("wire", `${plugName}: subscription created, remoteId=${result.remoteId}`);
+
+        await adapter.updateWireDetails(wireId, {
+          remoteId: result.remoteId,
+          callbackUrl,
+          eventTypes: wireConfig.events,
+          status: "active",
+        });
+
+        const record = await adapter.getWire(wireId);
+        return record!;
+      },
+
+      async delete(wireId: string) {
+        await init();
+        kd("wire", `${plugName}: deleting wire ${wireId}`);
+        const wireRecord = await adapter.getWire(wireId);
+        if (!wireRecord) {
+          throw new Error(`Wire "${wireId}" not found`);
+        }
+
+        const remoteId = (wireRecord["remoteId"] ?? wireRecord["remote_id"]) as string;
+        kd("wire", `${plugName}: remoteId=${remoteId}`);
+        if (!remoteId) {
+          await adapter.updateWireStatus(wireId, "disabled");
+          return;
+        }
+
+        const vars = secret ? await getVars(plugName) : {};
+        const _setVars = secret ? (updates: Record<string, string>) => setVars(plugName, { ...vars, ...updates }) : undefined;
+        const boundPlug = createBoundPlug(vars, _setVars);
+
+        const wireVars = await getWireVars(wireId);
+
+        await wireConfig.onUnsubscribe({
+          plug: boundPlug,
+          remoteId,
+          wireVars,
+          setWireVars: (updates) => setWireVars(wireId, { ...wireVars, ...updates }),
+        });
+
+        kd("wire", `${plugName}: unsubscribed successfully`);
+        await adapter.updateWireStatus(wireId, "disabled");
+      },
+
+      async get() {
+        await init();
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) return null;
+
+        return adapter.getPlugWire(dbPlug["id"] as string);
+      },
+    };
   }
 
   async function handler(request: Request): Promise<Response> {
@@ -634,8 +1075,52 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     const syncsIdx = segments.indexOf("syncs");
     const resourcesIdx = segments.indexOf("resources");
     const mappingsIdx = segments.indexOf("mappings");
+    const wiresIdx = segments.indexOf("wires");
+    const credentialsIdx = segments.indexOf("credentials");
 
     if (request.method === "GET") {
+      // GET .../credentials/:plugName
+      if (credentialsIdx !== -1 && credentialsIdx === segments.length - 2) {
+        const plugName = segments[credentialsIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const fields = getVarFields(plugName);
+        const hasValues = await hasVars(plugName);
+        let masked: Record<string, string> = {};
+        if (hasValues) {
+          try {
+            const vars = await getVars(plugName);
+            masked = Object.fromEntries(
+              Object.entries(vars).map(([key, value]) => {
+                const field = fields.find((f) => f.key === key);
+                if (field?.secret) {
+                  return [key, value ? "••••••••" : ""];
+                }
+                return [key, value];
+              }),
+            );
+          } catch {
+            masked = {};
+          }
+        }
+        return Response.json({ fields, values: masked, configured: hasValues });
+      }
+
+      // GET .../wires/:plugName
+      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
+        const plugName = segments[wiresIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const plugReg = plugs.find((p) => p.name === plugName);
+        if (!plugReg?.wires || plugReg.wires.length === 0) {
+          return Response.json({ wire: null, configured: false });
+        }
+        const wireRecord = await wire(plugName).get();
+        return Response.json({ wire: wireRecord, configured: true });
+      }
+
       // GET .../plugs
       if (plugsIdx !== -1 && plugsIdx === segments.length - 1) {
         const data = await adapter.listPlugs();
@@ -731,6 +1216,154 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     if (request.method === "POST") {
+      // POST .../debug/:plugName — dev-only proxy through plug
+      const debugIdx = segments.indexOf("debug");
+      if (debugIdx !== -1 && debugIdx === segments.length - 2) {
+        if (!_khotanDebug) {
+          return Response.json({ error: "Not found" }, { status: 404 });
+        }
+        const plugName = segments[debugIdx + 1]!;
+        const plugReg = plugs.find((p) => p.name === plugName);
+        if (!plugReg) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+
+        const body = (await request.json()) as {
+          method: string;
+          path: string;
+          body?: unknown;
+          params?: Record<string, string>;
+          headers?: Record<string, string>;
+        };
+
+        const method = (body.method ?? "GET").toUpperCase();
+        const reqPath = body.path ?? "/";
+        const start = Date.now();
+
+        try {
+          const plug = plugReg.plug;
+          const opts: { body?: unknown; params?: Record<string, unknown>; headers?: Record<string, string> } = {};
+          if (body.params) opts.params = body.params;
+          if (body.headers) opts.headers = body.headers;
+          if (body.body) opts.body = body.body;
+
+          let result: unknown;
+          switch (method) {
+            case "GET":
+              result = await plug.get(reqPath, opts);
+              break;
+            case "POST":
+              result = await plug.post(reqPath, opts);
+              break;
+            case "PUT":
+              result = await plug.put(reqPath, opts);
+              break;
+            case "PATCH":
+              result = await plug.patch(reqPath, opts);
+              break;
+            case "DELETE":
+              result = await plug.delete(reqPath, opts);
+              break;
+            default:
+              result = await plug.get(reqPath, opts);
+          }
+
+          const timing = Date.now() - start;
+
+          const response: Record<string, unknown> = {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: result,
+            timing,
+          };
+
+          if (plugReg.endpoints) {
+            const matched = Object.entries(plugReg.endpoints).find(
+              ([, ep]) => ep.method.toUpperCase() === method && ep.path === reqPath,
+            );
+            if (matched) {
+              response.endpoint = { name: matched[0], method: matched[1].method, path: matched[1].path };
+            }
+          }
+
+          return Response.json(response);
+        } catch (err) {
+          const timing = Date.now() - start;
+          const error = err instanceof Error ? err.message : "Unknown error";
+          const errBody = err && typeof err === "object" && "body" in err ? (err as { body: unknown }).body : null;
+          const errStatus = err && typeof err === "object" && "status" in err ? (err as { status: number }).status : 500;
+
+          return Response.json({
+            status: errStatus,
+            statusText: "Error",
+            headers: {},
+            body: errBody,
+            timing,
+            error,
+          });
+        }
+      }
+
+      // POST .../credentials/:plugName
+      if (credentialsIdx !== -1 && credentialsIdx === segments.length - 2) {
+        const plugName = segments[credentialsIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json()) as Record<string, string>;
+        const fields = getVarFields(plugName);
+
+        const missing = fields
+          .filter((f) => f.required !== false && !body[f.key])
+          .map((f) => f.key);
+        if (missing.length > 0) {
+          return Response.json(
+            { error: `Missing required fields: ${missing.join(", ")}` },
+            { status: 400 },
+          );
+        }
+
+        const vars: Record<string, string> = {};
+        for (const field of fields) {
+          const value = body[field.key];
+          if (value !== undefined) {
+            vars[field.key] = value;
+          }
+        }
+
+        try {
+          await setVars(plugName, vars);
+          return Response.json({ ok: true });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          return Response.json({ error: message }, { status: 500 });
+        }
+      }
+
+      // POST .../wires/:plugName
+      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
+        const plugName = segments[wiresIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json()) as { callbackUrl: string };
+        if (!body.callbackUrl) {
+          return Response.json({ error: "callbackUrl is required" }, { status: 400 });
+        }
+        try {
+          const record = await wire(plugName).create(body.callbackUrl);
+          return Response.json({ wire: record }, { status: 201 });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          kd("wire", `${plugName}: create failed:`, message);
+          if (error && typeof error === "object" && "body" in error) {
+            kd("wire", `${plugName}: response body:`, (error as { body: unknown }).body);
+          }
+          return Response.json({ error: message }, { status: 500 });
+        }
+      }
+
       // POST .../mappings/lookup
       if (
         mappingsIdx !== -1 &&
@@ -812,6 +1445,36 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     if (request.method === "DELETE") {
+      // DELETE .../credentials/:plugName
+      if (credentialsIdx !== -1 && credentialsIdx === segments.length - 2) {
+        const plugName = segments[credentialsIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        await clearVars(plugName);
+        return new Response(null, { status: 204 });
+      }
+
+      // DELETE .../wires/:plugName
+      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
+        const plugName = segments[wiresIdx + 1]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json()) as { wireId: string };
+        if (!body.wireId) {
+          return Response.json({ error: "wireId is required" }, { status: 400 });
+        }
+        try {
+          await wire(plugName).delete(body.wireId);
+          return new Response(null, { status: 204 });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          kd("wire", `${plugName}: delete failed: ${message}`);
+          return Response.json({ error: message }, { status: 500 });
+        }
+      }
+
       // DELETE .../mappings/:id
       if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
         const mappingId = segments[mappingsIdx + 1]!;
@@ -823,7 +1486,67 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  return { handler, init };
+  const secret = config.secret ?? process.env["KHOTAN_SECRET"] ?? "";
+
+  async function resolvePlugId(plugName: string): Promise<string> {
+    await init();
+    const allPlugs = await adapter.listPlugs();
+    const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+    if (!dbPlug) {
+      throw new Error(`Plug "${plugName}" not found in database`);
+    }
+    return dbPlug["id"] as string;
+  }
+
+  async function getVars(plugName: string): Promise<Record<string, string>> {
+    if (!secret) {
+      throw new Error("KHOTAN_SECRET is required for var operations");
+    }
+    const plugId = await resolvePlugId(plugName);
+    const encrypted = await adapter.getEncryptedCredentials(plugId);
+    if (!encrypted) return {};
+    const json = await decryptVars(encrypted, secret);
+    return JSON.parse(json) as Record<string, string>;
+  }
+
+  async function setVars(plugName: string, vars: Record<string, string>): Promise<void> {
+    if (!secret) {
+      throw new Error("KHOTAN_SECRET is required for var operations");
+    }
+    const plugId = await resolvePlugId(plugName);
+    const json = JSON.stringify(vars);
+    const encrypted = await encryptVars(json, secret);
+    await adapter.setEncryptedCredentials(plugId, encrypted);
+  }
+
+  async function clearVars(plugName: string): Promise<void> {
+    const plugId = await resolvePlugId(plugName);
+    await adapter.clearEncryptedCredentials(plugId);
+  }
+
+  async function hasVars(plugName: string): Promise<boolean> {
+    const plugId = await resolvePlugId(plugName);
+    const encrypted = await adapter.getEncryptedCredentials(plugId);
+    return encrypted !== null && encrypted !== "";
+  }
+
+  function getVarFields(plugName: string): readonly VarField[] {
+    const plugReg = plugs.find((p) => p.name === plugName);
+    if (!plugReg) {
+      throw new Error(`Plug "${plugName}" not registered`);
+    }
+    return plugReg.vars ?? plugReg.plug.varFields ?? [];
+  }
+
+  function getPlug(plugName: string): PlugRegistration["plug"] {
+    const plugReg = plugs.find((p) => p.name === plugName);
+    if (!plugReg) {
+      throw new Error(`Plug "${plugName}" not registered`);
+    }
+    return plugReg.plug;
+  }
+
+  return { handler, init, wire, getVars, setVars, clearVars, hasVars, getVarFields, getPlug };
 }
 
 // ---------------------------------------------------------------------------

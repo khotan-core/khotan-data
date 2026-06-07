@@ -59,6 +59,16 @@
         "types": "./dist/factory.d.cts",
         "default": "./dist/factory.cjs"
       }
+    },
+    "./plug": {
+      "import": {
+        "types": "./dist/plug-client.d.ts",
+        "default": "./dist/plug-client.js"
+      },
+      "require": {
+        "types": "./dist/plug-client.d.cts",
+        "default": "./dist/plug-client.cjs"
+      }
     }
   },
   "files": [
@@ -106,7 +116,13 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "drizzle-orm": ">=0.35.0"
+    "drizzle-orm": ">=0.35.0",
+    "zod": ">=3.22.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.4",
@@ -119,7 +135,8 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.34.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "zod": "^3.25.76"
   },
   "packageManager": "npm@11.12.1",
   "dependencies": {

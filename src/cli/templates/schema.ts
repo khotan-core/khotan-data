@@ -41,7 +41,7 @@ export const khotanPlugs = pgTable("khotan_plugs", {
     .default("idle")
     .notNull(),
   statusMessage: text("status_message"),
-  encryptedCredentials: text("encrypted_credentials"),
+  encryptedVars: text("encrypted_vars"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -108,7 +108,42 @@ export const khotanSyncs = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// khotan_runs — one row per execution of a sync
+// khotan_wires — one row per webhook subscription managed by a plug
+// ---------------------------------------------------------------------------
+
+export const khotanWires = pgTable(
+  "khotan_wires",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    plugId: text("plug_id")
+      .notNull()
+      .references(() => khotanPlugs.id),
+    remoteId: text("remote_id").notNull(),
+    callbackUrl: text("callback_url").notNull(),
+    eventTypes: jsonb("event_types").notNull().$type<string[]>(),
+    status: text("status", {
+      enum: ["active", "disabled"],
+    })
+      .default("active")
+      .notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("khotan_wires_plug_id_idx").on(table.plugId),
+    index("khotan_wires_status_idx").on(table.status),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// khotan_runs — one row per execution of a sync or wire
 // ---------------------------------------------------------------------------
 
 export const khotanRuns = pgTable(
@@ -117,9 +152,8 @@ export const khotanRuns = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    syncId: text("sync_id")
-      .notNull()
-      .references(() => khotanSyncs.id),
+    syncId: text("sync_id").references(() => khotanSyncs.id),
+    wireId: text("wire_id").references(() => khotanWires.id),
     runType: text("run_type", {
       enum: ["full", "delta", "backfill", "reconcile", "dry-run"],
     }).notNull(),
@@ -144,6 +178,7 @@ export const khotanRuns = pgTable(
   },
   (table) => [
     index("khotan_runs_sync_id_idx").on(table.syncId),
+    index("khotan_runs_wire_id_idx").on(table.wireId),
     index("khotan_runs_status_idx").on(table.status),
     index("khotan_runs_sync_id_started_at_idx").on(
       table.syncId,
@@ -191,6 +226,7 @@ export const khotanMappings = pgTable(
 
 export const khotanPlugsRelations = relations(khotanPlugs, ({ many }) => ({
   syncs: many(khotanSyncs),
+  wires: many(khotanWires),
 }));
 
 export const khotanSyncsRelations = relations(khotanSyncs, ({ one, many }) => ({
@@ -205,10 +241,25 @@ export const khotanSyncsRelations = relations(khotanSyncs, ({ one, many }) => ({
   runs: many(khotanRuns),
 }));
 
+export const khotanWiresRelations = relations(
+  khotanWires,
+  ({ one, many }) => ({
+    plug: one(khotanPlugs, {
+      fields: [khotanWires.plugId],
+      references: [khotanPlugs.id],
+    }),
+    runs: many(khotanRuns),
+  }),
+);
+
 export const khotanRunsRelations = relations(khotanRuns, ({ one }) => ({
   sync: one(khotanSyncs, {
     fields: [khotanRuns.syncId],
     references: [khotanSyncs.id],
+  }),
+  wire: one(khotanWires, {
+    fields: [khotanRuns.wireId],
+    references: [khotanWires.id],
   }),
 }));
 
@@ -236,6 +287,9 @@ export type NewKhotanPlug = typeof khotanPlugs.$inferInsert;
 
 export type KhotanSync = typeof khotanSyncs.$inferSelect;
 export type NewKhotanSync = typeof khotanSyncs.$inferInsert;
+
+export type KhotanWire = typeof khotanWires.$inferSelect;
+export type NewKhotanWire = typeof khotanWires.$inferInsert;
 
 export type KhotanRun = typeof khotanRuns.$inferSelect;
 export type NewKhotanRun = typeof khotanRuns.$inferInsert;

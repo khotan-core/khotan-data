@@ -28,6 +28,17 @@ describe("plug factory", () => {
     expect(w).toBeInstanceOf(Plug);
   });
 
+  it("exposes baseUrl and authType getters", () => {
+    const w = plug({ baseUrl: BASE, auth: bearer("token") });
+    expect(w.baseUrl).toBe(BASE);
+    expect(w.authType).toBe("bearer");
+  });
+
+  it("returns 'none' authType when no auth configured", () => {
+    const w = plug({ baseUrl: BASE });
+    expect(w.authType).toBe("none");
+  });
+
   it("exposes all HTTP methods and helpers", () => {
     const w = plug({ baseUrl: BASE });
     expect(typeof w.get).toBe("function");
@@ -323,6 +334,66 @@ describe("withAuth", () => {
     const swappedHeaders = vi.mocked(fetch).mock.calls[1][1]!
       .headers as Headers;
     expect(swappedHeaders.get("Authorization")).toBe("Bearer new_token");
+  });
+});
+
+describe("custom content-type parsers", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses registered parser when content-type matches", async () => {
+    const xmlText = "<root><id>42</id></root>";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(xmlText, {
+        status: 200,
+        headers: { "Content-Type": "application/xml" },
+      }),
+    );
+
+    const parseXml = vi.fn((text: string) => ({ parsed: text }));
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      parsers: { "application/xml": parseXml },
+    });
+
+    const result = await w.get("/data");
+    expect(parseXml).toHaveBeenCalledWith(xmlText);
+    expect(result).toEqual({ parsed: xmlText });
+  });
+
+  it("falls back to text when no parser matches", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("plain text", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      parsers: { "application/xml": () => ({}) },
+    });
+
+    const result = await w.get("/data");
+    expect(result).toBe("plain text");
+  });
+
+  it("JSON still handled by default even with parsers configured", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ id: "123" }),
+    );
+
+    const parseXml = vi.fn();
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      parsers: { "application/xml": parseXml },
+    });
+
+    const result = await w.get("/data");
+    expect(result).toEqual({ id: "123" });
+    expect(parseXml).not.toHaveBeenCalled();
   });
 });
 

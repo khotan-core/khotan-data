@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { toNextJsHandler } from "khotan-data/factory";
-import khotanData from "@/lib/khotan/khotan";
+import khotanData from "@/khotan/khotan";
 
 export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(
   khotanData.handler,

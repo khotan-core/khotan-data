@@ -14,6 +14,21 @@ The scaffolded `plug.ts` SHALL export a `plug()` factory function that accepts a
 
 ## ADDED Requirements
 
+### Requirement: baseUrl and authType getters
+The Plug class SHALL expose `baseUrl` and `authType` as public getters so that the khotan factory can extract configuration metadata from the instance.
+
+#### Scenario: Read baseUrl from Plug instance
+- **WHEN** a Plug is created with `plug({ baseUrl: "https://api.example.com" })`
+- **THEN** `instance.baseUrl` SHALL return `"https://api.example.com"`
+
+#### Scenario: Read authType from Plug instance with auth
+- **WHEN** a Plug is created with `plug({ baseUrl: "...", auth: bearer("token") })`
+- **THEN** `instance.authType` SHALL return `"bearer"`
+
+#### Scenario: Read authType from Plug instance without auth
+- **WHEN** a Plug is created with `plug({ baseUrl: "..." })` (no auth configured)
+- **THEN** `instance.authType` SHALL return `"none"`
+
 ### Requirement: Content-type parsers
 The scaffolded `plug.ts` SHALL support an optional `parsers` field in `PlugConfig` — a record mapping MIME type substrings to parser functions. When a response's Content-Type matches a registered parser, the Plug SHALL use that parser instead of the default text fallback.
 
@@ -32,3 +47,14 @@ The scaffolded `plug.ts` SHALL support an optional `parsers` field in `PlugConfi
 #### Scenario: JSON still handled by default
 - **WHEN** a response has `Content-Type: application/json` and parsers are configured
 - **THEN** the Plug SHALL use `response.json()` as before (JSON parsing is built-in, not affected by custom parsers)
+
+### Requirement: Factory PlugRegistration accepts Plug instance
+The `PlugRegistration` interface SHALL require a `plug` field containing an object with `baseUrl: string` and `authType: string` (satisfied by any Plug instance). The factory SHALL extract these values for database upserts.
+
+#### Scenario: Register plug with instance
+- **WHEN** a user registers `{ name: "cin7", plug: cin7Plug, syncs: [...] }`
+- **THEN** the factory SHALL call `adapter.upsertPlug({ name: "cin7", baseUrl: cin7Plug.baseUrl, authType: cin7Plug.authType })`
+
+#### Scenario: No metadata-only registration
+- **WHEN** a user attempts to register a plug without a `plug` instance
+- **THEN** TypeScript SHALL report a compile error (the field is required)

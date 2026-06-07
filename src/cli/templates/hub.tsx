@@ -12,6 +12,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { WirePanel } from "./wire";
+import { VarPanel } from "./var-panel";
 
 // ============================================================================
 // Khotan Hub — Dashboard for configured plugs and syncs
@@ -62,12 +65,19 @@ const syncTypeVariant: Record<string, SyncTypeVariant> = {
   webhook: "outline",
 };
 
-export function KhotanHub() {
+export function KhotanHub({ webhookUrl, debugHref }: { webhookUrl?: string; debugHref?: (plugName: string) => string } = {}) {
   const [plugs, setPlugs] = useState<Plug[]>([]);
   const [syncs, setSyncs] = useState<Sync[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlugId, setSelectedPlugId] = useState<string | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/khotan/debug/__probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method: "GET", path: "/" }) })
+      .then((res) => setDebugEnabled(res.status !== 404))
+      .catch(() => setDebugEnabled(false));
+  }, []);
 
   async function fetchData() {
     setLoading(true);
@@ -189,78 +199,102 @@ export function KhotanHub() {
               <p className="text-xs text-muted-foreground truncate">
                 {plug.baseUrl}
               </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {plug.authType} · {plug.syncCount} sync
-                {plug.syncCount !== 1 ? "s" : ""}
-              </p>
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {plug.authType} · {plug.syncCount} sync
+                  {plug.syncCount !== 1 ? "s" : ""}
+                </p>
+                {debugEnabled && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (debugHref) {
+                        window.location.href = debugHref(plug.name);
+                      } else {
+                        window.location.href = `/config/debug/${plug.name}`;
+                      }
+                    }}
+                  >
+                    Debug
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
       {selectedPlug && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{selectedPlug.name} — Syncs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {plugSyncs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No syncs configured for this plug.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Schedule</TableHead>
-                    <TableHead>Last Run</TableHead>
-                    <TableHead>Enabled</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {plugSyncs.map((sync) => (
-                    <TableRow key={sync.id}>
-                      <TableCell className="font-medium">{sync.name}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={syncTypeVariant[sync.type] ?? "outline"}
-                        >
-                          {sync.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {sync.schedule ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        {sync.lastRunStatus ? (
-                          <Badge
-                            variant={
-                              sync.lastRunStatus === "ok"
-                                ? "default"
-                                : "destructive"
-                            }
-                          >
-                            {sync.lastRunStatus}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">never</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={sync.enabled}
-                          onCheckedChange={(v) => toggleSync(sync.id, v)}
-                        />
-                      </TableCell>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>{selectedPlug.name} — Syncs</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {plugSyncs.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No syncs configured for this plug.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Schedule</TableHead>
+                      <TableHead>Last Run</TableHead>
+                      <TableHead>Enabled</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {plugSyncs.map((sync) => (
+                      <TableRow key={sync.id}>
+                        <TableCell className="font-medium">{sync.name}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={syncTypeVariant[sync.type] ?? "outline"}
+                          >
+                            {sync.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {sync.schedule ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          {sync.lastRunStatus ? (
+                            <Badge
+                              variant={
+                                sync.lastRunStatus === "ok"
+                                  ? "default"
+                                  : "destructive"
+                              }
+                            >
+                              {sync.lastRunStatus}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">never</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={sync.enabled}
+                            onCheckedChange={(v) => toggleSync(sync.id, v)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <VarPanel plugName={selectedPlug.name} />
+          <WirePanel plugName={selectedPlug.name} webhookUrl={webhookUrl} />
+        </div>
       )}
     </div>
   );

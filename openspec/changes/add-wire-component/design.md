@@ -34,16 +34,16 @@ Currently, the schema has a `webhook` sync type but no mechanism to actually cal
 
 **Rationale**: Wire's logic is ~100-150 lines. Keeping it as a template means the user can add HMAC verification, custom error handling, environment switching, or any other bespoke logic without fighting an abstraction. Consistent with plug.ts approach.
 
-### Decision 2: Config object with buildBody/parseId functions
+### Decision 2: Hook-based config with onSubscribe/onUnsubscribe
 
-**Choice**: The `wire()` factory accepts a config with `subscribe.buildBody(callbackUrl)` and `subscribe.parseId(response)` functions.
+**Choice**: The `wire()` builder accepts a config with `onSubscribe(ctx)` and `onUnsubscribe(ctx)` hooks that receive a bound plug and execute the full HTTP interaction.
 
 **Alternatives considered**:
+- Declarative `buildBody`/`parseId` functions: Simpler but too rigid — some services require multi-step subscription flows, conditional headers, or storing secrets from the response.
 - Static body object: Too inflexible — callback URL changes per environment, some services need dynamic values.
-- Class-based adapter: Over-engineered for 2 functions.
-- Declarative mapping DSL: Adds learning curve for no real benefit.
+- Class-based adapter: Over-engineered for 2 hooks.
 
-**Rationale**: Every service shapes its subscription request and response differently. Two functions (one to build the request, one to extract the remote ID from the response) are the minimal interface that covers all services.
+**Rationale**: Every service shapes its subscription differently. A hook-based approach gives the user full control: they make the HTTP call directly via the bound plug, can store wire-specific vars (e.g. webhook signing secrets) via `ctx.setWireVars()`, and return just the `remoteId`. This handles complex cases (multi-step auth, response secrets) without fighting an abstraction.
 
 ### Decision 3: khotan_wires as a separate table from khotan_syncs
 
@@ -65,15 +65,16 @@ Currently, the schema has a `webhook` sync type but no mechanism to actually cal
 
 **Rationale**: Real FK constraints are valuable for data integrity. The "exactly one non-null" invariant is enforced at the application level (or with a check constraint if the user wants). This is a minimal schema change.
 
-### Decision 5: db passed at wire config time
+### Decision 5: Factory centralizes DB operations; wire template is a pure hook definition
 
-**Choice**: The Drizzle db instance is passed when creating the wire instance, not per-operation.
+**Choice**: The wire template defines hooks only (onSubscribe/onUnsubscribe/onVerify). The khotan factory's `wire(plugName)` method manages all DB operations via the adapter, creates bound plugs with vars injected, and exposes `create`/`delete`/`get` to the user.
 
 **Alternatives considered**:
 - Pass db per call: Repetitive, clutters the API.
+- Wire template manages its own DB: Duplicates adapter logic, couples template to specific DB library, makes encryption/var management inconsistent.
 - Wire imports db directly: Hardcodes import path, less testable.
 
-**Rationale**: Passing at config time means the wire instance is self-contained and ready to use. User sets it up once (alongside plug), then calls `.create()` / `.delete()` / `.get()` without ceremony.
+**Rationale**: Centralizing DB operations in the factory means: (1) wire vars can be encrypted with the same KHOTAN_SECRET as plug vars, (2) the adapter pattern stays consistent across all operations, (3) the wire template stays minimal (~100 lines of pure hook logic), and (4) the factory can manage the 2-step lifecycle (pending → active) transparently.
 
 ## Risks / Trade-offs
 

@@ -2,7 +2,6 @@ import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
 import prompts from "prompts";
-import { fileURLToPath } from "node:url";
 import {
   getEntry,
   listComponents,
@@ -17,7 +16,7 @@ import {
   detectSingleFileSchema,
   updateDrizzleConfigSchema,
 } from "../drizzle-detect.js";
-import { runInit } from "./init.js";
+import { runInit, scaffoldCoreFiles } from "./init.js";
 import {
   checkNpmPackages,
   checkShadcnComponents,
@@ -209,8 +208,9 @@ export const addCommand = new Command("add")
   )
   .option("-f, --force", "Overwrite existing files without prompting")
   .option("-y, --yes", "Auto-accept all install prompts")
+  .option("--without-ui", "Skip UI component scaffolding")
   .action(
-    async (componentName: string, opts: { force?: boolean; yes?: boolean }) => {
+    async (componentName: string, opts: { force?: boolean; yes?: boolean; withoutUi?: boolean }) => {
       let config = await loadConfig();
 
       if (!config) {
@@ -228,6 +228,11 @@ export const addCommand = new Command("add")
         console.log("");
       }
 
+      const cwd = process.cwd();
+
+      // Ensure core files (khotan.ts + route.ts) exist — create if missing, never overwrite
+      scaffoldCoreFiles(cwd, config.outputDir);
+
       const result = getEntry(componentName);
 
       if (!result) {
@@ -244,8 +249,6 @@ export const addCommand = new Command("add")
       }
 
       const { entry: component, kind } = result;
-
-      const cwd = process.cwd();
 
       // Check required khotan components and offer to add them first
       if (component.requires && component.requires.length > 0) {
@@ -287,15 +290,19 @@ export const addCommand = new Command("add")
 
       // Check and offer to install dependencies
       if (component.dependencies) {
+        const deps = { ...component.dependencies };
+        if (opts.withoutUi) {
+          delete deps.shadcnComponents;
+        }
         await checkAndInstallDeps(
           cwd,
-          component.dependencies,
+          deps,
           opts.yes ?? false,
         );
       }
 
       // shadcn detection for components that require it
-      if (component.requiresShadcn) {
+      if (component.requiresShadcn && !opts.withoutUi) {
         const shadcnConfig = path.join(cwd, "components.json");
         if (!fs.existsSync(shadcnConfig)) {
           console.warn(
@@ -309,8 +316,15 @@ export const addCommand = new Command("add")
 
       if (isMultiFile(component)) {
         const createdFiles: string[] = [];
+        let filesToScaffold = component.files;
 
-        for (const file of component.files) {
+        if (opts.withoutUi) {
+          filesToScaffold = filesToScaffold.filter(
+            (f) => !f.outputFile.endsWith(".tsx"),
+          );
+        }
+
+        for (const file of filesToScaffold) {
           const baseDir = resolveOutputBase(file, cwd, config.outputDir);
           const outputPath = path.join(baseDir, file.outputFile);
 
@@ -325,29 +339,6 @@ export const addCommand = new Command("add")
           }
         }
 
-        // Hub: scaffold the khotan config only if it doesn't exist yet
-        if (componentName === "hub") {
-          const cliDir = path.dirname(fileURLToPath(import.meta.url));
-          const configTemplatePath = path.resolve(
-            cliDir,
-            "templates",
-            "khotan-config.ts",
-          );
-          const configOutputPath = path.join(
-            path.resolve(cwd, config.outputDir),
-            "khotan.ts",
-          );
-          if (!fs.existsSync(configOutputPath)) {
-            fs.mkdirSync(path.dirname(configOutputPath), { recursive: true });
-            fs.copyFileSync(configTemplatePath, configOutputPath);
-            createdFiles.push(path.relative(cwd, configOutputPath));
-          } else {
-            console.log(
-              `✓ ${path.relative(cwd, configOutputPath)} already exists, skipping`,
-            );
-          }
-        }
-
         if (createdFiles.length > 0) {
           console.log(`\n✓ Created ${String(createdFiles.length)} files:`);
           for (const f of createdFiles) {
@@ -357,10 +348,8 @@ export const addCommand = new Command("add")
 
         if (componentName === "hub") {
           console.log("\nNext steps:");
-          console.log("  1. Update the db import in your khotan config file");
-          console.log("  2. Register your plugs and syncs in the config");
           console.log(
-            "  3. Render <KhotanHub /> on a page, or `npx khotan add config-page-1` for a ready-made /config route",
+            "  1. Render <KhotanHub /> on a page, or `npx khotan add config-page-1` for a ready-made /config route",
           );
         }
 
@@ -424,7 +413,6 @@ export const addCommand = new Command("add")
       if (componentName === "schema") {
         const autoYes = opts.yes ?? false;
 
-        // Offer to update drizzle.config.ts if schema points to a single file
         const singleFile = detectSingleFileSchema(cwd);
         if (singleFile) {
           const relConfig = path.relative(cwd, singleFile.configPath);
@@ -462,7 +450,6 @@ export const addCommand = new Command("add")
           }
         }
 
-        // Offer to update barrel file with khotan re-export
         const barrelPath = path.join(outputDir, "index.ts");
 
         if (fs.existsSync(barrelPath)) {
@@ -505,14 +492,37 @@ export const addCommand = new Command("add")
         }
       } else {
         const importBase = config.outputDir.replace(/^src\//, "@/");
-        console.log(`\nUsage:\n`);
-        console.log(
-          `  import { plug, bearer } from "${importBase}/${component.name}";`,
-        );
-        console.log(`\n  const api = plug({`);
-        console.log(`    baseUrl: "https://api.example.com",`);
-        console.log(`    auth: bearer(process.env.API_TOKEN!),`);
-        console.log(`  });`);
+        if (componentName === "wire") {
+          console.log(`\nUsage:\n`);
+          console.log(
+            `  import { wire } from "${importBase}/wire";`,
+          );
+          console.log(
+            `  import { myPlug } from "${importBase}/plugs/plug";`,
+          );
+          console.log(`  import { db } from "@/db";\n`);
+          console.log(`  const myWire = wire({`);
+          console.log(`    plug: myPlug,`);
+          console.log(`    db,`);
+          console.log(`    subscribe: {`);
+          console.log(`      path: "/webhooks",`);
+          console.log(`      buildBody: (callbackUrl) => ({ url: callbackUrl, events: ["*"] }),`);
+          console.log(`      parseId: (res) => (res as { id: string }).id,`);
+          console.log(`    },`);
+          console.log(`    unsubscribe: {`);
+          console.log(`      path: (remoteId) => \`/webhooks/\${remoteId}\`,`);
+          console.log(`    },`);
+          console.log(`  });`);
+        } else {
+          console.log(`\nUsage:\n`);
+          console.log(
+            `  import { plug, bearer } from "${importBase}/plugs/${component.name}";`,
+          );
+          console.log(`\n  const api = plug({`);
+          console.log(`    baseUrl: "https://api.example.com",`);
+          console.log(`    auth: bearer(process.env.API_TOKEN!),`);
+          console.log(`  });`);
+        }
       }
     },
   );

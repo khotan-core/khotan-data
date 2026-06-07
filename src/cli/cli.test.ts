@@ -51,7 +51,7 @@ describe("CLI", { timeout: 30_000 }, () => {
   });
 
   describe("init", () => {
-    it("creates khotan.config.ts with src/lib/khotan when src/app exists", () => {
+    it("creates khotan.config.ts with src/khotan when src/app exists", () => {
       fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
       const result = run("init", tmpDir);
       expect(result.exitCode).toBe(0);
@@ -61,10 +61,10 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "khotan.config.ts"),
         "utf-8",
       );
-      expect(content).toContain('"src/lib/khotan"');
+      expect(content).toContain('"src/khotan"');
     });
 
-    it("creates khotan.config.ts with lib/khotan when app is top-level", () => {
+    it("creates khotan.config.ts with khotan when app is top-level", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       const result = run("init", tmpDir);
       expect(result.exitCode).toBe(0);
@@ -73,10 +73,10 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "khotan.config.ts"),
         "utf-8",
       );
-      expect(content).toContain('"lib/khotan"');
+      expect(content).toContain('"khotan"');
     });
 
-    it("defaults to src/lib/khotan when no app directory exists", () => {
+    it("defaults to src/khotan when no app directory exists", () => {
       const result = run("init", tmpDir);
       expect(result.exitCode).toBe(0);
 
@@ -84,7 +84,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "khotan.config.ts"),
         "utf-8",
       );
-      expect(content).toContain('"src/lib/khotan"');
+      expect(content).toContain('"src/khotan"');
     });
 
     it("warns when config already exists", () => {
@@ -102,6 +102,53 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       expect(content).toBe("existing config");
     });
+
+    it("scaffolds khotan.ts and route.ts alongside config", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+      const result = run("init", tmpDir);
+      expect(result.exitCode).toBe(0);
+
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            tmpDir,
+            "src",
+            "app",
+            "api",
+            "khotan",
+            "[...all]",
+            "route.ts",
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it("never overwrites existing khotan.ts or route.ts", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      run("init", tmpDir);
+
+      const khotanPath = path.join(tmpDir, "khotan", "khotan.ts");
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "khotan",
+        "[...all]",
+        "route.ts",
+      );
+      fs.writeFileSync(khotanPath, "// user modified");
+      fs.writeFileSync(routePath, "// user route");
+
+      const result = run("init", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("already exists");
+
+      expect(fs.readFileSync(khotanPath, "utf-8")).toBe("// user modified");
+      expect(fs.readFileSync(routePath, "utf-8")).toBe("// user route");
+    });
   });
 
   describe("add", () => {
@@ -112,7 +159,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Created");
 
-      const plugPath = path.join(tmpDir, "lib", "khotan", "plug.ts");
+      const plugPath = path.join(tmpDir, "khotan", "plugs", "plug.ts");
       expect(fs.existsSync(plugPath)).toBe(true);
 
       const content = fs.readFileSync(plugPath, "utf-8");
@@ -129,7 +176,13 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add plug", tmpDir);
       expect(result.exitCode).toBe(0);
 
-      const plugPath = path.join(tmpDir, "src", "lib", "khotan", "plug.ts");
+      const plugPath = path.join(
+        tmpDir,
+        "src",
+        "khotan",
+        "plugs",
+        "plug.ts",
+      );
       expect(fs.existsSync(plugPath)).toBe(true);
     });
 
@@ -170,11 +223,10 @@ describe("CLI", { timeout: 30_000 }, () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
       run("init", tmpDir);
-      // Non-TTY stdin will cause prompt to use the default (outputDir)
-      const result = run("add schema", tmpDir);
+      const result = run("add schema --force", tmpDir);
       expect(result.exitCode).toBe(0);
 
-      const schemaPath = path.join(tmpDir, "lib", "khotan", "khotan.ts");
+      const schemaPath = path.join(tmpDir, "khotan", "khotan.ts");
       expect(fs.existsSync(schemaPath)).toBe(true);
     });
 
@@ -311,7 +363,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       run("add plug", tmpDir);
 
-      const plugPath = path.join(tmpDir, "lib", "khotan", "plug.ts");
+      const plugPath = path.join(tmpDir, "khotan", "plugs", "plug.ts");
       fs.writeFileSync(plugPath, "// modified by user");
 
       const result = run("add plug --force", tmpDir);
@@ -327,7 +379,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       run("add plug", tmpDir);
 
-      const plugPath = path.join(tmpDir, "lib", "khotan", "plug.ts");
+      const plugPath = path.join(tmpDir, "khotan", "plugs", "plug.ts");
       fs.writeFileSync(plugPath, "// modified by user");
 
       try {
@@ -346,7 +398,7 @@ describe("CLI", { timeout: 30_000 }, () => {
   });
 
   describe("add hub", () => {
-    it("scaffolds all three files in src layout", () => {
+    it("scaffolds hub.tsx in src layout (core files from init)", () => {
       fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
       fs.writeFileSync(
@@ -355,7 +407,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "src", "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -370,6 +422,14 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
       expect(
         fs.existsSync(
+          path.join(tmpDir, "src", "components", "khotan", "wire-panel.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
           path.join(
             tmpDir,
             "src",
@@ -381,12 +441,9 @@ describe("CLI", { timeout: 30_000 }, () => {
           ),
         ),
       ).toBe(true);
-      expect(
-        fs.existsSync(path.join(tmpDir, "src", "lib", "khotan", "khotan.ts")),
-      ).toBe(true);
     });
 
-    it("scaffolds all three files in top-level app layout", () => {
+    it("scaffolds hub.tsx in top-level app layout (core files from init)", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
       fs.writeFileSync(
@@ -395,7 +452,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -403,15 +460,22 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
 
       expect(
-        fs.existsSync(path.join(tmpDir, "components", "khotan", "hub.tsx")),
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "hub.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "wire-panel.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "khotan", "khotan.ts")),
       ).toBe(true);
       expect(
         fs.existsSync(
           path.join(tmpDir, "app", "api", "khotan", "[...all]", "route.ts"),
         ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(tmpDir, "lib", "khotan", "khotan.ts")),
       ).toBe(true);
     });
 
@@ -433,15 +497,24 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("hub.tsx has no khotan-data imports", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
       run("add hub --force", tmpDir);
 
-      const hubPath = path.join(tmpDir, "components", "khotan", "hub.tsx");
+      const hubPath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "hub.tsx",
+      );
       const content = fs.readFileSync(hubPath, "utf-8");
       expect(content).not.toContain('from "khotan-data"');
       expect(content).not.toContain("from 'khotan-data'");
@@ -450,9 +523,13 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("shows next steps after scaffolding hub", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -464,46 +541,35 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("preserves existing khotan.ts config on hub install", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
 
-      // Pre-create khotan.ts with user content
-      const configDir = path.join(tmpDir, "lib", "khotan");
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, "khotan.ts"),
-        'const MY_PLUGS = "cin7";',
-      );
+      const khotanTsPath = path.join(tmpDir, "khotan", "khotan.ts");
+      fs.writeFileSync(khotanTsPath, 'const MY_PLUGS = "cin7";');
 
       const result = run("add hub --force", tmpDir);
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("already exists, skipping");
 
-      const content = fs.readFileSync(
-        path.join(configDir, "khotan.ts"),
-        "utf-8",
-      );
+      const content = fs.readFileSync(khotanTsPath, "utf-8");
       expect(content).toBe('const MY_PLUGS = "cin7";');
     });
 
-    it("creates khotan.ts config when it does not exist", () => {
+    it("init creates khotan.ts instance config", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
-      const uiDir = path.join(tmpDir, "components", "ui");
-      fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
-        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
-      }
-      run("init", tmpDir);
-      const result = run("add hub --force", tmpDir);
+      const result = run("init", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 3 files");
 
-      const configPath = path.join(tmpDir, "lib", "khotan", "khotan.ts");
+      const configPath = path.join(tmpDir, "khotan", "khotan.ts");
       expect(fs.existsSync(configPath)).toBe(true);
       const content = fs.readFileSync(configPath, "utf-8");
       expect(content).toContain("khotan");
@@ -512,14 +578,7 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("route template exposes PATCH method", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
-      const uiDir = path.join(tmpDir, "components", "ui");
-      fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
-        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
-      }
       run("init", tmpDir);
-      run("add hub --force", tmpDir);
 
       const routePath = path.join(
         tmpDir,
@@ -536,15 +595,24 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("hub.tsx uses PATCH for sync toggles", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
       run("add hub --force", tmpDir);
 
-      const hubPath = path.join(tmpDir, "components", "khotan", "hub.tsx");
+      const hubPath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "hub.tsx",
+      );
       const content = fs.readFileSync(hubPath, "utf-8");
       expect(content).toContain('"PATCH"');
       expect(content).not.toContain('method: "PUT"');
@@ -560,6 +628,10 @@ describe("CLI", { timeout: 30_000 }, () => {
       fs.writeFileSync(
         path.join(hubDir, "hub.tsx"),
         "export function KhotanHub() {}",
+      );
+      fs.writeFileSync(
+        path.join(hubDir, "wire-panel.tsx"),
+        "export function WirePanel() {}",
       );
     }
 
@@ -611,7 +683,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch"]) {
+      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -619,7 +691,9 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Adding required component: hub");
       expect(
-        fs.existsSync(path.join(tmpDir, "components", "khotan", "hub.tsx")),
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "hub.tsx"),
+        ),
       ).toBe(true);
       expect(
         fs.existsSync(path.join(tmpDir, "app", "config", "page.tsx")),
@@ -678,7 +752,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const comp of ["card", "badge", "table", "switch"]) {
+      for (const comp of ["card", "badge", "table", "switch", "button", "input", "label"]) {
         fs.writeFileSync(path.join(uiDir, `${comp}.tsx`), "");
       }
       run("init", tmpDir);
@@ -687,8 +761,9 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.output).not.toContain("Missing npm packages");
     });
 
-    it("plug has no dependency prompts", () => {
+    it("plug has no dependency prompts when zod is installed", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { zod: "^3.0.0" });
       run("init", tmpDir);
       const result = run("add plug", tmpDir);
       expect(result.exitCode).toBe(0);
@@ -698,7 +773,12 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("scaffolds even when dependency install is skipped", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
       writePkgJson(tmpDir);
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
+      );
       run("init", tmpDir);
       const result = run("add schema --force", tmpDir);
       expect(result.exitCode).toBe(0);
@@ -708,9 +788,14 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("warns when dependency install is declined in non-TTY", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
       fs.writeFileSync(
         path.join(tmpDir, "package.json"),
         JSON.stringify({ dependencies: {} }),
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        `export default { schema: "./db/*" };`,
       );
       run("init", tmpDir);
       const result = run("add schema", tmpDir);
@@ -959,6 +1044,51 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.output).toContain("add");
       expect(result.output).toContain("generate");
       expect(result.output).toContain("migrate");
+    });
+  });
+
+  describe("add wire", () => {
+    it("wire appears in component listing and has correct metadata", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      run("init", tmpDir);
+      const result = run("add foobar", tmpDir);
+      expect(result.output).toContain("wire");
+    });
+
+    it("wire.ts template contains wire factory function and commented example", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0", zod: "^3.0.0" });
+      run("init", tmpDir);
+
+      // Pre-scaffold plug and schema so wire doesn't trigger requires prompt
+      const plugDir = path.join(tmpDir, "khotan", "plugs");
+      fs.mkdirSync(plugDir, { recursive: true });
+      fs.writeFileSync(path.join(plugDir, "plug.ts"), "export class Plug {}");
+      fs.writeFileSync(path.join(tmpDir, "khotan", "khotan.ts"), "// schema");
+
+      const result = run("add wire --force --without-ui", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created");
+
+      const wirePath = path.join(tmpDir, "khotan", "wires", "wire.ts");
+      expect(fs.existsSync(wirePath)).toBe(true);
+
+      const content = fs.readFileSync(wirePath, "utf-8");
+      expect(content).toContain("export function wire");
+      expect(content).toContain("// Usage Example");
+      expect(content).not.toContain('from "khotan-data"');
+      expect(content).not.toContain("from 'khotan-data'");
+    });
+
+    it("wire requires plug and schema", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0", zod: "^3.0.0" });
+      run("init", tmpDir);
+
+      // Don't pre-scaffold plug/schema — wire should offer to add them
+      const result = run("add wire --force --without-ui", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Adding required component: plug");
     });
   });
 });

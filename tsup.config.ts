@@ -8,6 +8,7 @@ const libraryEntries = {
   transform: "src/transform.ts",
   drizzle: "src/drizzle.ts",
   factory: "src/factory.ts",
+  "plug-client": "src/plug-client.ts",
 };
 
 export default defineConfig([
@@ -22,7 +23,7 @@ export default defineConfig([
     minify: false,
     outDir: "dist",
     target: "es2022",
-    external: ["drizzle-orm"],
+    external: ["drizzle-orm", "zod"],
   },
   {
     entry: { cli: "src/cli/index.ts" },
@@ -45,8 +46,16 @@ export default defineConfig([
         path.resolve(templatesDir, "plug.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "plug.example.ts"),
+        path.resolve(templatesDir, "plug.example.ts"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "schema.ts"),
         path.resolve(templatesDir, "schema.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "wire.ts"),
+        path.resolve(templatesDir, "wire.ts"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "hub.tsx"),
@@ -63,6 +72,14 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "config-page.tsx"),
         path.resolve(templatesDir, "config-page.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "wire-panel.tsx"),
+        path.resolve(templatesDir, "wire-panel.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "var-panel.tsx"),
+        path.resolve(templatesDir, "var-panel.tsx"),
       );
     },
   },
