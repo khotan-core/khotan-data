@@ -400,6 +400,27 @@ const BLOCKS: Record<string, ComponentEntry> = {
       },
     ],
   },
+  graph: {
+    name: "graph",
+    description: "Standalone topology graph page at /graph with filtering and run-state overlays",
+    requiresShadcn: true,
+    dependencies: {
+      npmPackages: ["@xyflow/react"],
+      shadcnComponents: ["card", "badge"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "topology-canvas.tsx"),
+        outputFile: "topology-canvas.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "graph-page.tsx"),
+        outputFile: "graph/page.tsx",
+        outputBase: "appRoot",
+      },
+    ],
+  },
 };
 
 export type EntryKind = "component" | "block";

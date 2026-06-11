@@ -79,7 +79,7 @@ const khotanFlows = pgTable(
     resourceId: text("resource_id"),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     lastRunStatus: text("last_run_status", {
-      enum: ["ok", "failed"],
+      enum: ["completed", "partial", "failed", "cancelled"],
     }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -188,7 +188,7 @@ const khotanRuns = pgTable(
       enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
     }).notNull(),
     status: text("status", {
-      enum: ["pending", "running", "ok", "failed"],
+      enum: ["pending", "running", "completed", "partial", "failed", "cancelled"],
     })
       .default("pending")
       .notNull(),
@@ -321,13 +321,18 @@ export interface ResourceRegistration {
 
 export type FlowType = "inflow" | "outflow" | "relay" | "webhook";
 
+export type KhotanRunStatus = "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
+export type KhotanTerminalRunStatus = "completed" | "partial" | "failed" | "cancelled";
+
 export interface FlowRunResult {
+  status?: KhotanTerminalRunStatus;
   extracted?: number;
   transformed?: number;
   created?: number;
   updated?: number;
   deleted?: number;
   failed?: number;
+  error?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -346,6 +351,19 @@ export interface FlowWorkflowContext {
   body?: unknown;
   vars: Record<string, string>;
   khotanRunId: string;
+}
+
+export interface KhotanRunUpdate {
+  type?: "progress" | "log" | "metric" | "error";
+  message: string;
+  progress?: number;
+  extracted?: number;
+  transformed?: number;
+  created?: number;
+  updated?: number;
+  deleted?: number;
+  failed?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FlowRegistration {
@@ -443,6 +461,7 @@ export interface KhotanAdapter {
   getPlugFlows(plugId: string): Promise<Record<string, unknown>[]>;
   getFlow(flowId: string): Promise<Record<string, unknown> | null>;
   listFlows(): Promise<Record<string, unknown>[]>;
+  getRun(runId: string): Promise<Record<string, unknown> | null>;
   listRuns(flowId: string): Promise<Record<string, unknown>[]>;
   listRunsPage(params: {
     limit: number;
@@ -515,7 +534,7 @@ export interface KhotanAdapter {
     status: string;
   }): Promise<{ id: string }>;
   updateRun(runId: string, updates: {
-    status: "pending" | "running" | "ok" | "failed";
+    status: KhotanRunStatus;
     workflowRunId?: string | null;
     completedAt?: Date;
     durationMs?: number;
@@ -542,7 +561,7 @@ export interface KhotanAdapter {
   }): Promise<{ items: Record<string, unknown>[]; hasMore: boolean }>;
   updateFlowLastRun(flowId: string, updates: {
     lastRunAt: Date;
-    lastRunStatus: "ok" | "failed";
+    lastRunStatus: KhotanTerminalRunStatus;
   }): Promise<void>;
 }
 
@@ -731,6 +750,15 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .from(khotanRuns)
         .where(eq(khotanRuns.flowId, flowId))
         .orderBy(desc(khotanRuns.startedAt));
+    },
+
+    async getRun(runId) {
+      const rows = await db
+        .select()
+        .from(khotanRuns)
+        .where(eq(khotanRuns.id, runId))
+        .limit(1);
+      return rows[0] ?? null;
     },
 
     async listRunsPage({ limit, offset }) {
@@ -1159,7 +1187,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           webhookHandlerId: run.webhookHandlerId ?? null,
           workflowRunId: run.workflowRunId ?? null,
           runType: run.runType as "full" | "delta" | "backfill" | "reconcile" | "dry-run" | "webhook",
-          status: run.status as "pending" | "running" | "ok" | "failed",
+          status: run.status as KhotanRunStatus,
         })
         .returning({ id: khotanRuns.id });
       return { id: rows[0]!.id };
@@ -1360,13 +1388,38 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WorkflowStartFn = (workflowFn: (...args: any[]) => any, args: unknown[]) => Promise<unknown>;
+type WorkflowRunHandle = {
+  runId?: string;
+  status?: Promise<string>;
+  returnValue?: Promise<unknown>;
+  cancel?: () => Promise<void>;
+  getReadable?: (options?: { startIndex?: number; namespace?: string }) => ReadableStream;
+};
+type WorkflowGetRunFn = (runId: string) => WorkflowRunHandle;
+type WorkflowGetWritableFn = <T = unknown>(options?: { namespace?: string }) => WritableStream<T>;
 
 let _workflowStart: WorkflowStartFn | null = null;
+let _workflowGetRun: WorkflowGetRunFn | null = null;
+let _workflowGetWritable: WorkflowGetWritableFn | null = null;
+
+export function __setWorkflowStartForTests(start: WorkflowStartFn | null): void {
+  _workflowStart = start;
+}
+
+export function __setWorkflowGetRunForTests(getRun: WorkflowGetRunFn | null): void {
+  _workflowGetRun = getRun;
+}
+
+export function __setWorkflowGetWritableForTests(getWritable: WorkflowGetWritableFn | null): void {
+  _workflowGetWritable = getWritable;
+}
 
 async function importWorkflowStart(): Promise<WorkflowStartFn> {
   if (_workflowStart) return _workflowStart;
   try {
-    const mod = await import(/* webpackIgnore: true */ "workflow/api") as { start: WorkflowStartFn };
+    const mod = await import(/* webpackIgnore: true */ "workflow/api") as {
+      start: WorkflowStartFn;
+    };
     _workflowStart = mod.start;
     return _workflowStart;
   } catch {
@@ -1376,11 +1429,129 @@ async function importWorkflowStart(): Promise<WorkflowStartFn> {
   }
 }
 
+async function importWorkflowGetRun(): Promise<WorkflowGetRunFn> {
+  if (_workflowGetRun) return _workflowGetRun;
+  try {
+    const mod = await import(/* webpackIgnore: true */ "workflow/api") as {
+      getRun: WorkflowGetRunFn;
+    };
+    _workflowGetRun = mod.getRun;
+    return _workflowGetRun;
+  } catch {
+    throw new Error(
+      "Failed to import workflow/api. Install Vercel Workflow: npm install workflow",
+    );
+  }
+}
+
+async function importWorkflowGetWritable(): Promise<WorkflowGetWritableFn> {
+  if (_workflowGetWritable) return _workflowGetWritable;
+  try {
+    const mod = await import(/* webpackIgnore: true */ "workflow") as {
+      getWritable: WorkflowGetWritableFn;
+    };
+    _workflowGetWritable = mod.getWritable;
+    return _workflowGetWritable;
+  } catch {
+    throw new Error(
+      "Failed to import workflow. Install Vercel Workflow: npm install workflow",
+    );
+  }
+}
+
+export async function sendUpdate(
+  update: KhotanRunUpdate | string,
+  options: { namespace?: string } = {},
+): Promise<void> {
+  const getWritable = await importWorkflowGetWritable();
+  const writable = getWritable<string>(options);
+  const writer = writable.getWriter();
+  const payload = typeof update === "string"
+    ? { type: "log", message: update }
+    : { type: "progress", ...update };
+
+  try {
+    await writer.write(
+      `${JSON.stringify({ ...payload, timestamp: new Date().toISOString() })}\n`,
+    );
+  } finally {
+    writer.releaseLock();
+  }
+}
+
 function getWorkflowRunId(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
   if ("runId" in result) return String((result as { runId: unknown }).runId);
   if ("id" in result) return String((result as { id: unknown }).id);
   return null;
+}
+
+function getWorkflowReturnValue(result: unknown): Promise<unknown> | null {
+  if (!result || typeof result !== "object" || !("returnValue" in result)) {
+    return null;
+  }
+  const returnValue = (result as { returnValue: unknown }).returnValue;
+  return returnValue && typeof (returnValue as Promise<unknown>).then === "function"
+    ? (returnValue as Promise<unknown>)
+    : null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (
+    error &&
+    typeof error === "object" &&
+    "cause" in error &&
+    (error as { cause?: unknown }).cause instanceof Error
+  ) {
+    return (error as { cause: Error }).cause.message;
+  }
+  if (error instanceof Error) return error.message;
+  return "Unknown error";
+}
+
+function isWorkflowCancelledError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const name = typeof record["name"] === "string" ? record["name"] : "";
+  const status = typeof record["status"] === "string" ? record["status"] : "";
+  const message = typeof record["message"] === "string" ? record["message"] : "";
+  return (
+    name === "WorkflowRunCancelledError" ||
+    status === "cancelled" ||
+    message.toLowerCase().includes("cancelled")
+  );
+}
+
+function toFlowRunResult(value: unknown): FlowRunResult | undefined {
+  return value && typeof value === "object"
+    ? (value as FlowRunResult)
+    : undefined;
+}
+
+function getFlowRunCounters(result: FlowRunResult | undefined) {
+  return {
+    extracted: result?.extracted ?? 0,
+    transformed: result?.transformed ?? 0,
+    created: result?.created ?? 0,
+    updated: result?.updated ?? 0,
+    deleted: result?.deleted ?? 0,
+    failed: result?.failed ?? 0,
+  };
+}
+
+function resolveTerminalRunStatus(
+  result: FlowRunResult | undefined,
+  counters: ReturnType<typeof getFlowRunCounters>,
+): KhotanTerminalRunStatus {
+  if (
+    result?.status === "completed" ||
+    result?.status === "partial" ||
+    result?.status === "failed" ||
+    result?.status === "cancelled"
+  ) {
+    return result.status;
+  }
+  return counters.failed > 0 ? "partial" : "completed";
 }
 
 // ---------------------------------------------------------------------------
@@ -1548,6 +1719,21 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
       }
     }
+  }
+
+  const registeredFlowKeys = new Set(
+    plugs.flatMap((plug) =>
+      (plug.flows ?? []).map((flow) => `${plug.name}\0${flow.name}\0${flow.type}`),
+    ),
+  );
+
+  function isRegisteredFlowRecord(flow: Record<string, unknown>): boolean {
+    return (
+      typeof flow["plugName"] === "string" &&
+      typeof flow["name"] === "string" &&
+      typeof flow["type"] === "string" &&
+      registeredFlowKeys.has(`${flow["plugName"]}\0${flow["name"]}\0${flow["type"]}`)
+    );
   }
 
   function getWebhookHandlersForPlug(plug: PlugRegistration): WebhookRegistration[] {
@@ -1840,6 +2026,63 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     });
     const startedAt = Date.now();
 
+    async function completeRunOk(result: FlowRunResult | undefined) {
+      const completedAt = new Date();
+      const counters = getFlowRunCounters(result);
+      const status = resolveTerminalRunStatus(result, counters);
+
+      await adapter.updateRun(runId, {
+        status,
+        completedAt,
+        durationMs: Date.now() - startedAt,
+        ...counters,
+        error: result?.error ?? null,
+        metadata: result?.metadata ?? null,
+      });
+      await adapter.updateFlowLastRun(flowId, {
+        lastRunAt: completedAt,
+        lastRunStatus: status,
+      });
+
+      return { completedAt, counters, status };
+    }
+
+    async function completeRunFailed(error: unknown) {
+      const completedAt = new Date();
+      const message = getErrorMessage(error);
+      const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
+        ? "cancelled"
+        : "failed";
+      await adapter.updateRun(runId, {
+        status,
+        completedAt,
+        durationMs: Date.now() - startedAt,
+        failed: status === "failed" ? 1 : 0,
+        error: message,
+      });
+      await adapter.updateFlowLastRun(flowId, {
+        lastRunAt: completedAt,
+        lastRunStatus: status,
+      });
+      return message;
+    }
+
+    function observeWorkflowCompletion(workflowResult: unknown) {
+      const returnValue = getWorkflowReturnValue(workflowResult);
+      if (!returnValue) return;
+
+      void returnValue
+        .then(async (value) => {
+          await completeRunOk(toFlowRunResult(value));
+        })
+        .catch(async (error) => {
+          await completeRunFailed(error);
+        })
+        .catch((error) => {
+          kd("flow", `Failed to reconcile workflow run ${runId}`, error);
+        });
+    }
+
     try {
       const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
       const setFlowVars = async (updates: Record<string, string>) => {
@@ -1884,6 +2127,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           });
         }
 
+        observeWorkflowCompletion(result);
+
         return Response.json({
           id: runId,
           flowId,
@@ -1901,52 +2146,21 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         vars,
         setVars: setFlowVars,
       });
+      const runResult = toFlowRunResult(result);
 
-      const completedAt = new Date();
-      const counters = {
-        extracted: result?.extracted ?? 0,
-        transformed: result?.transformed ?? 0,
-        created: result?.created ?? 0,
-        updated: result?.updated ?? 0,
-        deleted: result?.deleted ?? 0,
-        failed: result?.failed ?? 0,
-      };
-
-      await adapter.updateRun(runId, {
-        status: "ok",
-        completedAt,
-        durationMs: Date.now() - startedAt,
-        ...counters,
-        error: null,
-        metadata: result?.metadata ?? null,
-      });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: "ok",
-      });
+      const { counters, status } = await completeRunOk(runResult);
 
       return Response.json({
         id: runId,
         flowId,
-        status: "ok",
+        status,
         runType,
         ...counters,
-        metadata: result?.metadata ?? null,
+        error: runResult?.error ?? null,
+        metadata: runResult?.metadata ?? null,
       });
     } catch (error) {
-      const completedAt = new Date();
-      const message = error instanceof Error ? error.message : "Unknown error";
-      await adapter.updateRun(runId, {
-        status: "failed",
-        completedAt,
-        durationMs: Date.now() - startedAt,
-        failed: 1,
-        error: message,
-      });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: "failed",
-      });
+      const message = await completeRunFailed(error);
       return Response.json(
         { id: runId, flowId, status: "failed", error: message },
         { status: 500 },
@@ -1971,8 +2185,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
     const matches = (await adapter.listFlows()).filter((flow) => {
       if (flow["name"] !== flowNameOrId) return false;
-      if (typeof flow["plugName"] !== "string") return false;
-      if (!plugNames.has(flow["plugName"])) return false;
+      if (!isRegisteredFlowRecord(flow)) return false;
       return !options.plugName || flow["plugName"] === options.plugName;
     });
 
@@ -2019,6 +2232,42 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         return payload as Record<string, unknown>;
       },
     };
+  }
+
+  async function getRunWithWorkflowStatus(runId: string): Promise<Record<string, unknown> | null> {
+    const run = await adapter.getRun(runId);
+    if (!run) return null;
+
+    const workflowRunId = typeof run["workflowRunId"] === "string"
+      ? run["workflowRunId"]
+      : typeof run["workflow_run_id"] === "string"
+        ? run["workflow_run_id"]
+        : null;
+
+    if (!workflowRunId) {
+      return { ...run, workflowStatus: null };
+    }
+
+    try {
+      const getRun = await importWorkflowGetRun();
+      const workflowRun = getRun(workflowRunId);
+      const workflowStatus = workflowRun.status ? await workflowRun.status : null;
+      return { ...run, workflowStatus };
+    } catch (error) {
+      return {
+        ...run,
+        workflowStatus: null,
+        workflowError: getErrorMessage(error),
+      };
+    }
+  }
+
+  function getRunWorkflowId(run: Record<string, unknown>): string | null {
+    return typeof run["workflowRunId"] === "string"
+      ? run["workflowRunId"]
+      : typeof run["workflow_run_id"] === "string"
+        ? run["workflow_run_id"]
+        : null;
   }
 
   async function handler(request: Request): Promise<Response> {
@@ -2218,10 +2467,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       // GET .../flows — only flows belonging to registered plugs
       if (flowsIdx !== -1 && flowsIdx === segments.length - 1) {
         const data = await adapter.listFlows();
-        const filtered = data.filter(
-          (flow) =>
-            typeof flow["plugName"] === "string" && plugNames.has(flow["plugName"]),
-        );
+        const filtered = data.filter((flow) => isRegisteredFlowRecord(flow));
         return Response.json(filtered);
       }
 
@@ -2249,6 +2495,64 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             nextOffset: offset + limit,
           },
         });
+      }
+
+      // GET .../runs/:id/stream
+      if (
+        runsIdx !== -1 &&
+        runsIdx === segments.length - 3 &&
+        segments[runsIdx + 2] === "stream"
+      ) {
+        const runId = segments[runsIdx + 1]!;
+        const run = await adapter.getRun(runId);
+        if (!run) {
+          return Response.json({ error: "Run not found" }, { status: 404 });
+        }
+        const workflowRunId = getRunWorkflowId(run);
+        if (!workflowRunId) {
+          return Response.json(
+            { error: "Run does not have a Workflow run ID" },
+            { status: 400 },
+          );
+        }
+
+        const startIndexParam = url.searchParams.get("startIndex");
+        const parsedStartIndex = startIndexParam == null
+          ? null
+          : Number.parseInt(startIndexParam, 10);
+        const namespace = url.searchParams.get("namespace") ?? undefined;
+        const getRun = await importWorkflowGetRun();
+        const workflowRun = getRun(workflowRunId);
+        const streamOptions: { startIndex?: number; namespace?: string } = {};
+        if (typeof parsedStartIndex === "number" && Number.isFinite(parsedStartIndex)) {
+          streamOptions.startIndex = parsedStartIndex;
+        }
+        if (namespace) streamOptions.namespace = namespace;
+        const stream = workflowRun.getReadable?.(streamOptions);
+
+        if (!stream) {
+          return Response.json(
+            { error: "Workflow run does not expose a readable stream" },
+            { status: 400 },
+          );
+        }
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+          },
+        });
+      }
+
+      // GET .../runs/:id
+      if (runsIdx !== -1 && runsIdx === segments.length - 2) {
+        const runId = segments[runsIdx + 1]!;
+        const run = await getRunWithWorkflowStatus(runId);
+        if (!run) {
+          return Response.json({ error: "Run not found" }, { status: 404 });
+        }
+        return Response.json(run);
       }
 
       // GET .../webhook-events
@@ -2658,6 +2962,74 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const message = error instanceof Error ? error.message : "Unknown error";
           return Response.json({ error: message }, { status: 500 });
         }
+      }
+
+      // POST .../runs/:id/cancel
+      if (
+        runsIdx !== -1 &&
+        runsIdx === segments.length - 3 &&
+        segments[runsIdx + 2] === "cancel"
+      ) {
+        const runId = segments[runsIdx + 1]!;
+        const run = await adapter.getRun(runId);
+        if (!run) {
+          return Response.json({ error: "Run not found" }, { status: 404 });
+        }
+        const workflowRunId = getRunWorkflowId(run);
+        if (!workflowRunId) {
+          return Response.json(
+            { error: "Run does not have a Workflow run ID" },
+            { status: 400 },
+          );
+        }
+
+        const getRun = await importWorkflowGetRun();
+        const workflowRun = getRun(workflowRunId);
+        await workflowRun.cancel?.();
+
+        const completedAt = new Date();
+        await adapter.updateRun(runId, {
+          status: "cancelled",
+          completedAt,
+          error: "Cancelled",
+        });
+        const flowId = typeof run["flowId"] === "string" ? run["flowId"] : null;
+        if (flowId) {
+          await adapter.updateFlowLastRun(flowId, {
+            lastRunAt: completedAt,
+            lastRunStatus: "cancelled",
+          });
+        }
+
+        return Response.json({
+          ok: true,
+          id: runId,
+          workflowRunId,
+          status: "cancelled",
+          error: "Cancelled",
+        });
+      }
+
+      // POST .../runs/:id/retry
+      if (
+        runsIdx !== -1 &&
+        runsIdx === segments.length - 3 &&
+        segments[runsIdx + 2] === "retry"
+      ) {
+        const runId = segments[runsIdx + 1]!;
+        const run = await adapter.getRun(runId);
+        if (!run) {
+          return Response.json({ error: "Run not found" }, { status: 404 });
+        }
+        const flowId = typeof run["flowId"] === "string" ? run["flowId"] : null;
+        if (!flowId) {
+          return Response.json(
+            { error: "Only flow runs can be retried from the Hub" },
+            { status: 400 },
+          );
+        }
+        const runType = typeof run["runType"] === "string" ? run["runType"] : "full";
+        return triggerFlowRun(flowId, { runType });
       }
 
       // POST .../flows/:id/runs

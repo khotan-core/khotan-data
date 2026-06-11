@@ -6,9 +6,6 @@
 // the exported flow in {outputDir}/khotan.ts.
 // ============================================================================
 
-import { db } from "@/db";
-import { products } from "@/db/schema";
-import { hubspotPlug } from "../plugs/hubspot";
 import { outflow, type OutflowContext } from "./outflow";
 
 async function hubspotProductsWorkflow(ctx: OutflowContext) {
@@ -22,12 +19,17 @@ async function hubspotProductsWorkflow(ctx: OutflowContext) {
       runType: ctx.runType,
     });
 
-    const records = await db.select().from(products);
+    // Replace this with your app-specific DB query.
+    const records: Array<Record<string, unknown>> = [];
 
     for (const record of records) {
-      await hubspotPlug.post("/products", {
-        vars: ctx.vars,
-        body: record,
+      await fetch("https://api.example.com/products", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(record),
       });
     }
 

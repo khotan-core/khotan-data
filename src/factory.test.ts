@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
+  __setWorkflowGetRunForTests,
+  __setWorkflowGetWritableForTests,
+  __setWorkflowStartForTests,
   khotan,
   toNextJsHandler,
   type KhotanAdapter,
@@ -17,7 +20,7 @@ interface StoredFlow {
   resourceId: string | null;
   enabled: boolean;
   lastRunAt: Date | null;
-  lastRunStatus: "ok" | "failed" | null;
+  lastRunStatus: "completed" | "partial" | "failed" | "cancelled" | null;
 }
 
 interface StoredMapping {
@@ -165,6 +168,10 @@ function createMockAdapter(): KhotanAdapter {
 
     listRuns: vi.fn(async (flowId: string) => {
       return [...runStore.values()].filter((run) => run.flowId === flowId);
+    }),
+
+    getRun: vi.fn(async (runId: string) => {
+      return runStore.get(runId) ?? null;
     }),
 
     listRunsPage: vi.fn(async ({ limit, offset }: { limit: number; offset: number }) => {
@@ -394,11 +401,18 @@ function makeRequest(path: string, method = "GET", body?: unknown): Request {
   return new Request(`http://localhost${path}`, init);
 }
 
+async function waitForBackgroundTasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("khotan factory", () => {
   let adapter: KhotanAdapter;
 
   beforeEach(() => {
     adapter = createMockAdapter();
+    __setWorkflowStartForTests(null);
+    __setWorkflowGetRunForTests(null);
+    __setWorkflowGetWritableForTests(null);
   });
 
   describe("registration validation", () => {
@@ -683,7 +697,7 @@ describe("khotan factory", () => {
       await adapter.insertRun({
         flowId: "flow-1",
         runType: "manual",
-        status: "ok",
+        status: "completed",
       });
       await adapter.insertRun({
         flowId: "flow-1",
@@ -715,7 +729,7 @@ describe("khotan factory", () => {
       const { id: runId1 } = await adapter.insertRun({
         flowId: "flow-1",
         runType: "webhook",
-        status: "ok",
+        status: "completed",
       });
       const { id: runId2 } = await adapter.insertRun({
         flowId: "flow-1",
@@ -808,7 +822,7 @@ describe("khotan factory", () => {
       expect(adapter.updateRun).toHaveBeenCalledWith(
         "run-1",
         expect.objectContaining({
-          status: "ok",
+          status: "completed",
           extracted: 2,
           transformed: 2,
           created: 1,
@@ -819,8 +833,483 @@ describe("khotan factory", () => {
       );
       expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
         "flow-1",
-        expect.objectContaining({ lastRunStatus: "ok" }),
+        expect.objectContaining({ lastRunStatus: "completed" }),
       );
+    });
+
+    it("POST /api/khotan/flows/:id/runs marks successful runs with failed records as partial", async () => {
+      const run = vi.fn(async () => ({
+        extracted: 10,
+        transformed: 10,
+        updated: 8,
+        failed: 2,
+        metadata: { source: "test" },
+      }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-1",
+        status: "partial",
+        failed: 2,
+      });
+      expect(adapter.updateRun).toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({
+          status: "partial",
+          failed: 2,
+        }),
+      );
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "partial" }),
+      );
+    });
+
+    it("POST /api/khotan/flows/:id/runs honors explicit terminal status from run results", async () => {
+      const run = vi.fn(async () => ({
+        status: "cancelled" as const,
+        extracted: 5,
+        updated: 2,
+        error: "Stopped by preflight",
+        metadata: { reason: "preflight" },
+      }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-1",
+        status: "cancelled",
+        extracted: 5,
+        updated: 2,
+        error: "Stopped by preflight",
+      });
+      expect(adapter.updateRun).toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({
+          status: "cancelled",
+          error: "Stopped by preflight",
+          metadata: { reason: "preflight" },
+        }),
+      );
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "cancelled" }),
+      );
+    });
+
+    it("POST /api/khotan/flows/:id/runs reconciles completed workflow runs", async () => {
+      const workflow = vi.fn(async () => undefined);
+      const returnValue = Promise.resolve({
+        extracted: 3,
+        transformed: 3,
+        updated: 3,
+        metadata: { source: "workflow" },
+      });
+      const startWorkflow = vi.fn(async () => ({
+        runId: "workflow-run-1",
+        returnValue,
+      }));
+      __setWorkflowStartForTests(startWorkflow);
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          runType: "full",
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-1",
+        flowId: "flow-1",
+        workflowRunId: "workflow-run-1",
+        status: "running",
+      });
+      expect(startWorkflow).toHaveBeenCalledWith(workflow, [
+        expect.objectContaining({
+          khotanRunId: "run-1",
+          runType: "full",
+          flow: expect.objectContaining({ id: "flow-1", name: "products" }),
+        }),
+      ]);
+
+      await returnValue;
+      await waitForBackgroundTasks();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "completed",
+        workflowRunId: "workflow-run-1",
+        extracted: 3,
+        transformed: 3,
+        updated: 3,
+        metadata: { source: "workflow" },
+      });
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "completed" }),
+      );
+    });
+
+    it("POST /api/khotan/flows/:id/runs reconciles failed workflow runs", async () => {
+      const workflow = vi.fn(async () => undefined);
+      const returnValue = Promise.reject(new Error("workflow boom"));
+      const startWorkflow = vi.fn(async () => ({
+        runId: "workflow-run-1",
+        returnValue,
+      }));
+      __setWorkflowStartForTests(startWorkflow);
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+
+      expect(res.status).toBe(200);
+      await returnValue.catch(() => undefined);
+      await waitForBackgroundTasks();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "failed",
+        workflowRunId: "workflow-run-1",
+        failed: 1,
+        error: "workflow boom",
+      });
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "failed" }),
+      );
+    });
+
+    it("GET /api/khotan/runs/:id returns live workflow status", async () => {
+      const workflow = vi.fn(async () => undefined);
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue: new Promise(() => {}),
+        })),
+      );
+      __setWorkflowGetRunForTests(
+        vi.fn(() => ({
+          status: Promise.resolve("running"),
+        })),
+      );
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+
+      const res = await flowInstance.handler(makeRequest("/api/khotan/runs/run-1"));
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-1",
+        workflowRunId: "workflow-run-1",
+        workflowStatus: "running",
+      });
+    });
+
+    it("GET /api/khotan/runs/:id/stream returns the workflow stream", async () => {
+      const encoder = new TextEncoder();
+      const workflow = vi.fn(async () => undefined);
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue: new Promise(() => {}),
+        })),
+      );
+      __setWorkflowGetRunForTests(
+        vi.fn(() => ({
+          getReadable: () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(encoder.encode('{"message":"hello"}\n'));
+                controller.close();
+              },
+            }),
+        })),
+      );
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/runs/run-1/stream?startIndex=-50"),
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toContain("hello");
+    });
+
+    it("POST /api/khotan/runs/:id/cancel cancels workflow runs", async () => {
+      const cancel = vi.fn(async () => undefined);
+      const workflow = vi.fn(async () => undefined);
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue: new Promise(() => {}),
+        })),
+      );
+      __setWorkflowGetRunForTests(vi.fn(() => ({ cancel })));
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/runs/run-1/cancel", "POST"),
+      );
+      expect(res.status).toBe(200);
+      expect(cancel).toHaveBeenCalled();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "cancelled",
+        error: "Cancelled",
+      });
+    });
+
+    it("POST /api/khotan/flows/:id/runs reconciles cancelled workflow runs", async () => {
+      const workflow = vi.fn(async () => undefined);
+      const cancelError = Object.assign(new Error("Workflow run was cancelled"), {
+        name: "WorkflowRunCancelledError",
+      });
+      const returnValue = Promise.reject(cancelError);
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue,
+        })),
+      );
+
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+      await returnValue.catch(() => undefined);
+      await waitForBackgroundTasks();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "cancelled",
+        workflowRunId: "workflow-run-1",
+        failed: 0,
+      });
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "cancelled" }),
+      );
+    });
+
+    it("POST /api/khotan/runs/:id/retry starts another flow run", async () => {
+      const run = vi.fn(async () => ({ updated: 1 }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          runType: "delta",
+        }),
+      );
+
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/runs/run-1/retry", "POST"),
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-2",
+        flowId: "flow-1",
+        status: "completed",
+        runType: "delta",
+      });
+      expect(run).toHaveBeenCalledTimes(2);
     });
 
     it("flow().start starts a registered flow by name", async () => {
@@ -856,7 +1345,7 @@ describe("khotan factory", () => {
       expect(data).toMatchObject({
         id: "run-1",
         flowId: "flow-1",
-        status: "ok",
+        status: "completed",
         runType: "delta",
         extracted: 1,
         transformed: 1,
@@ -911,7 +1400,7 @@ describe("khotan factory", () => {
 
       await expect(
         flowInstance.flow("products", { plugName: "shopify" }).start(),
-      ).resolves.toMatchObject({ flowId: "flow-2", status: "ok" });
+      ).resolves.toMatchObject({ flowId: "flow-2", status: "completed" });
     });
 
     it("POST /api/khotan/flows/:id/runs records failed flow runs", async () => {

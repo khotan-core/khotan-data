@@ -6,7 +6,6 @@
 // exported pass handler in {outputDir}/khotan.ts.
 // ============================================================================
 
-import { plug, bearer } from "../plugs/plug";
 import { pass, type PassContext } from "./pass";
 
 async function stripeToSlackWorkflow(ctx: PassContext) {
@@ -19,13 +18,13 @@ async function stripeToSlackWorkflow(ctx: PassContext) {
       khotanRunId: ctx.khotanRunId,
     });
 
-    const slackPlug = plug({
-      baseUrl: "https://slack.com/api",
-      auth: bearer(ctx.destVars["botToken"] ?? ""),
-    });
-
-    await slackPlug.post("/chat.postMessage", {
-      body: {
+    await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.destVars["botToken"] ?? ""}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         channel: ctx.destVars["channelId"],
         text: `Received ${ctx.eventType}`,
         blocks: [
@@ -37,7 +36,7 @@ async function stripeToSlackWorkflow(ctx: PassContext) {
             },
           },
         ],
-      },
+      }),
     });
   }
 

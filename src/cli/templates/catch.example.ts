@@ -6,8 +6,6 @@
 // exported catch handler in {outputDir}/khotan.ts.
 // ============================================================================
 
-import { db } from "@/db";
-import { webhookEvents } from "@/db/schema";
 import { catchEvent, type CatchContext } from "./catch";
 
 async function stripeInvoiceCatchWorkflow(ctx: CatchContext) {
@@ -20,9 +18,10 @@ async function stripeInvoiceCatchWorkflow(ctx: CatchContext) {
       khotanRunId: ctx.khotanRunId,
     });
 
-    await db.insert(webhookEvents).values({
-      eventType: ctx.eventType,
-      payload: ctx.event,
+    // Khotan already records webhook deliveries. Add app-specific side effects
+    // here, such as updating a local table or enqueueing downstream work.
+    console.log("Webhook payload", {
+      event: ctx.event,
       headers: ctx.headers,
     });
   }

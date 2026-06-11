@@ -45,7 +45,7 @@ interface Flow {
   enabled: boolean;
   schedule: string | null;
   lastRunAt: string | null;
-  lastRunStatus: "ok" | "failed" | null;
+  lastRunStatus: "completed" | "partial" | "failed" | "cancelled" | null;
   plugName: string | null;
 }
 
@@ -58,7 +58,7 @@ interface WebhookHandler {
   events: string[] | null;
   enabled: boolean;
   lastRunAt: string | null;
-  lastRunStatus: "ok" | "failed" | "running" | "pending" | null;
+  lastRunStatus: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled" | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,6 +77,15 @@ const flowTypeVariant: Record<string, FlowTypeVariant> = {
   outflow: "secondary",
   relay: "outline",
   webhook: "outline",
+};
+
+const runStatusVariant: Record<string, StatusVariant> = {
+  pending: "outline",
+  running: "secondary",
+  completed: "default",
+  partial: "secondary",
+  failed: "destructive",
+  cancelled: "outline",
 };
 
 export function KhotanHub({
@@ -318,11 +327,7 @@ export function KhotanHub({
                         <TableCell>
                           {flow.lastRunStatus ? (
                             <Badge
-                              variant={
-                                flow.lastRunStatus === "ok"
-                                  ? "default"
-                                  : "destructive"
-                              }
+                              variant={runStatusVariant[flow.lastRunStatus] ?? "secondary"}
                             >
                               {flow.lastRunStatus}
                             </Badge>
@@ -381,13 +386,7 @@ export function KhotanHub({
                         <TableCell>
                           {handler.lastRunStatus ? (
                             <Badge
-                              variant={
-                                handler.lastRunStatus === "ok"
-                                  ? "default"
-                                  : handler.lastRunStatus === "failed"
-                                    ? "destructive"
-                                    : "secondary"
-                              }
+                              variant={runStatusVariant[handler.lastRunStatus] ?? "secondary"}
                             >
                               {handler.lastRunStatus}
                             </Badge>

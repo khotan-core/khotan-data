@@ -91,7 +91,7 @@ export const khotanFlows = pgTable(
     resourceId: text("resource_id").references(() => khotanResources.id),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     lastRunStatus: text("last_run_status", {
-      enum: ["ok", "failed"],
+      enum: ["completed", "partial", "failed", "cancelled"],
     }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -226,7 +226,7 @@ export const khotanRuns = pgTable(
       enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
     }).notNull(),
     status: text("status", {
-      enum: ["pending", "running", "ok", "failed"],
+      enum: ["pending", "running", "completed", "partial", "failed", "cancelled"],
     })
       .default("pending")
       .notNull(),

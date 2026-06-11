@@ -87,8 +87,11 @@ Run from `/Users/coreyberther/Projects/brs-khotan-connector`:
 
 **Always test as a real user would.** Do NOT directly edit files in the test app that are scaffolded or installed by the khotan CLI or package. Instead:
 
-- **Scaffolded files** (e.g. `plug.ts`, `hub.tsx`, schema) — re-scaffold via CLI commands (`npx khotan add plug --force`)
+- **Package behavior and APIs** — implement in `khotan-data` first. Runtime endpoints, exported helpers, CLI commands, and generated UI behavior belong in the package, not in the BRS test app.
+- **Scaffolded files** (e.g. `plug.ts`, `hub.tsx`, `runs-table.tsx`, `webhook-events-table.tsx`, schema) — re-scaffold via CLI commands (`npx khotan add plug --force`, `npx khotan add logs --force --yes`, etc.)
 - **User-owned config** (e.g. `khotan.ts`, custom contracts, client files) — can be edited directly, since a real user writes these themselves
 - **node_modules** — never edit; redeploy via `npm pack` + install
 
 If a template change in khotan-data adds new functionality (like new getters on Plug), test it by re-scaffolding the component, not by hand-patching the test app's copy.
+
+If you notice a bug while testing scaffolded BRS UI/API files, fix the source template or runtime code in `/Users/coreyberther/Projects/Personal/khotan-data`, rebuild/pack/install the package, then re-run the appropriate `npx khotan add ... --force --yes` command in BRS. Do not patch the generated BRS copy directly.

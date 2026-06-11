@@ -64,6 +64,10 @@ Or use `npx khotan add config-page-1` to scaffold a `/config` page automatically
 | `GET /api/khotan/flows` | List all flows |
 | `PATCH /api/khotan/flows/:id` | Toggle flow enabled/disabled |
 | `POST /api/khotan/flows/:id/runs` | Start a tracked flow run |
+| `GET /api/khotan/runs/:id` | Get run detail with live Workflow status |
+| `GET /api/khotan/runs/:id/stream` | Stream Workflow progress updates |
+| `POST /api/khotan/runs/:id/cancel` | Cancel a running Workflow-backed run |
+| `POST /api/khotan/runs/:id/retry` | Retry a flow run with the same run type |
 | `PATCH /api/khotan/plugs/:id` | Toggle plug enabled/disabled |
 | `GET /api/khotan/variables/:plugName` | Get var fields + masked values |
 | `POST /api/khotan/variables/:plugName` | Save encrypted variables |

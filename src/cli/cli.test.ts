@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 
 const CLI_PATH = path.resolve(__dirname, "../../dist/cli.js");
 
@@ -28,6 +30,36 @@ function run(
   }
 }
 
+function runAsync(
+  args: string[],
+  cwd: string,
+  timeout = 30_000,
+): Promise<{ output: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    execFile(
+      "node",
+      [CLI_PATH, ...args],
+      {
+        cwd,
+        encoding: "utf-8",
+        timeout,
+      },
+      (error, stdout, stderr) => {
+        const exitCode =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          typeof error.code === "number"
+            ? error.code
+            : error
+              ? 1
+              : 0;
+        resolve({ output: stdout + stderr, exitCode });
+      },
+    );
+  });
+}
+
 function writePkgJson(
   dir: string,
   deps: Record<string, string> = {},
@@ -37,6 +69,25 @@ function writePkgJson(
     path.join(dir, "package.json"),
     JSON.stringify({ dependencies: deps, devDependencies: devDeps }),
   );
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf-8");
+  return raw ? (JSON.parse(raw) as unknown) : {};
+}
+
+function sendJson(
+  res: ServerResponse,
+  statusCode: number,
+  body: unknown,
+): void {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
 }
 
 describe("CLI", { timeout: 30_000 }, () => {
@@ -426,6 +477,179 @@ describe("CLI", { timeout: 30_000 }, () => {
     });
   });
 
+  describe("flows command", () => {
+    const flows = [
+      {
+        id: "flow-pollinate-products",
+        name: "products-inflow",
+        type: "inflow",
+        plugName: "pollinate",
+        enabled: true,
+      },
+      {
+        id: "flow-shopify-products",
+        name: "products-inflow",
+        type: "inflow",
+        plugName: "shopify",
+        enabled: true,
+      },
+      {
+        id: "flow-orders",
+        name: "orders-inflow",
+        type: "inflow",
+        plugName: "pollinate",
+        enabled: true,
+      },
+    ];
+
+    async function startServer() {
+      let triggerBody: unknown = null;
+      const server = createServer(async (req, res) => {
+        const url = new URL(req.url ?? "/", "http://localhost");
+
+        if (req.method === "GET" && url.pathname === "/api/khotan/flows") {
+          sendJson(res, 200, flows);
+          return;
+        }
+
+        if (
+          req.method === "POST" &&
+          url.pathname === "/api/khotan/flows/flow-pollinate-products/runs"
+        ) {
+          triggerBody = await readJsonBody(req);
+          sendJson(res, 200, {
+            id: "run-1",
+            flowId: "flow-pollinate-products",
+            workflowRunId: "workflow-run-1",
+            status: "running",
+            runType: "full",
+          });
+          return;
+        }
+
+        if (
+          req.method === "GET" &&
+          url.pathname === "/api/khotan/flows/flow-pollinate-products/runs"
+        ) {
+          sendJson(res, 200, [
+            {
+              id: "run-1",
+              flowId: "flow-pollinate-products",
+              status: "ok",
+            },
+          ]);
+          return;
+        }
+
+        sendJson(res, 404, { error: "not_found" });
+      });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const port = (server.address() as AddressInfo).port;
+      return {
+        port,
+        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+        getTriggerBody: () => triggerBody,
+      };
+    }
+
+    it("lists flows from the running Khotan API", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["flows", "list", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as { ok: boolean; flows: unknown[] };
+        expect(data.ok).toBe(true);
+        expect(data.flows).toHaveLength(3);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("fails ambiguous trigger names without --plug", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["flows", "trigger", "products-inflow", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(1);
+        const data = JSON.parse(result.output) as { error: string; hint: string };
+        expect(data.error).toBe("ambiguous_flow");
+        expect(data.hint).toContain("--plug");
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("triggers a flow by name and plug", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "flows",
+            "trigger",
+            "products-inflow",
+            "--plug",
+            "pollinate",
+            "--run-type",
+            "full",
+            "--body",
+            '{"force":true}',
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          action: string;
+          run: { id: string; workflowRunId: string };
+        };
+        expect(data.ok).toBe(true);
+        expect(data.action).toBe("trigger");
+        expect(data.run.workflowRunId).toBe("workflow-run-1");
+        expect(api.getTriggerBody()).toEqual({
+          runType: "full",
+          body: { force: true },
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("lists runs for a selected flow", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "flows",
+            "runs",
+            "products-inflow",
+            "--plug",
+            "pollinate",
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          runs: Array<{ id: string }>;
+        };
+        expect(data.ok).toBe(true);
+        expect(data.runs).toEqual([{ id: "run-1", flowId: "flow-pollinate-products", status: "ok" }]);
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
   describe("workflow integration scaffolding", () => {
     it("updates existing next.config.ts when adding catch", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
@@ -783,6 +1007,78 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
       expect(
         fs.existsSync(path.join(tmpDir, "app", "config", "page.tsx")),
+      ).toBe(true);
+    });
+  });
+
+  describe("add graph (block)", () => {
+    it("scaffolds topology-canvas and graph/page.tsx in src layout", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+      writePkgJson(tmpDir, { "@xyflow/react": "^12.8.5" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
+      const uiDir = path.join(tmpDir, "src", "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+
+      run("init", tmpDir);
+      const result = run("add graph --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 2 files");
+
+      const componentPath = path.join(
+        tmpDir,
+        "src",
+        "components",
+        "khotan",
+        "topology-canvas.tsx",
+      );
+      const pagePath = path.join(tmpDir, "src", "app", "graph", "page.tsx");
+
+      expect(fs.existsSync(componentPath)).toBe(true);
+      expect(fs.existsSync(pagePath)).toBe(true);
+
+      const component = fs.readFileSync(componentPath, "utf-8");
+      const page = fs.readFileSync(pagePath, "utf-8");
+
+      expect(component).toContain("@xyflow/react");
+      expect(component).toContain("/api/khotan/runs?limit=100");
+      expect(component).toContain("<details");
+      expect(component).toContain("Webhook handlers");
+      expect(component).toContain("Reset");
+      expect(page).toContain("KhotanTopologyCanvas");
+      expect(page).toContain("@/components/khotan/topology-canvas");
+      expect(page).not.toContain("Graph Block");
+    });
+
+    it("scaffolds topology-canvas and graph/page.tsx in top-level app layout", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "@xyflow/react": "^12.8.5" });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "badge"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+
+      run("init", tmpDir);
+      const result = run("add graph --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "topology-canvas.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "app", "graph", "page.tsx")),
       ).toBe(true);
     });
   });

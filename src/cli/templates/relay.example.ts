@@ -6,8 +6,6 @@
 // exported flow in {outputDir}/khotan.ts.
 // ============================================================================
 
-import { shopifyPlug } from "../plugs/shopify";
-import { hubspotPlug } from "../plugs/hubspot";
 import { relay, type RelayContext } from "./relay";
 
 async function shopifyToHubspotWorkflow(ctx: RelayContext) {
@@ -22,15 +20,25 @@ async function shopifyToHubspotWorkflow(ctx: RelayContext) {
       runType: ctx.runType,
     });
 
-    const response = await shopifyPlug.get<{
-      data?: Array<Record<string, unknown>>;
-    }>("/products", {
-      vars: ctx.vars,
+    const sourceResponse = await fetch("https://source.example.com/products", {
+      headers: {
+        Authorization: `Bearer ${ctx.vars["sourceToken"] ?? ""}`,
+      },
     });
-    const records = Array.isArray(response.data) ? response.data : [];
+    const payload = (await sourceResponse.json()) as {
+      data?: Array<Record<string, unknown>>;
+    };
+    const records = Array.isArray(payload.data) ? payload.data : [];
 
     for (const record of records) {
-      await hubspotPlug.post("/products", { body: record });
+      await fetch("https://destination.example.com/products", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.vars["destinationToken"] ?? ""}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(record),
+      });
     }
 
     return {

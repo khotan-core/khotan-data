@@ -51,6 +51,7 @@ export function inflow(config: InflowConfig): FlowRegistration {
 // import { db } from "@/db";
 // import { products } from "@/db/schema";
 // import { shopifyPlug } from "../plugs/shopify";
+// import { sendUpdate } from "khotan-data/factory";
 //
 // async function shopifyProductsWorkflow(ctx: InflowContext) {
 //   "use workflow";
@@ -62,11 +63,13 @@ export function inflow(config: InflowConfig): FlowRegistration {
 //       khotanRunId: ctx.khotanRunId,
 //       runType: ctx.runType,
 //     });
+//     await sendUpdate({ message: "Starting Shopify products inflow" });
 //
 //     const response = await shopifyPlug.get<{ data?: Array<{ id: string; sku?: string }> }>("/products", {
 //       vars: ctx.vars,
 //     });
 //     const records = Array.isArray(response.data) ? response.data : [];
+//     await sendUpdate({ message: `Fetched ${records.length} products`, extracted: records.length });
 //
 //     if (records.length > 0) {
 //       await db.insert(products).values(

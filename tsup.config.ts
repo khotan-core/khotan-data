@@ -110,6 +110,14 @@ export default defineConfig([
         path.resolve(templatesDir, "logs-page.tsx"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "topology-canvas.tsx"),
+        path.resolve(templatesDir, "topology-canvas.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "graph-page.tsx"),
+        path.resolve(templatesDir, "graph-page.tsx"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "catch.ts"),
         path.resolve(templatesDir, "catch.ts"),
       );

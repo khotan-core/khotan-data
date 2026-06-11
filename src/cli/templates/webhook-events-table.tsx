@@ -24,7 +24,7 @@ interface WebhookEventItem {
   handlerType: "catch" | "pass" | null;
   plugName: string | null;
   workflowRunId: string | null;
-  runStatus: "pending" | "running" | "ok" | "failed" | null;
+  runStatus: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled" | null;
 }
 
 interface PageResponse<T> {
@@ -41,14 +41,16 @@ interface PageResponse<T> {
 const statusVariant = {
   pending: "outline",
   running: "secondary",
-  ok: "default",
+  completed: "default",
+  partial: "secondary",
   failed: "destructive",
+  cancelled: "outline",
 } as const;
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
 function formatHandler(item: WebhookEventItem): string {

@@ -6,10 +6,8 @@
 // exported flow in {outputDir}/khotan.ts.
 // ============================================================================
 
-import { db } from "@/db";
-import { products } from "@/db/schema";
-import { shopifyPlug } from "../plugs/shopify";
 import { inflow, type InflowContext } from "./inflow";
+import { sendUpdate } from "khotan-data/factory";
 
 async function shopifyProductsWorkflow(ctx: InflowContext) {
   "use workflow";
@@ -21,23 +19,28 @@ async function shopifyProductsWorkflow(ctx: InflowContext) {
       khotanRunId: ctx.khotanRunId,
       runType: ctx.runType,
     });
-
-    const response = await shopifyPlug.get<{
-      data?: Array<{ id: string; sku?: string; name?: string }>;
-    }>("/products", {
-      vars: ctx.vars,
+    await sendUpdate({
+      message: "Starting product inflow",
+      metadata: { flow: ctx.flow.name, runType: ctx.runType },
     });
-    const records = Array.isArray(response.data) ? response.data : [];
 
-    if (records.length > 0) {
-      await db.insert(products).values(
-        records.map((record) => ({
-          externalId: record.id,
-          sku: record.sku ?? record.id,
-          name: record.name ?? record.id,
-        })),
-      );
-    }
+    const response = await fetch("https://api.example.com/products", {
+      headers: {
+        Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
+      },
+    });
+    const payload = (await response.json()) as {
+      data?: Array<Record<string, unknown>>;
+    };
+    const records = Array.isArray(payload.data) ? payload.data : [];
+
+    // Replace this with your app-specific transform and DB upsert.
+    console.log("Fetched records", records.length);
+    await sendUpdate({
+      message: `Fetched ${String(records.length)} products`,
+      extracted: records.length,
+      progress: 50,
+    });
 
     return {
       extracted: records.length,
