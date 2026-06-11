@@ -1,6 +1,6 @@
 ## Purpose
 
-The Hub provides a visual dashboard for monitoring khotan plugs and syncs. It consists of scaffolded React components and API route templates that the user owns and can customize.
+The Hub provides a visual dashboard for monitoring khotan plugs and flows. It consists of scaffolded React components and API route templates that the user owns and can customize.
 
 ## Requirements
 
@@ -24,16 +24,16 @@ The CLI SHALL provide a `hub` component that scaffolds multiple files when the u
 - **THEN** the CLI SHALL prompt the user to confirm overwrite for each existing file (or use `--force` to skip prompts)
 
 ### Requirement: Hub React component
-The scaffolded `hub.tsx` SHALL be a React client component that displays configured plugs and their syncs. It SHALL use shadcn/ui primitives (Card, Badge, Table, Switch) for styling.
+The scaffolded `hub.tsx` SHALL be a React client component that displays configured plugs and their flows. It SHALL use shadcn/ui primitives (Card, Badge, Table, Switch) for styling.
 
 #### Scenario: Display plugs list
 - **WHEN** the Hub component is rendered
 - **THEN** it SHALL fetch plugs from `GET /api/khotan/plugs`
 - **AND** it SHALL display each plug as a card with the plug name, base URL, auth type, status, and enabled state
 
-#### Scenario: Display syncs for a plug
+#### Scenario: Display flows for a plug
 - **WHEN** a user views a plug in the Hub
-- **THEN** the Hub SHALL show the plug's associated syncs with their name, type, schedule, last run status, and enabled state
+- **THEN** the Hub SHALL show the plug's associated flows with their name, type, schedule, last run status, and enabled state
 
 #### Scenario: Display empty state
 - **WHEN** no plugs are registered
@@ -54,10 +54,10 @@ The scaffolded `app/api/khotan/[...all]/route.ts` SHALL import the user's khotan
 - **WHEN** the route file is scaffolded
 - **THEN** it SHALL import `khotanData` from the user's config file (e.g., `@/lib/khotan/khotan`)
 - **AND** it SHALL import `toNextJsHandler` from `khotan-data/factory`
-- **AND** it SHALL export `const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler)`
+- **AND** it SHALL export `const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(khotanData.handler)`
 
 ### Requirement: Hub config template
-The scaffolded `<outputDir>/khotan.ts` SHALL be a config file where the user registers their plugs and syncs with the `khotan()` factory.
+The scaffolded `<outputDir>/khotan.ts` SHALL be a config file where the user registers their plugs and flows with the `khotan()` factory.
 
 #### Scenario: Config file structure
 - **WHEN** the config file is scaffolded

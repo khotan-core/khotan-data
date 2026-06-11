@@ -102,6 +102,7 @@ export interface VarField {
   hidden?: boolean;
   required?: boolean;
   placeholder?: string;
+  defaultValue?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +117,7 @@ type VarsRecord<V extends readonly VarField[]> = Record<VarKeys<V>, string>;
 // ---------------------------------------------------------------------------
 
 export interface TokenExchangeConfig {
-  getCredentials: () => Promise<Record<string, string>> | Record<string, string>;
+  getVariables: () => Promise<Record<string, string>> | Record<string, string>;
   /** Full URL or path relative to the plug's baseUrl (e.g. "/token") */
   tokenEndpoint: string;
   buildTokenRequest: (vars: Record<string, string>) => {
@@ -151,8 +152,8 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
   }
 
   async function fetchToken(): Promise<string> {
-    const vars = await config.getCredentials();
-    kd("auth", "tokenExchange: fetching token, has credentials:", Object.keys(vars).join(", "));
+    const vars = await config.getVariables();
+    kd("auth", "tokenExchange: fetching token, has variables:", Object.keys(vars).join(", "));
     const reqConfig = config.buildTokenRequest(vars);
 
     const headers = new Headers(reqConfig.headers);
@@ -206,7 +207,7 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
       kd("auth", "tokenExchange: applied bearer token", cachedToken ? `${cachedToken.slice(0, 8)}...` : "MISSING");
 
       if (config.extraHeaders) {
-        const vars = await config.getCredentials();
+        const vars = await config.getVariables();
         const extra = config.extraHeaders(vars);
         for (const [key, value] of Object.entries(extra)) {
           headers.set(key, value);
@@ -379,11 +380,29 @@ export interface PlugHooks<Vars = Record<string, string>> {
 // Wire configuration
 // ---------------------------------------------------------------------------
 
+export interface EndpointSchema {
+  parse(data: unknown): unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _def?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  shape?: any;
+}
+
+export interface EndpointDef {
+  method: string;
+  path: string;
+  description?: string;
+  body?: EndpointSchema;
+  query?: EndpointSchema;
+  responses?: Record<number, EndpointSchema>;
+}
+
 export interface PlugConfig<V extends readonly VarField[] = VarField[]> {
   name?: string;
   baseUrl: string;
   auth?: AuthStrategy;
   vars?: V;
+  endpoints?: Record<string, EndpointDef>;
   retry?: RetryConfig | false;
   timeout?: number;
   defaultHeaders?: Record<string, string>;
@@ -433,6 +452,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 
   get varFields(): readonly VarField[] {
     return this.config.vars ?? [];
+  }
+
+  get endpoints(): Record<string, EndpointDef> {
+    return this.config.endpoints ?? {};
   }
 
   async get<T>(path: string, options?: RequestOptions): Promise<T> {

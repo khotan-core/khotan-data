@@ -213,11 +213,40 @@ describe("CLI", { timeout: 30_000 }, () => {
 
       const content = fs.readFileSync(schemaPath, "utf-8");
       expect(content).toContain("khotan_plugs");
-      expect(content).toContain("khotan_syncs");
+      expect(content).toContain("khotan_flows");
       expect(content).toContain("khotan_runs");
       expect(content).not.toContain('from "khotan-data"');
       expect(content).not.toContain("from 'khotan-data'");
     });
+
+    it.each(["inflow", "outflow", "relay"])(
+      "creates %s flow template under flows",
+      (component) => {
+        fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+        writePkgJson(tmpDir, {
+          "drizzle-orm": "^0.35.0",
+          workflow: "^4.0.0",
+          zod: "^3.22.0",
+        });
+        run("init", tmpDir);
+        const result = run(`add ${component} --yes`, tmpDir, 90_000);
+        expect(result.exitCode).toBe(0);
+
+        const flowPath = path.join(tmpDir, "khotan", "flows", `${component}.ts`);
+        const examplePath = path.join(
+          tmpDir,
+          "khotan",
+          "flows",
+          `${component}.example.ts`,
+        );
+        expect(fs.existsSync(flowPath)).toBe(true);
+        expect(fs.existsSync(examplePath)).toBe(true);
+        expect(fs.readFileSync(flowPath, "utf-8")).toContain("FlowRegistration");
+        expect(fs.readFileSync(flowPath, "utf-8")).toContain('"use workflow"');
+        expect(fs.readFileSync(examplePath, "utf-8")).toContain('"use workflow"');
+      },
+      90_000,
+    );
 
     it("creates khotan.ts schema at outputDir when no drizzle config", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
@@ -397,6 +426,61 @@ describe("CLI", { timeout: 30_000 }, () => {
     });
   });
 
+  describe("workflow integration scaffolding", () => {
+    it("updates existing next.config.ts when adding catch", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        workflow: "^4.0.0",
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        [
+          'import type { NextConfig } from "next";',
+          "",
+          "const nextConfig: NextConfig = { reactStrictMode: true };",
+          "",
+          "export default nextConfig;",
+          "",
+        ].join("\n"),
+      );
+
+      run("init", tmpDir);
+      const result = run("add catch --yes", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Updated next.config.ts with Workflow integration");
+
+      const content = fs.readFileSync(path.join(tmpDir, "next.config.ts"), "utf-8");
+      expect(content).toContain('import { withWorkflow } from "workflow/next";');
+      expect(content).toContain("export default withWorkflow(nextConfig);");
+      expect(
+        fs.existsSync(path.join(tmpDir, "khotan", "webhooks", "catch.example.ts")),
+      ).toBe(true);
+    });
+
+    it("creates next.config.ts when adding pass to a project without one", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        workflow: "^4.0.0",
+      });
+
+      run("init", tmpDir);
+      const result = run("add pass --yes", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created next.config.ts with Workflow integration");
+
+      const content = fs.readFileSync(path.join(tmpDir, "next.config.ts"), "utf-8");
+      expect(content).toContain('import { withWorkflow } from "workflow/next";');
+      expect(content).toContain("export default withWorkflow(nextConfig);");
+      expect(
+        fs.existsSync(path.join(tmpDir, "khotan", "webhooks", "pass.example.ts")),
+      ).toBe(true);
+    });
+  });
+
   describe("add hub", () => {
     it("scaffolds hub.tsx in src layout (core files from init)", () => {
       fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
@@ -422,7 +506,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
       expect(
         fs.existsSync(
-          path.join(tmpDir, "src", "components", "khotan", "wire-panel.tsx"),
+          path.join(tmpDir, "src", "components", "khotan", "wire.tsx"),
         ),
       ).toBe(true);
       expect(
@@ -466,7 +550,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
       expect(
         fs.existsSync(
-          path.join(tmpDir, "components", "khotan", "wire-panel.tsx"),
+          path.join(tmpDir, "components", "khotan", "wire.tsx"),
         ),
       ).toBe(true);
       expect(
@@ -592,7 +676,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(content).toContain("PATCH");
     });
 
-    it("hub.tsx uses PATCH for sync toggles", () => {
+    it("hub.tsx uses PATCH for flow toggles", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
       fs.writeFileSync(
@@ -615,6 +699,8 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const content = fs.readFileSync(hubPath, "utf-8");
       expect(content).toContain('"PATCH"');
+      expect(content).toContain("/api/khotan/flows");
+      expect(content).not.toContain("/api/khotan/syncs");
       expect(content).not.toContain('method: "PUT"');
     });
   });
@@ -630,7 +716,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         "export function KhotanHub() {}",
       );
       fs.writeFileSync(
-        path.join(hubDir, "wire-panel.tsx"),
+        path.join(hubDir, "wire.tsx"),
         "export function WirePanel() {}",
       );
     }
@@ -1044,6 +1130,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.output).toContain("add");
       expect(result.output).toContain("generate");
       expect(result.output).toContain("migrate");
+      expect(result.output).toContain("wire");
     });
   });
 

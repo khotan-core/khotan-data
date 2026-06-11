@@ -67,7 +67,7 @@ export function WirePanel({ plugName, label, basePath = "/api/khotan", webhookUr
     setActing(true);
     setError(null);
     try {
-      const callbackUrl = `${resolvedWebhookUrl}/api/${plugName}/webhook`;
+      const callbackUrl = `${resolvedWebhookUrl}/api/khotan/webhook/${plugName}`;
 
       const res = await fetch(`${basePath}/wires/${plugName}`, {
         method: "POST",
@@ -192,7 +192,7 @@ export function WirePanel({ plugName, label, basePath = "/api/khotan", webhookUr
             <p className="text-xs text-muted-foreground">
               <span className="font-medium">Webhook URL:</span>{" "}
               <code className="bg-muted px-1 py-0.5 rounded text-[11px]">
-                {resolvedWebhookUrl}/api/{plugName}/webhook
+                {resolvedWebhookUrl}/api/khotan/webhook/{plugName}
               </code>
             </p>
             <Button

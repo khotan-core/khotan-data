@@ -51,11 +51,11 @@ The schema SHALL define indexes for common mapping query patterns.
 - **THEN** a GIN index on `refs` SHALL be available to optimize the query
 
 ### Requirement: Resources and mappings relations
-The schema SHALL export Drizzle relations connecting resources to syncs and mappings.
+The schema SHALL export Drizzle relations connecting resources to flows and mappings.
 
-#### Scenario: Resource has many syncs
-- **WHEN** a relational query fetches a resource with its syncs
-- **THEN** the relation SHALL return all syncs where `resource_id` matches the resource's `id`
+#### Scenario: Resource has many flows
+- **WHEN** a relational query fetches a resource with its flows
+- **THEN** the relation SHALL return all flows where `resource_id` matches the resource's `id`
 
 #### Scenario: Resource has many mappings
 - **WHEN** a relational query fetches a resource with its mappings
@@ -79,35 +79,35 @@ The `khotan()` factory function SHALL accept an optional `resources` array in it
 - **WHEN** two resources are registered with the same `name`
 - **THEN** the factory SHALL throw an error at configuration time
 
-### Requirement: Sync resource association in config
-Sync registrations SHALL accept an optional `resource` field (string) naming the resource this sync feeds. On initialization, the factory SHALL resolve the resource name to an ID and set `resource_id` on the sync row.
+### Requirement: Flow resource association in config
+Flow registrations SHALL accept an optional `resource` field (string) naming the resource this flow feeds. On initialization, the factory SHALL resolve the resource name to an ID and set `resource_id` on the flow row.
 
-#### Scenario: Sync declares its resource
-- **WHEN** a sync is registered with `{ name: "products-inflow", type: "inflow", resource: "products" }`
-- **THEN** the factory SHALL link this sync to the "products" resource on init
+#### Scenario: Flow declares its resource
+- **WHEN** a flow is registered with `{ name: "products-inflow", type: "inflow", resource: "products" }`
+- **THEN** the factory SHALL link this flow to the "products" resource on init
 
-#### Scenario: Sync references unknown resource
-- **WHEN** a sync references a resource name that is not in the `resources` config array
+#### Scenario: Flow references unknown resource
+- **WHEN** a flow references a resource name that is not in the `resources` config array
 - **THEN** the factory SHALL throw an error at configuration time
 
-#### Scenario: Sync without resource
-- **WHEN** a sync is registered without a `resource` field
-- **THEN** the factory SHALL leave `resource_id` as null on the sync row
+#### Scenario: Flow without resource
+- **WHEN** a flow is registered without a `resource` field
+- **THEN** the factory SHALL leave `resource_id` as null on the flow row
 
 ### Requirement: Resource upsert on initialization
-When `init()` runs, the factory SHALL upsert all registered resources into `khotan_resources` before upserting syncs (since syncs may reference resources). Upsert SHALL use the resource `name` as the conflict key.
+When `init()` runs, the factory SHALL upsert all registered resources into `khotan_resources` before upserting flows (since flows may reference resources). Upsert SHALL use the resource `name` as the conflict key.
 
-#### Scenario: Resources upserted before syncs
-- **WHEN** `init()` is called with registered resources and syncs that reference them
+#### Scenario: Resources upserted before flows
+- **WHEN** `init()` is called with registered resources and flows that reference them
 - **THEN** the factory SHALL upsert resources first
-- **AND** then upsert syncs with resolved `resource_id` values
+- **AND** then upsert flows with resolved `resource_id` values
 
 #### Scenario: Idempotent resource upsert
 - **WHEN** the server restarts and `init()` runs again with the same resource configuration
 - **THEN** the factory SHALL update existing resource rows (matching on name) rather than creating duplicates
 
 ### Requirement: Adapter resource methods
-The adapter interface SHALL provide methods for resource operations: `upsertResource`, `listResources`, `getResource`, `getResourceSyncs`.
+The adapter interface SHALL provide methods for resource operations: `upsertResource`, `listResources`, `getResource`, `getResourceFlows`.
 
 #### Scenario: Upsert a resource
 - **WHEN** `adapter.upsertResource({ name: "products", connectField: "sku" })` is called
@@ -115,15 +115,15 @@ The adapter interface SHALL provide methods for resource operations: `upsertReso
 
 #### Scenario: List resources
 - **WHEN** `adapter.listResources()` is called
-- **THEN** it SHALL return all resources with sync and mapping counts
+- **THEN** it SHALL return all resources with flow and mapping counts
 
 #### Scenario: Get a resource
 - **WHEN** `adapter.getResource(id)` is called
 - **THEN** it SHALL return the resource row or null if not found
 
-#### Scenario: Get syncs for a resource
-- **WHEN** `adapter.getResourceSyncs(resourceId)` is called
-- **THEN** it SHALL return all syncs where `resource_id` matches
+#### Scenario: Get flows for a resource
+- **WHEN** `adapter.getResourceFlows(resourceId)` is called
+- **THEN** it SHALL return all flows where `resource_id` matches
 
 ### Requirement: Adapter mapping methods
 The adapter interface SHALL provide methods for mapping operations: `upsertMapping`, `getMapping`, `listMappings`, `deleteMapping`, `lookupMapping`.
@@ -155,12 +155,12 @@ The handler SHALL expose GET routes for resources.
 
 #### Scenario: List resources
 - **WHEN** the handler receives `GET .../resources`
-- **THEN** it SHALL return a JSON array of all resources with sync and mapping counts
+- **THEN** it SHALL return a JSON array of all resources with flow and mapping counts
 - **AND** the response status SHALL be 200
 
-#### Scenario: Get a resource with syncs
+#### Scenario: Get a resource with flows
 - **WHEN** the handler receives `GET .../resources/:id`
-- **THEN** it SHALL return the resource with its associated syncs
+- **THEN** it SHALL return the resource with its associated flows
 - **AND** if the resource does not exist, the response status SHALL be 404
 
 #### Scenario: Get mappings for a resource

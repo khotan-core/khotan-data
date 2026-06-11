@@ -1,6 +1,6 @@
 ## Purpose
 
-The khotan factory provides the runtime engine for khotan-data — a `khotan()` factory function that accepts a database adapter and plug registrations, upserts them on initialization, and exposes an API handler for querying plugs, syncs, and runs.
+The khotan factory provides the runtime engine for khotan-data — a `khotan()` factory function that accepts a database adapter and plug registrations, upserts them on initialization, and exposes an API handler for querying plugs, flows, and runs.
 
 ## Requirements
 
@@ -18,18 +18,18 @@ The `khotan-data` package SHALL export a `khotan()` factory function from `khota
 - **AND** the handler SHALL still respond to API requests (returning empty lists)
 
 ### Requirement: Plug registration
-Each plug registration SHALL be an object with `name` (string, unique identifier), `baseUrl` (string), `authType` (string — one of 'bearer', 'basic', 'apiKey', 'custom'), and optional `syncs` (array of sync registrations). Each sync registration SHALL have `name` (string), `type` (string — one of 'inflow', 'outflow', 'relay', 'webhook'), optional `schedule` (string, cron expression), and optional `resource` (string — name of a registered resource this sync feeds).
+Each plug registration SHALL be an object with `name` (string, unique identifier), `baseUrl` (string), `authType` (string — one of 'bearer', 'basic', 'apiKey', 'custom'), and optional `flows` (array of flow registrations). Each flow registration SHALL have `name` (string), `type` (string — one of 'inflow', 'outflow', 'relay', 'webhook'), optional `schedule` (string, cron expression), optional `resource` (string — name of a registered resource this flow feeds), optional `to` (destination plug/system name for relay flows), optional `workflow` (Vercel Workflow execution function), and optional `run` (inline/manual execution function).
 
-#### Scenario: Register a plug with syncs
-- **WHEN** a user registers a plug `{ name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer", syncs: [{ name: "products-inflow", type: "inflow", schedule: "0 * * * *" }] }`
+#### Scenario: Register a plug with flows
+- **WHEN** a user registers a plug `{ name: "stripe", baseUrl: "https://api.stripe.com", authType: "bearer", flows: [{ name: "products-inflow", type: "inflow", schedule: "0 * * * *" }] }`
 - **THEN** the factory SHALL accept this configuration for database upsert
 
-#### Scenario: Register a plug with syncs that reference resources
-- **WHEN** a user registers a plug `{ name: "shopify", baseUrl: "https://...", authType: "bearer", syncs: [{ name: "products-inflow", type: "inflow", resource: "products" }] }`
-- **THEN** the factory SHALL accept this configuration and link the sync to the "products" resource on init
+#### Scenario: Register a plug with flows that reference resources
+- **WHEN** a user registers a plug `{ name: "shopify", baseUrl: "https://...", authType: "bearer", flows: [{ name: "products-inflow", type: "inflow", resource: "products" }] }`
+- **THEN** the factory SHALL accept this configuration and link the flow to the "products" resource on init
 
-#### Scenario: Sync references unknown resource
-- **WHEN** a sync registration includes `resource: "products"` but no resource named "products" exists in the `resources` config array
+#### Scenario: Flow references unknown resource
+- **WHEN** a flow registration includes `resource: "products"` but no resource named "products" exists in the `resources` config array
 - **THEN** the factory SHALL throw an error at configuration time
 
 #### Scenario: Plug name uniqueness
@@ -37,13 +37,13 @@ Each plug registration SHALL be an object with `name` (string, unique identifier
 - **THEN** the factory SHALL throw an error at configuration time (before any database operation)
 
 ### Requirement: Database upsert on initialization
-When `init()` is called (or on first handler request), the factory SHALL upsert all registered resources into `khotan_resources`, then upsert all registered plugs into `khotan_plugs`, and then upsert their syncs into `khotan_syncs` with resolved `resource_id` values. Upsert SHALL use the resource `name` as the conflict key for resources, the plug `name` for plugs, and `(plug_id, name)` for syncs.
+When `init()` is called (or on first handler request), the factory SHALL upsert all registered resources into `khotan_resources`, then upsert all registered plugs into `khotan_plugs`, and then upsert their flows into `khotan_flows` with resolved `resource_id` values. Upsert SHALL use the resource `name` as the conflict key for resources, the plug `name` for plugs, and `(plug_id, name)` for flows.
 
 #### Scenario: First initialization upserts rows including resources
-- **WHEN** `init()` is called with registered resources, plugs, and syncs
+- **WHEN** `init()` is called with registered resources, plugs, and flows
 - **THEN** the factory SHALL insert or update resource rows first
 - **AND** then insert or update plug rows
-- **AND** then insert or update sync rows with resolved `resource_id` values
+- **AND** then insert or update flow rows with resolved `resource_id` values
 
 #### Scenario: Idempotent upsert on restart
 - **WHEN** the server restarts and `init()` runs again with the same configuration
@@ -55,7 +55,7 @@ When `init()` is called (or on first handler request), the factory SHALL upsert 
 - **THEN** the upsert SHALL execute at most once (guarded by a module-level initialized flag)
 
 ### Requirement: Drizzle adapter
-The package SHALL export a `drizzleAdapter(db)` function from `khotan-data/factory` that accepts a Drizzle Postgres instance and returns an adapter object. The adapter SHALL provide methods for the factory to query and upsert plugs, syncs, runs, resources, and mappings.
+The package SHALL export a `drizzleAdapter(db)` function from `khotan-data/factory` that accepts a Drizzle Postgres instance and returns an adapter object. The adapter SHALL provide methods for the factory to query and upsert plugs, flows, runs, resources, and mappings.
 
 #### Scenario: Create adapter from Drizzle instance
 - **WHEN** a user calls `drizzleAdapter(db)` with their Drizzle database instance
@@ -63,34 +63,59 @@ The package SHALL export a `drizzleAdapter(db)` function from `khotan-data/facto
 
 #### Scenario: Adapter uses khotan schema tables
 - **WHEN** the adapter performs database operations
-- **THEN** it SHALL operate on `khotan_plugs`, `khotan_syncs`, `khotan_runs`, `khotan_resources`, and `khotan_mappings` tables as defined by the schema component
+- **THEN** it SHALL operate on `khotan_plugs`, `khotan_flows`, `khotan_runs`, `khotan_resources`, and `khotan_mappings` tables as defined by the schema component
 
 ### Requirement: API handler
-The factory's `handler` SHALL be a function that accepts a standard `Request` object and returns a `Response`. It SHALL route requests based on the URL path segments after the base path. It SHALL handle GET, POST, PUT, and DELETE methods for resources and mappings endpoints in addition to existing plug/sync/run GET endpoints.
+The factory's `handler` SHALL be a function that accepts a standard `Request` object and returns a `Response`. It SHALL route requests based on the URL path segments after the base path. It SHALL handle GET, POST, PUT, PATCH, and DELETE methods for resources, mappings, flow, variable, plug, wire, webhook-handler, and debug endpoints.
 
 #### Scenario: List plugs
 - **WHEN** the handler receives `GET .../plugs`
-- **THEN** it SHALL return a JSON response with all plugs including their sync counts
+- **THEN** it SHALL return a JSON response with all plugs including their flow counts
 
-#### Scenario: Get a single plug with syncs
+#### Scenario: Get a single plug with flows
 - **WHEN** the handler receives `GET .../plugs/:id`
-- **THEN** it SHALL return a JSON response with the plug and its associated syncs
+- **THEN** it SHALL return a JSON response with the plug and its associated flows
 
-#### Scenario: List syncs
-- **WHEN** the handler receives `GET .../syncs`
-- **THEN** it SHALL return a JSON response with all syncs including their plug name
+#### Scenario: List flows
+- **WHEN** the handler receives `GET .../flows`
+- **THEN** it SHALL return a JSON response with all flows including their plug name
 
-#### Scenario: List runs for a sync
-- **WHEN** the handler receives `GET .../syncs/:id/runs`
+#### Scenario: List runs for a flow
+- **WHEN** the handler receives `GET .../flows/:id/runs`
 - **THEN** it SHALL return runs ordered by started_at descending
+
+#### Scenario: Trigger a flow run
+- **WHEN** the handler receives `POST .../flows/:id/runs`
+- **THEN** it SHALL create a run row in `khotan_runs`
+- **AND** if the registered flow has a `workflow` function, it SHALL start that Vercel Workflow and persist the returned Workflow run ID
+- **AND** if the registered flow has an inline `run` function instead, it SHALL execute the function and update status, counters, metadata, and timing
+
+### Requirement: Programmatic flow starter
+The factory instance SHALL expose `flow(flowNameOrId, options?).start(startOptions?)` so application code can start a tracked flow run without calling Vercel Workflow APIs directly.
+
+#### Scenario: Start a flow by registered name
+- **WHEN** a user calls `khotanData.flow("products-inflow", { plugName: "shopify" }).start({ runType: "delta" })`
+- **THEN** the factory SHALL resolve the registered flow, create a `khotan_runs` row, and start the registered flow execution path
+
+#### Scenario: Ambiguous flow name
+- **WHEN** multiple registered plugs have a flow with the same name
+- **THEN** `flow(name).start()` SHALL throw and instruct the user to pass `{ plugName }`
+
+#### Scenario: Toggle flow enabled
+- **WHEN** the handler receives `PATCH .../flows/:id` with `{ enabled: boolean }`
+- **THEN** it SHALL update the flow enabled state and return the updated payload
+
+#### Scenario: Variable routes use variables naming
+- **WHEN** the handler receives requests under `.../variables/:plugName`
+- **THEN** it SHALL perform variable read/write/delete operations for that plug
 
 #### Scenario: List resources
 - **WHEN** the handler receives `GET .../resources`
-- **THEN** it SHALL return a JSON response with all resources including sync and mapping counts
+- **THEN** it SHALL return a JSON response with all resources including flow and mapping counts
 
-#### Scenario: Get a resource with syncs
+#### Scenario: Get a resource with flows
 - **WHEN** the handler receives `GET .../resources/:id`
-- **THEN** it SHALL return the resource with its associated syncs
+- **THEN** it SHALL return the resource with its associated flows
 - **AND** if not found, return 404
 
 #### Scenario: Get mappings for a resource
@@ -122,12 +147,23 @@ The factory's `handler` SHALL be a function that accepts a standard `Request` ob
 - **THEN** the response status SHALL be 404 with a JSON error body
 
 ### Requirement: Next.js handler adapter
-The package SHALL export a `toNextJsHandler(handler)` function from `khotan-data/factory` that converts the factory's handler into an object with `GET`, `POST`, `PUT`, `DELETE` methods compatible with Next.js App Router route exports.
+The package SHALL export a `toNextJsHandler(handler)` function from `khotan-data/factory` that converts the factory's handler into an object with `GET`, `POST`, `PUT`, `PATCH`, `DELETE` methods compatible with Next.js App Router route exports.
 
 #### Scenario: Export as Next.js route
-- **WHEN** a user writes `export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler)`
+- **WHEN** a user writes `export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(khotanData.handler)`
 - **THEN** each exported method SHALL accept a `NextRequest` and return a `Response`
 - **AND** the handler SHALL strip the base path prefix (e.g., `/api/khotan`) and route based on remaining segments
+
+### Requirement: Debug proxy route
+The factory handler SHALL include a debug proxy route at `POST /api/khotan/debug/:plugName` that is only active when `KHOTAN_DEBUG` environment variable is truthy. The route proxies requests through the registered plug and returns structured response data including status, headers, body, and timing.
+
+#### Scenario: Debug route registered when env var enabled
+- **WHEN** `KHOTAN_DEBUG` is set and the factory handler receives `POST /api/khotan/debug/:plugName`
+- **THEN** the handler routes to the debug proxy logic
+
+#### Scenario: Debug route hidden when env var disabled
+- **WHEN** `KHOTAN_DEBUG` is not set and the factory handler receives `POST /api/khotan/debug/:plugName`
+- **THEN** the handler returns 404
 
 ### Requirement: Subpath export
 The `khotan-data` package SHALL expose a `khotan-data/factory` subpath export that provides `khotan`, `drizzleAdapter`, and `toNextJsHandler`.

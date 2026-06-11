@@ -13,8 +13,18 @@ export interface ComponentFile {
    * - "outputDir" — the khotan outputDir (default)
    * - "components" — components/khotan/ relative to project root
    * - "app" — app/api/khotan/[...all]/ relative to project root (or src/app if src layout)
+   * - "projectRoot" — the project root (cwd)
+   * - "agentSkills" — installed to all detected agent directories (Cursor, Claude, Codex, etc.)
    */
-  outputBase: "outputDir" | "components" | "app" | "appRoot";
+  outputBase: "outputDir" | "components" | "app" | "appRoot" | "projectRoot" | "agentSkills";
+}
+
+/** Skill name extracted from an agentSkills entry (the directory name) */
+export function getSkillName(entry: ComponentEntry): string | undefined {
+  if (!entry.files) return undefined;
+  const skillFile = entry.files.find((f) => f.outputBase === "agentSkills");
+  if (!skillFile) return undefined;
+  return skillFile.outputFile;
 }
 
 export interface ComponentDeps {
@@ -37,6 +47,8 @@ export interface ComponentEntry {
   dependencies?: ComponentDeps;
   /** Other khotan components/blocks that must be scaffolded first */
   requires?: string[];
+  /** Whether this component requires Workflow DevKit integration in Next.js */
+  requiresWorkflowIntegration?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +109,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   schema: {
     name: "schema",
-    description: "Drizzle table definitions for khotan plugs, syncs, and runs",
+    description: "Drizzle table definitions for khotan plugs, flows, and runs",
     templatePath: path.resolve(__dirname, "templates", "schema.ts"),
     outputFile: "khotan.ts",
     dependencies: {
@@ -106,7 +118,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   hub: {
     name: "hub",
-    description: "Dashboard UI for managing plugs and syncs",
+    description: "Dashboard UI for managing plugs and flows",
     requiresShadcn: true,
     dependencies: {
       npmPackages: ["drizzle-orm"],
@@ -130,6 +142,31 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       },
     ],
   },
+  logs: {
+    name: "logs",
+    description: "Paginated UI tables for runs and webhook events",
+    requiresShadcn: true,
+    dependencies: {
+      shadcnComponents: ["card", "table", "badge", "button"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "logs.tsx"),
+        outputFile: "logs.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "runs-table.tsx"),
+        outputFile: "runs-table.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "webhook-events-table.tsx"),
+        outputFile: "webhook-events-table.tsx",
+        outputBase: "components",
+      },
+    ],
+  },
   "plug-debugger": {
     name: "plug-debugger",
     description:
@@ -147,6 +184,173 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       },
     ],
   },
+  catch: {
+    name: "catch",
+    description:
+      "Durable webhook event processing via Vercel Workflow",
+    requires: ["wire"],
+    requiresWorkflowIntegration: true,
+    dependencies: {
+      npmPackages: ["workflow"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "catch.ts"),
+        outputFile: "webhooks/catch.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "catch.example.ts"),
+        outputFile: "webhooks/catch.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
+  pass: {
+    name: "pass",
+    description:
+      "Durable webhook event forwarding to another service via Vercel Workflow",
+    requires: ["wire", "plug"],
+    requiresWorkflowIntegration: true,
+    dependencies: {
+      npmPackages: ["workflow"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "pass.ts"),
+        outputFile: "webhooks/pass.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "pass.example.ts"),
+        outputFile: "webhooks/pass.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
+  inflow: {
+    name: "inflow",
+    description: "Durable flow for pulling data from a plug into your app via Vercel Workflow",
+    requires: ["plug", "schema"],
+    requiresWorkflowIntegration: true,
+    dependencies: {
+      npmPackages: ["workflow"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "inflow.ts"),
+        outputFile: "flows/inflow.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "inflow.example.ts"),
+        outputFile: "flows/inflow.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
+  outflow: {
+    name: "outflow",
+    description: "Durable flow for pushing app data out through a plug via Vercel Workflow",
+    requires: ["plug", "schema"],
+    requiresWorkflowIntegration: true,
+    dependencies: {
+      npmPackages: ["workflow"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "outflow.ts"),
+        outputFile: "flows/outflow.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "outflow.example.ts"),
+        outputFile: "flows/outflow.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
+  relay: {
+    name: "relay",
+    description: "Durable flow for moving data between plugs via Vercel Workflow",
+    requires: ["plug", "schema"],
+    requiresWorkflowIntegration: true,
+    dependencies: {
+      npmPackages: ["workflow"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "relay.ts"),
+        outputFile: "flows/relay.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "relay.example.ts"),
+        outputFile: "flows/relay.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
+  "agent-skill": {
+    name: "agent-skill",
+    description:
+      "Agent skill that teaches AI agents to use khotan plug for API debugging",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "agent-skill.md"),
+        outputFile: "khotan-probe",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-setup": {
+    name: "skill-setup",
+    description:
+      "Agent skill for setting up khotan-data in a Next.js project",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-setup.md"),
+        outputFile: "khotan-setup",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-plug": {
+    name: "skill-plug",
+    description:
+      "Agent skill for creating and configuring khotan Plugs (API clients)",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-plug.md"),
+        outputFile: "khotan-plug",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-dashboard": {
+    name: "skill-dashboard",
+    description:
+      "Agent skill for setting up the Hub dashboard and Plug Debugger UI",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-dashboard.md"),
+        outputFile: "khotan-dashboard",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-webhook": {
+    name: "skill-webhook",
+    description:
+      "Agent skill for webhook subscriptions with Wires, Catch, and Pass",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-webhook.md"),
+        outputFile: "khotan-webhook",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
 };
 
 const BLOCKS: Record<string, ComponentEntry> = {
@@ -158,6 +362,40 @@ const BLOCKS: Record<string, ComponentEntry> = {
       {
         templatePath: path.resolve(__dirname, "templates", "config-page.tsx"),
         outputFile: "config/page.tsx",
+        outputBase: "appRoot",
+      },
+    ],
+  },
+  "debug-page-1": {
+    name: "debug-page-1",
+    description:
+      "Debug routes at /debug (plug list) and /debug/[plugName] (debugger)",
+    requires: ["plug-debugger"],
+    files: [
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "debug-index-page.tsx",
+        ),
+        outputFile: "debug/page.tsx",
+        outputBase: "appRoot",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "debug-page.tsx"),
+        outputFile: "debug/[plugName]/page.tsx",
+        outputBase: "appRoot",
+      },
+    ],
+  },
+  "logs-page-1": {
+    name: "logs-page-1",
+    description: "Page route at /logs that renders recent runs and webhook events",
+    requires: ["logs"],
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "logs-page.tsx"),
+        outputFile: "logs/page.tsx",
         outputBase: "appRoot",
       },
     ],

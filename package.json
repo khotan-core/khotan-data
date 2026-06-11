@@ -74,6 +74,7 @@
   "files": [
     "dist",
     "dist/templates",
+    "AGENTS.md",
     "README.md",
     "LICENSE"
   ],
@@ -117,9 +118,13 @@
   },
   "peerDependencies": {
     "drizzle-orm": ">=0.35.0",
+    "workflow": ">=0.1.0",
     "zod": ">=3.22.0"
   },
   "peerDependenciesMeta": {
+    "workflow": {
+      "optional": true
+    },
     "zod": {
       "optional": true
     }
@@ -141,6 +146,7 @@
   "packageManager": "npm@11.12.1",
   "dependencies": {
     "commander": "^14.0.3",
+    "khotan-data": "file:khotan-data-0.1.0.tgz",
     "prompts": "^2.4.2"
   }
 }

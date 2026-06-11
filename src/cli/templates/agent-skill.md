@@ -1,0 +1,73 @@
+---
+name: khotan-probe
+description: >
+  Inspect and debug khotan plugs via the CLI. Prefer `khotan plug`
+  (legacy alias: `khotan probe`). Use when verifying API
+  response shapes against typed endpoint definitions, debugging type
+  mismatches between declared schemas and actual responses, or exploring
+  available plugs and their endpoints.
+---
+
+Inspect and debug khotan plugs via the CLI. Prefer `khotan plug` (legacy alias: `khotan probe`). Use when verifying API response shapes against typed endpoint definitions, debugging type mismatches between declared schemas and actual responses, or exploring available plugs and their endpoints.
+
+**Requires**: A running dev server with `KHOTAN_DEBUG=1` set.
+
+## Commands
+
+### List all plugs
+```bash
+npx khotan plug --list
+```
+Returns: `{ ok, plugs: [{ name, baseUrl, authType, varsConfigured }] }`
+
+### Show plug info and endpoints
+```bash
+npx khotan plug <plugName> --info
+```
+Returns: `{ ok, plug: { name, baseUrl, authType, vars, endpoints } }`
+
+### Fire a request through a plug
+```bash
+npx khotan plug <plugName> GET /products
+npx khotan plug <plugName> POST /subscriptions --body '{"url":"https://example.com"}'
+npx khotan plug <plugName> GET /products --params '{"limit":"10"}'
+npx khotan plug <plugName> GET /products --headers '{"X-Custom":"value"}'
+```
+Returns: `{ ok, request, response: { status, timing, size, body }, matchedEndpoint }`
+
+### Fire via named endpoint
+```bash
+npx khotan plug <plugName> --endpoint listProducts
+```
+Resolves method and path from the endpoint definition automatically.
+
+### Compare response against schema
+```bash
+npx khotan plug <plugName> --endpoint listProducts --compare
+```
+Returns: `{ ..., comparison: { match, expected, actual, mismatches } }`
+
+Each mismatch has `{ path, issue, note }` where issue is `missing`, `extra`, or `type_mismatch` and path uses JSONPath notation (e.g. `$.items[].sku`).
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--port <n>` | Dev server port (default: from .env.local → .env → 3000) |
+| `--base-path <p>` | API base path (default: `/api/khotan`) |
+| `--list` | List registered plugs |
+| `--info` | Show plug metadata |
+| `--endpoint <name>` | Fire using named endpoint |
+| `--compare` | Diff response against schema |
+| `--body <json>` | Request body |
+| `--params <json>` | Query params |
+| `--headers <json>` | Extra headers |
+
+## Workflow
+
+1. **Discover**: `--list` to find plugs, `--info` to see endpoints
+2. **Probe**: Fire a request via endpoint name or raw method/path
+3. **Compare**: Add `--compare` to check response shape against Zod schema
+4. **Fix**: If mismatches found, update the endpoint's response schema or adjust API expectations
+
+All output is JSON on stdout — parse with standard JSON tools.

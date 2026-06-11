@@ -3,6 +3,8 @@ import { initCommand } from "./commands/init.js";
 import { addCommand } from "./commands/add.js";
 import { generateCommand } from "./commands/generate.js";
 import { migrateCommand } from "./commands/migrate.js";
+import { plugCommand } from "./commands/probe.js";
+import { wireCommand } from "./commands/wire.js";
 
 const program = new Command();
 
@@ -15,5 +17,7 @@ program.addCommand(initCommand);
 program.addCommand(addCommand);
 program.addCommand(generateCommand);
 program.addCommand(migrateCommand);
+program.addCommand(plugCommand);
+program.addCommand(wireCommand);
 
 program.parse();

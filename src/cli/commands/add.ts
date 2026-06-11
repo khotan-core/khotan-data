@@ -23,6 +23,11 @@ import {
   installPackages,
   installShadcnComponents,
 } from "../deps.js";
+import {
+  installSkills,
+  type SkillDefinition,
+} from "../agent-detect.js";
+import { ensureWorkflowNextConfig } from "../next-config.js";
 
 async function loadConfig(): Promise<{ outputDir: string } | null> {
   const configPath = path.resolve(process.cwd(), "khotan.config.ts");
@@ -63,6 +68,8 @@ function resolveOutputBase(
       );
     case "appRoot":
       return path.resolve(cwd, hasSrcLayout(cwd) ? "src/app" : "app");
+    case "projectRoot":
+      return path.resolve(cwd);
     case "outputDir":
     default:
       return path.resolve(cwd, outputDir);
@@ -204,7 +211,7 @@ export const addCommand = new Command("add")
   .description("Add a component or block to your project")
   .argument(
     "<name>",
-    "Component or block to add (e.g., plug, schema, hub, config-page-1)",
+    "Component or block to add (e.g., plug, inflow, outflow, relay, schema, hub, config-page-1)",
   )
   .option("-f, --force", "Overwrite existing files without prompting")
   .option("-y, --yes", "Auto-accept all install prompts")
@@ -315,6 +322,35 @@ export const addCommand = new Command("add")
       }
 
       if (isMultiFile(component)) {
+        const hasAgentSkills = component.files.some(
+          (f) => f.outputBase === "agentSkills",
+        );
+
+        if (hasAgentSkills) {
+          const skills: SkillDefinition[] = component.files
+            .filter((f) => f.outputBase === "agentSkills")
+            .map((f) => ({ name: f.outputFile, templatePath: f.templatePath }));
+
+          const agentsTemplatePath = path.resolve(
+            path.dirname(component.files[0]!.templatePath),
+            "agents.md",
+          );
+          const result = installSkills(cwd, skills, agentsTemplatePath);
+
+          if (result.created.length > 0) {
+            console.log(
+              `\n✓ Installed to ${result.agents.join(", ")} (${String(result.created.length)} files):`,
+            );
+            for (const f of result.created) {
+              console.log(`  ${f}`);
+            }
+          }
+          if (result.skipped.length > 0 && result.created.length === 0) {
+            console.log("\n✓ All skill files already exist, skipping");
+          }
+          return;
+        }
+
         const createdFiles: string[] = [];
         let filesToScaffold = component.files;
 
@@ -322,6 +358,28 @@ export const addCommand = new Command("add")
           filesToScaffold = filesToScaffold.filter(
             (f) => !f.outputFile.endsWith(".tsx"),
           );
+        }
+
+        // Route collision detection for blocks outputting to appRoot
+        for (const file of filesToScaffold) {
+          if (file.outputBase === "appRoot") {
+            const baseDir = resolveOutputBase(file, cwd, config.outputDir);
+            const outputPath = path.join(baseDir, file.outputFile);
+            const routeDir = path.dirname(outputPath);
+            const pageExtensions = ["page.tsx", "page.ts", "page.jsx", "page.js"];
+            const existing = pageExtensions.find((ext) =>
+              fs.existsSync(path.join(routeDir, ext)),
+            );
+            if (existing && existing !== path.basename(file.outputFile)) {
+              const relRoute = path.relative(cwd, path.join(routeDir, existing));
+              console.warn(
+                `\n⚠ Route collision: ${relRoute} already exists at this path.`,
+              );
+              console.warn(
+                `  Adding "${component.name}" will create a conflicting route file.\n`,
+              );
+            }
+          }
         }
 
         for (const file of filesToScaffold) {
@@ -343,6 +401,22 @@ export const addCommand = new Command("add")
           console.log(`\n✓ Created ${String(createdFiles.length)} files:`);
           for (const f of createdFiles) {
             console.log(`  ${f}`);
+          }
+        }
+
+        if (component.requiresWorkflowIntegration) {
+          const workflowConfig = ensureWorkflowNextConfig(cwd);
+          const relPath = path.relative(cwd, workflowConfig.path);
+          if (workflowConfig.status === "created") {
+            console.log(`✓ Created ${relPath} with Workflow integration`);
+          } else if (workflowConfig.status === "updated") {
+            console.log(`✓ Updated ${relPath} with Workflow integration`);
+          } else if (workflowConfig.status === "skipped") {
+            console.log(`✓ ${relPath} already has Workflow integration`);
+          } else {
+            console.warn(
+              `⚠ Could not automatically update ${relPath} for Workflow integration. Wrap its default export with withWorkflow() from "workflow/next".`,
+            );
           }
         }
 
@@ -409,6 +483,22 @@ export const addCommand = new Command("add")
       }
 
       console.log(`✓ Created ${path.relative(cwd, outputPath)}`);
+
+      if (component.requiresWorkflowIntegration) {
+        const workflowConfig = ensureWorkflowNextConfig(cwd);
+        const relPath = path.relative(cwd, workflowConfig.path);
+        if (workflowConfig.status === "created") {
+          console.log(`✓ Created ${relPath} with Workflow integration`);
+        } else if (workflowConfig.status === "updated") {
+          console.log(`✓ Updated ${relPath} with Workflow integration`);
+        } else if (workflowConfig.status === "skipped") {
+          console.log(`✓ ${relPath} already has Workflow integration`);
+        } else {
+          console.warn(
+            `⚠ Could not automatically update ${relPath} for Workflow integration. Wrap its default export with withWorkflow() from "workflow/next".`,
+          );
+        }
+      }
 
       if (componentName === "schema") {
         const autoYes = opts.yes ?? false;

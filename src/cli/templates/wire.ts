@@ -55,10 +55,10 @@ export interface WireUnsubscribeContext {
 }
 
 export interface WireVerifyContext {
-  /** Incoming request headers */
-  headers: Headers;
-  /** Raw request body (string or parsed object) */
-  body: unknown;
+  /** Incoming request headers as plain key-value pairs */
+  headers: Record<string, string>;
+  /** Raw request body as text (for signature verification) */
+  body: string;
   /** Wire-specific vars (e.g. webhook signing secret) */
   wireVars: Record<string, string>;
 }
@@ -129,9 +129,9 @@ export function wire(config: WireConfig): WireConfig {
 //   },
 //
 //   async onVerify(ctx) {
-//     const signature = ctx.headers.get("stripe-signature");
+//     const signature = ctx.headers["stripe-signature"];
 //     if (!signature) return false;
-//     // Verify using ctx.wireVars.webhookSecret
+//     // Verify using ctx.wireVars.webhookSecret and ctx.body (raw text)
 //     return true;
 //   },
 // });

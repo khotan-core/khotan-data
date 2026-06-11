@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import prompts from "prompts";
 import { configTemplate } from "../config-template.js";
 import {
   detectPackageManager,
@@ -11,6 +12,8 @@ import {
   installPackages,
   installShadcnComponents,
 } from "../deps.js";
+import { getComponent, getTemplateContent, isMultiFile } from "../registry.js";
+import { installSkills, type SkillDefinition } from "../agent-detect.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -248,13 +251,55 @@ export async function runInit(cwd: string): Promise<boolean> {
   return fs.existsSync(configPath);
 }
 
+const SKILL_COMPONENTS = [
+  "skill-setup",
+  "skill-plug",
+  "skill-dashboard",
+  "skill-webhook",
+  "agent-skill",
+];
+
+function scaffoldAgentSkills(cwd: string): number {
+  const skills: SkillDefinition[] = [];
+
+  for (const name of SKILL_COMPONENTS) {
+    const entry = getComponent(name);
+    if (!entry || !isMultiFile(entry)) continue;
+
+    for (const file of entry.files) {
+      if (file.outputBase === "agentSkills") {
+        skills.push({ name: file.outputFile, templatePath: file.templatePath });
+      }
+    }
+  }
+
+  if (skills.length === 0) return 0;
+
+  const agentsTemplatePath = path.resolve(
+    __dirname,
+    "templates",
+    "agents.md",
+  );
+  const result = installSkills(cwd, skills, agentsTemplatePath);
+
+  if (result.created.length > 0) {
+    console.log(`  Agents detected: ${result.agents.join(", ")}`);
+    for (const f of result.created) {
+      console.log(`  ✓ Created ${f}`);
+    }
+  }
+
+  return result.created.length;
+}
+
 export const initCommand = new Command("init")
   .description("Initialize khotan in your project")
   .option(
     "--full",
     "Full project setup: install drizzle, shadcn, and configure everything",
   )
-  .action(async (opts: { full?: boolean }) => {
+  .option("-y, --yes", "Auto-accept all prompts")
+  .action(async (opts: { full?: boolean; yes?: boolean }) => {
     const cwd = process.cwd();
 
     if (opts.full) {
@@ -300,6 +345,24 @@ export const initCommand = new Command("init")
     const coreFiles = scaffoldCoreFiles(cwd, outputDir);
 
     ensureKhotanDataInstalled(cwd);
+
+    // Offer to install agent skills
+    let installSkills = opts.yes ?? false;
+    if (!installSkills && process.stdin.isTTY) {
+      const response = await prompts({
+        type: "confirm",
+        name: "install",
+        message: "Install agent skills for AI-assisted development? (Y/n)",
+        initial: true,
+      });
+      installSkills = response.install === true;
+    }
+    if (installSkills) {
+      const count = scaffoldAgentSkills(cwd);
+      if (count > 0) {
+        console.log(`✓ Installed ${String(count)} agent skills`);
+      }
+    }
 
     const allFiles = [
       ...(fs.existsSync(configPath) && coreFiles.length === 0

@@ -189,7 +189,7 @@ The scaffolded `plug.ts` SHALL support an optional `parsers` field in `PlugConfi
 The `PlugRegistration` interface SHALL require a `plug` field containing an object with `baseUrl: string` and `authType: string` (satisfied by any Plug instance). The factory SHALL extract these values for database upserts.
 
 #### Scenario: Register plug with instance
-- **WHEN** a user registers `{ name: "cin7", plug: cin7Plug, syncs: [...] }`
+- **WHEN** a user registers `{ name: "cin7", plug: cin7Plug, flows: [...] }`
 - **THEN** the factory SHALL call `adapter.upsertPlug({ name: "cin7", baseUrl: cin7Plug.baseUrl, authType: cin7Plug.authType })`
 
 #### Scenario: No metadata-only registration

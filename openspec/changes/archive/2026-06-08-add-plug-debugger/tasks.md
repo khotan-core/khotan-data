@@ -15,12 +15,12 @@
 
 ## 3. CLI Scaffolding
 
-- [ ] 3.1 Add `plug-debugger` entry to CLI registry with template path and output config
-- [ ] 3.2 Update `tsup.config.ts` to copy `plug-debugger.tsx` to `dist/templates`
+- [x] 3.1 Add `plug-debugger` entry to CLI registry with template path and output config
+- [x] 3.2 Update `tsup.config.ts` to copy `plug-debugger.tsx` to `dist/templates`
 
 ## 4. Testing
 
-- [ ] 4.1 Add factory test: debug route returns 404 when `KHOTAN_DEBUG` is unset
-- [ ] 4.2 Add factory test: debug route proxies a GET request and returns timing + response
-- [ ] 4.3 Add factory test: debug route handles plug errors gracefully
-- [ ] 4.4 Build, pack, verify no regressions
+- [x] 4.1 Add factory test: debug route returns 404 when `KHOTAN_DEBUG` is unset
+- [x] 4.2 Add factory test: debug route proxies a GET request and returns timing + response
+- [x] 4.3 Add factory test: debug route handles plug errors gracefully
+- [x] 4.4 Build, pack, verify no regressions

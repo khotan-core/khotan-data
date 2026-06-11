@@ -33,6 +33,12 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
    - `schemaName`: The workflow being used (e.g., "spec-driven")
    - Which artifacts exist for this change
 
+   If the command reports `Change '<name>' not found`, check whether the change is archived under
+   `openspec/changes/archive/*-<name>/`. When archived:
+   - Verify directly from the archived change directory
+   - Skip OpenSpec status/apply commands that only work for active changes
+   - Note in the final report that archived artifacts were used
+
 3. **Get the change directory and load artifacts**
 
    ```bash

@@ -6,14 +6,18 @@ import {
   type PlugRegistration,
   type ResourceRegistration,
 } from "./factory.js";
+import { z } from "zod";
 
-interface StoredSync {
+interface StoredFlow {
   id: string;
   plugId: string;
   name: string;
   type: string;
   schedule: string | null;
   resourceId: string | null;
+  enabled: boolean;
+  lastRunAt: Date | null;
+  lastRunStatus: "ok" | "failed" | null;
 }
 
 interface StoredMapping {
@@ -22,6 +26,38 @@ interface StoredMapping {
   connectValue: string;
   refs: Record<string, string>;
   metadata: Record<string, unknown> | null;
+}
+
+interface StoredRun {
+  id: string;
+  flowId: string | null;
+  wireId: string | null;
+  webhookHandlerId: string | null;
+  workflowRunId: string | null;
+  runType: string;
+  status: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  durationMs: number | null;
+  extracted: number;
+  transformed: number;
+  created: number;
+  updated: number;
+  deleted: number;
+  failed: number;
+  error: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+interface StoredWebhookEvent {
+  id: string;
+  wireId: string;
+  webhookHandlerId: string;
+  khotanRunId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  headers: Record<string, string>;
+  receivedAt: Date;
 }
 
 function createMockAdapter(): KhotanAdapter {
@@ -35,7 +71,7 @@ function createMockAdapter(): KhotanAdapter {
       enabled: boolean;
     }
   >();
-  const syncStore = new Map<string, StoredSync & { enabled: boolean }>();
+  const flowStore = new Map<string, StoredFlow>();
   const resourceStore = new Map<
     string,
     {
@@ -46,10 +82,14 @@ function createMockAdapter(): KhotanAdapter {
     }
   >();
   const mappingStore = new Map<string, StoredMapping>();
+  const runStore = new Map<string, StoredRun>();
+  const webhookEventStore = new Map<string, StoredWebhookEvent>();
+  const variableStore = new Map<string, string>();
   let plugCounter = 0;
-  let syncCounter = 0;
+  let flowCounter = 0;
   let resourceCounter = 0;
   let mappingCounter = 0;
+  let runCounter = 0;
 
   return {
     upsertPlug: vi.fn(async (plug) => {
@@ -66,24 +106,26 @@ function createMockAdapter(): KhotanAdapter {
       return { id };
     }),
 
-    upsertSync: vi.fn(async (sync) => {
-      const existing = [...syncStore.values()].find(
-        (s) => s.plugId === sync.plugId && s.name === sync.name,
+    upsertFlow: vi.fn(async (flow) => {
+      const existing = [...flowStore.values()].find(
+        (f) => f.plugId === flow.plugId && f.name === flow.name,
       );
       if (existing) {
-        existing.type = sync.type;
-        existing.schedule = sync.schedule ?? null;
+        existing.type = flow.type;
+        existing.schedule = flow.schedule ?? null;
         return { id: existing.id };
       }
-      const id = `sync-${++syncCounter}`;
-      syncStore.set(id, {
+      const id = `flow-${++flowCounter}`;
+      flowStore.set(id, {
         id,
-        plugId: sync.plugId,
-        name: sync.name,
-        type: sync.type,
-        schedule: sync.schedule ?? null,
+        plugId: flow.plugId,
+        name: flow.name,
+        type: flow.type,
+        schedule: flow.schedule ?? null,
         resourceId: null,
         enabled: true,
+        lastRunAt: null,
+        lastRunStatus: null,
       });
       return { id };
     }),
@@ -92,7 +134,7 @@ function createMockAdapter(): KhotanAdapter {
       return [...plugStore.values()].map((p) => ({
         ...p,
         status: "idle",
-        syncCount: [...syncStore.values()].filter((s) => s.plugId === p.id)
+        flowCount: [...flowStore.values()].filter((flow) => flow.plugId === p.id)
           .length,
       }));
     }),
@@ -101,18 +143,48 @@ function createMockAdapter(): KhotanAdapter {
       return plugStore.get(id) ?? null;
     }),
 
-    getPlugSyncs: vi.fn(async (plugId: string) => {
-      return [...syncStore.values()].filter((s) => s.plugId === plugId);
+    getPlugFlows: vi.fn(async (plugId: string) => {
+      return [...flowStore.values()].filter((flow) => flow.plugId === plugId);
     }),
 
-    listSyncs: vi.fn(async () => {
-      return [...syncStore.values()].map((s) => ({
-        ...s,
-        plugName: plugStore.get(s.plugId)?.name ?? null,
+    getFlow: vi.fn(async (flowId: string) => {
+      const flow = flowStore.get(flowId);
+      if (!flow) return null;
+      return {
+        ...flow,
+        plugName: plugStore.get(flow.plugId)?.name ?? null,
+      };
+    }),
+
+    listFlows: vi.fn(async () => {
+      return [...flowStore.values()].map((flow) => ({
+        ...flow,
+        plugName: plugStore.get(flow.plugId)?.name ?? null,
       }));
     }),
 
-    listRuns: vi.fn(async () => []),
+    listRuns: vi.fn(async (flowId: string) => {
+      return [...runStore.values()].filter((run) => run.flowId === flowId);
+    }),
+
+    listRunsPage: vi.fn(async ({ limit, offset }: { limit: number; offset: number }) => {
+      const rows = [...runStore.values()]
+        .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+        .slice(offset, offset + limit + 1);
+      return {
+        items: rows.slice(0, limit).map((run) => ({
+          ...run,
+          sourceType: run.flowId ? "flow" : run.webhookHandlerId ? "webhook" : "unknown",
+          sourceName: run.flowId ? flowStore.get(run.flowId)?.name ?? null : null,
+          sourceKind: null,
+          plugName:
+            run.flowId && flowStore.get(run.flowId)
+              ? plugStore.get(flowStore.get(run.flowId)!.plugId)?.name ?? null
+              : null,
+        })),
+        hasMore: rows.length > limit,
+      };
+    }),
 
     upsertResource: vi.fn(async (resource) => {
       const existing = [...resourceStore.values()].find(
@@ -136,7 +208,7 @@ function createMockAdapter(): KhotanAdapter {
     listResources: vi.fn(async () => {
       return [...resourceStore.values()].map((r) => ({
         ...r,
-        syncCount: [...syncStore.values()].filter((s) => s.resourceId === r.id)
+        flowCount: [...flowStore.values()].filter((flow) => flow.resourceId === r.id)
           .length,
         mappingCount: [...mappingStore.values()].filter(
           (m) => m.resourceId === r.id,
@@ -148,8 +220,8 @@ function createMockAdapter(): KhotanAdapter {
       return resourceStore.get(id) ?? null;
     }),
 
-    getResourceSyncs: vi.fn(async (resourceId: string) => {
-      return [...syncStore.values()].filter((s) => s.resourceId === resourceId);
+    getResourceFlows: vi.fn(async (resourceId: string) => {
+      return [...flowStore.values()].filter((flow) => flow.resourceId === resourceId);
     }),
 
     upsertMapping: vi.fn(async (mapping) => {
@@ -213,9 +285,9 @@ function createMockAdapter(): KhotanAdapter {
       },
     ),
 
-    updateSyncResourceId: vi.fn(async (syncId: string, resourceId: string) => {
-      const sync = syncStore.get(syncId);
-      if (sync) sync.resourceId = resourceId;
+    updateFlowResourceId: vi.fn(async (flowId: string, resourceId: string) => {
+      const flow = flowStore.get(flowId);
+      if (flow) flow.resourceId = resourceId;
     }),
 
     togglePlugEnabled: vi.fn(async (plugId: string, enabled: boolean) => {
@@ -223,9 +295,92 @@ function createMockAdapter(): KhotanAdapter {
       if (plug) plug.enabled = enabled;
     }),
 
-    toggleSyncEnabled: vi.fn(async (syncId: string, enabled: boolean) => {
-      const sync = syncStore.get(syncId);
-      if (sync) sync.enabled = enabled;
+    toggleFlowEnabled: vi.fn(async (flowId: string, enabled: boolean) => {
+      const flow = flowStore.get(flowId);
+      if (flow) flow.enabled = enabled;
+    }),
+
+    getEncryptedVariables: vi.fn(async (plugId: string) => {
+      return variableStore.get(plugId) ?? null;
+    }),
+
+    setEncryptedVariables: vi.fn(async (plugId: string, encrypted: string) => {
+      variableStore.set(plugId, encrypted);
+    }),
+
+    clearEncryptedVariables: vi.fn(async (plugId: string) => {
+      variableStore.delete(plugId);
+    }),
+
+    insertRun: vi.fn(async (run) => {
+      const id = `run-${++runCounter}`;
+      runStore.set(id, {
+        id,
+        flowId: run.flowId ?? null,
+        wireId: run.wireId ?? null,
+        webhookHandlerId: run.webhookHandlerId ?? null,
+        workflowRunId: run.workflowRunId ?? null,
+        runType: run.runType,
+        status: run.status,
+        startedAt: new Date(),
+        completedAt: null,
+        durationMs: null,
+        extracted: 0,
+        transformed: 0,
+        created: 0,
+        updated: 0,
+        deleted: 0,
+        failed: 0,
+        error: null,
+        metadata: null,
+      });
+      return { id };
+    }),
+
+    updateRun: vi.fn(async (runId, updates) => {
+      const run = runStore.get(runId);
+      if (run) Object.assign(run, updates);
+    }),
+
+    insertWebhookEvent: vi.fn(async (event) => {
+      const id = `webhook-event-${webhookEventStore.size + 1}`;
+      webhookEventStore.set(id, {
+        id,
+        wireId: event.wireId,
+        webhookHandlerId: event.webhookHandlerId,
+        khotanRunId: event.khotanRunId,
+        eventType: event.eventType,
+        payload: event.payload,
+        headers: event.headers,
+        receivedAt: new Date(),
+      });
+      return { id };
+    }),
+
+    listWebhookEventsPage: vi.fn(async ({ limit, offset }: { limit: number; offset: number }) => {
+      const rows = [...webhookEventStore.values()]
+        .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
+        .slice(offset, offset + limit + 1);
+      return {
+        items: rows.slice(0, limit).map((event) => ({
+          ...event,
+          handlerName: null,
+          handlerType: null,
+          plugName: null,
+          workflowRunId: runStore.get(event.khotanRunId)?.workflowRunId ?? null,
+          runStatus: runStore.get(event.khotanRunId)?.status ?? null,
+          runStartedAt: runStore.get(event.khotanRunId)?.startedAt ?? null,
+        })),
+        hasMore: rows.length > limit,
+      };
+    }),
+
+    updateFlowLastRun: vi.fn(async (flowId, updates) => {
+      const flow = flowStore.get(flowId);
+      if (flow) {
+        flow.lastRunAt = updates.lastRunAt;
+        flow.lastRunStatus = updates.lastRunStatus;
+      }
     }),
   };
 }
@@ -296,23 +451,23 @@ describe("khotan factory", () => {
       );
     });
 
-    it("throws when sync references unknown resource", () => {
+    it("throws when flow references unknown resource", () => {
       const plugs: PlugRegistration[] = [
         {
           name: "shopify",
           plug: { baseUrl: "https://shopify.com", authType: "bearer" },
-          syncs: [
+          flows: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
         },
       ];
 
       expect(() => khotan({ adapter, plugs })).toThrow(
-        'Sync "products-inflow" references unknown resource: "products"',
+        'Flow "products-inflow" references unknown resource: "products"',
       );
     });
 
-    it("accepts sync with valid resource reference", () => {
+    it("accepts flow with valid resource reference", () => {
       const resources: ResourceRegistration[] = [
         { name: "products", connectField: "sku" },
       ];
@@ -320,7 +475,7 @@ describe("khotan factory", () => {
         {
           name: "shopify",
           plug: { baseUrl: "https://shopify.com", authType: "bearer" },
-          syncs: [
+          flows: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
         },
@@ -331,12 +486,12 @@ describe("khotan factory", () => {
   });
 
   describe("init()", () => {
-    it("upserts registered plugs and syncs", async () => {
+    it("upserts registered plugs and flows", async () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
           plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
-          syncs: [
+          flows: [
             { name: "products-inflow", type: "inflow", schedule: "0 * * * *" },
             { name: "invoices-inflow", type: "inflow" },
           ],
@@ -351,14 +506,14 @@ describe("khotan factory", () => {
         baseUrl: "https://api.stripe.com",
         authType: "bearer",
       });
-      expect(adapter.upsertSync).toHaveBeenCalledTimes(2);
-      expect(adapter.upsertSync).toHaveBeenCalledWith({
+      expect(adapter.upsertFlow).toHaveBeenCalledTimes(2);
+      expect(adapter.upsertFlow).toHaveBeenCalledWith({
         plugId: "plug-1",
         name: "products-inflow",
         type: "inflow",
         schedule: "0 * * * *",
       });
-      expect(adapter.upsertSync).toHaveBeenCalledWith({
+      expect(adapter.upsertFlow).toHaveBeenCalledWith({
         plugId: "plug-1",
         name: "invoices-inflow",
         type: "inflow",
@@ -380,7 +535,7 @@ describe("khotan factory", () => {
       expect(adapter.upsertPlug).toHaveBeenCalledTimes(1);
     });
 
-    it("handles plugs without syncs", async () => {
+    it("handles plugs without flows", async () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
@@ -392,10 +547,10 @@ describe("khotan factory", () => {
       await instance.init();
 
       expect(adapter.upsertPlug).toHaveBeenCalledTimes(1);
-      expect(adapter.upsertSync).not.toHaveBeenCalled();
+      expect(adapter.upsertFlow).not.toHaveBeenCalled();
     });
 
-    it("upserts resources before plugs and syncs", async () => {
+    it("upserts resources before plugs and flows", async () => {
       const resources: ResourceRegistration[] = [
         {
           name: "products",
@@ -407,7 +562,7 @@ describe("khotan factory", () => {
         {
           name: "shopify",
           plug: { baseUrl: "https://shopify.com", authType: "bearer" },
-          syncs: [
+          flows: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
         },
@@ -426,7 +581,7 @@ describe("khotan factory", () => {
       );
     });
 
-    it("links syncs to resource_id after upserting", async () => {
+    it("links flows to resource_id after upserting", async () => {
       const resources: ResourceRegistration[] = [
         { name: "products", connectField: "sku" },
       ];
@@ -434,7 +589,7 @@ describe("khotan factory", () => {
         {
           name: "shopify",
           plug: { baseUrl: "https://shopify.com", authType: "bearer" },
-          syncs: [
+          flows: [
             { name: "products-inflow", type: "inflow", resource: "products" },
           ],
         },
@@ -443,25 +598,25 @@ describe("khotan factory", () => {
       const instance = khotan({ adapter, plugs, resources });
       await instance.init();
 
-      expect(adapter.updateSyncResourceId).toHaveBeenCalledWith(
-        "sync-1",
+      expect(adapter.updateFlowResourceId).toHaveBeenCalledWith(
+        "flow-1",
         "resource-1",
       );
     });
 
-    it("does not call updateSyncResourceId for syncs without resource", async () => {
+    it("does not call updateFlowResourceId for flows without resource", async () => {
       const plugs: PlugRegistration[] = [
         {
           name: "stripe",
           plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
-          syncs: [{ name: "payments", type: "inflow" }],
+          flows: [{ name: "payments", type: "inflow" }],
         },
       ];
 
       const instance = khotan({ adapter, plugs });
       await instance.init();
 
-      expect(adapter.updateSyncResourceId).not.toHaveBeenCalled();
+      expect(adapter.updateFlowResourceId).not.toHaveBeenCalled();
     });
   });
 
@@ -475,7 +630,7 @@ describe("khotan factory", () => {
           {
             name: "stripe",
             plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
-            syncs: [{ name: "products", type: "inflow" }],
+            flows: [{ name: "products", type: "inflow" }],
           },
         ],
       });
@@ -487,10 +642,10 @@ describe("khotan factory", () => {
       const data = await res.json();
       expect(Array.isArray(data)).toBe(true);
       expect(data[0]).toHaveProperty("name", "stripe");
-      expect(data[0]).toHaveProperty("syncCount");
+      expect(data[0]).toHaveProperty("flowCount");
     });
 
-    it("GET /api/khotan/plugs/:id returns plug with syncs", async () => {
+    it("GET /api/khotan/plugs/:id returns plug with flows", async () => {
       await instance.init();
       const res = await instance.handler(
         makeRequest("/api/khotan/plugs/plug-1"),
@@ -498,7 +653,7 @@ describe("khotan factory", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.name).toBe("stripe");
-      expect(data.syncs).toHaveLength(1);
+      expect(data.flows).toHaveLength(1);
     });
 
     it("GET /api/khotan/plugs/:id returns 404 for unknown plug", async () => {
@@ -508,20 +663,300 @@ describe("khotan factory", () => {
       expect(res.status).toBe(404);
     });
 
-    it("GET /api/khotan/syncs lists syncs", async () => {
-      const res = await instance.handler(makeRequest("/api/khotan/syncs"));
+    it("GET /api/khotan/flows lists flows", async () => {
+      const res = await instance.handler(makeRequest("/api/khotan/flows"));
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data)).toBe(true);
     });
 
-    it("GET /api/khotan/syncs/:id/runs lists runs", async () => {
+    it("GET /api/khotan/flows/:id/runs lists runs", async () => {
       const res = await instance.handler(
-        makeRequest("/api/khotan/syncs/sync-1/runs"),
+        makeRequest("/api/khotan/flows/flow-1/runs"),
       );
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data)).toBe(true);
+    });
+
+    it("GET /api/khotan/runs returns paginated log rows", async () => {
+      await adapter.insertRun({
+        flowId: "flow-1",
+        runType: "manual",
+        status: "ok",
+      });
+      await adapter.insertRun({
+        flowId: "flow-1",
+        runType: "manual",
+        status: "failed",
+      });
+      await adapter.insertRun({
+        flowId: "flow-1",
+        runType: "delta",
+        status: "running",
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/runs?limit=2"));
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.items).toHaveLength(2);
+      expect(data.page).toMatchObject({
+        limit: 2,
+        offset: 0,
+        hasMore: true,
+        prevOffset: 0,
+        nextOffset: 2,
+      });
+      expect(data.items[0]).toHaveProperty("sourceType");
+    });
+
+    it("GET /api/khotan/webhook-events returns paginated log rows", async () => {
+      const { id: runId1 } = await adapter.insertRun({
+        flowId: "flow-1",
+        runType: "webhook",
+        status: "ok",
+      });
+      const { id: runId2 } = await adapter.insertRun({
+        flowId: "flow-1",
+        runType: "webhook",
+        status: "running",
+      });
+
+      await adapter.insertWebhookEvent({
+        wireId: "wire-1",
+        webhookHandlerId: "handler-1",
+        khotanRunId: runId1,
+        eventType: "order.created",
+        payload: { id: "evt-1" },
+        headers: { "x-test": "1" },
+      });
+      await adapter.insertWebhookEvent({
+        wireId: "wire-1",
+        webhookHandlerId: "handler-1",
+        khotanRunId: runId2,
+        eventType: "order.updated",
+        payload: { id: "evt-2" },
+        headers: { "x-test": "2" },
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/webhook-events?limit=1"),
+      );
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.items).toHaveLength(1);
+      expect(data.page).toMatchObject({
+        limit: 1,
+        offset: 0,
+        hasMore: true,
+        prevOffset: 0,
+        nextOffset: 1,
+      });
+      expect(data.items[0]).toHaveProperty("eventType");
+    });
+
+    it("POST /api/khotan/flows/:id/runs executes a flow and updates run lifecycle", async () => {
+      const run = vi.fn(async () => ({
+        extracted: 2,
+        transformed: 2,
+        created: 1,
+        updated: 1,
+        metadata: { source: "test" },
+      }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          runType: "delta",
+          body: { limit: 10 },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runType: "delta",
+          body: { limit: 10 },
+          flow: expect.objectContaining({ id: "flow-1", name: "products" }),
+        }),
+      );
+      expect(adapter.insertRun).toHaveBeenCalledWith({
+        flowId: "flow-1",
+        runType: "delta",
+        status: "running",
+      });
+      expect(adapter.updateRun).toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({
+          status: "ok",
+          extracted: 2,
+          transformed: 2,
+          created: 1,
+          updated: 1,
+          failed: 0,
+          metadata: { source: "test" },
+        }),
+      );
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "ok" }),
+      );
+    });
+
+    it("flow().start starts a registered flow by name", async () => {
+      const run = vi.fn(async () => ({
+        extracted: 1,
+        transformed: 1,
+        updated: 1,
+      }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      const data = await flowInstance.flow("products").start({
+        runType: "delta",
+        body: { limit: 5 },
+      });
+
+      expect(data).toMatchObject({
+        id: "run-1",
+        flowId: "flow-1",
+        status: "ok",
+        runType: "delta",
+        extracted: 1,
+        transformed: 1,
+        updated: 1,
+      });
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runType: "delta",
+          body: { limit: 5 },
+          flow: expect.objectContaining({ id: "flow-1", name: "products" }),
+        }),
+      );
+    });
+
+    it("flow().start requires plugName when a flow name is ambiguous", async () => {
+      const run = vi.fn(async () => undefined);
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+          {
+            name: "shopify",
+            plug: {
+              baseUrl: "https://shopify.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "outflow", run }],
+          },
+        ],
+      });
+
+      await expect(flowInstance.flow("products").start()).rejects.toThrow(
+        'Flow "products" is registered on multiple plugs',
+      );
+
+      await expect(
+        flowInstance.flow("products", { plugName: "shopify" }).start(),
+      ).resolves.toMatchObject({ flowId: "flow-2", status: "ok" });
+    });
+
+    it("POST /api/khotan/flows/:id/runs records failed flow runs", async () => {
+      const run = vi.fn(async () => {
+        throw new Error("boom");
+      });
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data).toMatchObject({ id: "run-1", flowId: "flow-1", status: "failed", error: "boom" });
+      expect(adapter.updateRun).toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({
+          status: "failed",
+          failed: 1,
+          error: "boom",
+        }),
+      );
+      expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
+        "flow-1",
+        expect.objectContaining({ lastRunStatus: "failed" }),
+      );
     });
 
     it("returns 404 for unknown routes", async () => {
@@ -563,7 +998,7 @@ describe("khotan factory", () => {
           {
             name: "shopify",
             plug: { baseUrl: "https://shopify.com", authType: "bearer" },
-            syncs: [
+            flows: [
               { name: "products-inflow", type: "inflow", resource: "products" },
             ],
           },
@@ -579,7 +1014,7 @@ describe("khotan factory", () => {
       expect(Array.isArray(data)).toBe(true);
     });
 
-    it("GET .../resources/:id returns resource with syncs", async () => {
+    it("GET .../resources/:id returns resource with flows", async () => {
       await instance.init();
       const res = await instance.handler(
         makeRequest("/api/khotan/resources/resource-1"),
@@ -587,8 +1022,8 @@ describe("khotan factory", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.name).toBe("products");
-      expect(data.syncs).toHaveLength(1);
-      expect(data.syncs[0].name).toBe("products-inflow");
+      expect(data.flows).toHaveLength(1);
+      expect(data.flows[0].name).toBe("products-inflow");
     });
 
     it("GET .../resources/:id returns 404 for unknown resource", async () => {
@@ -750,7 +1185,7 @@ describe("khotan factory", () => {
           {
             name: "stripe",
             plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
-            syncs: [{ name: "products", type: "inflow" }],
+            flows: [{ name: "products", type: "inflow" }],
           },
         ],
       });
@@ -775,25 +1210,25 @@ describe("khotan factory", () => {
       expect(res.status).toBe(404);
     });
 
-    it("PATCH .../syncs/:id toggles sync enabled", async () => {
+    it("PATCH .../flows/:id toggles flow enabled", async () => {
       await instance.init();
       const res = await instance.handler(
-        makeRequest("/api/khotan/syncs/sync-1", "PATCH", { enabled: false }),
+        makeRequest("/api/khotan/flows/flow-1", "PATCH", { enabled: false }),
       );
       expect(res.status).toBe(200);
-      expect(adapter.toggleSyncEnabled).toHaveBeenCalledWith("sync-1", false);
+      expect(adapter.toggleFlowEnabled).toHaveBeenCalledWith("flow-1", false);
       const data = await res.json();
-      expect(data).toHaveProperty("id", "sync-1");
+      expect(data).toHaveProperty("id", "flow-1");
       expect(data).toHaveProperty("enabled", false);
     });
 
-    it("PATCH .../syncs/:id ignores non-boolean enabled", async () => {
+    it("PATCH .../flows/:id ignores non-boolean enabled", async () => {
       await instance.init();
       const res = await instance.handler(
-        makeRequest("/api/khotan/syncs/sync-1", "PATCH", { enabled: "yes" }),
+        makeRequest("/api/khotan/flows/flow-1", "PATCH", { enabled: "yes" }),
       );
       expect(res.status).toBe(200);
-      expect(adapter.toggleSyncEnabled).not.toHaveBeenCalled();
+      expect(adapter.toggleFlowEnabled).not.toHaveBeenCalled();
     });
 
     it("PATCH returns 404 for unmatched routes", async () => {
@@ -854,36 +1289,36 @@ describe("khotan factory", () => {
       expect(res.status).toBe(404);
     });
 
-    it("GET /syncs excludes syncs from unregistered plugs", async () => {
+    it("GET /flows excludes flows from unregistered plugs", async () => {
       const instance = khotan({
         adapter,
         plugs: [
           {
             name: "stripe",
             plug: { baseUrl: "https://api.stripe.com", authType: "bearer" },
-            syncs: [{ name: "payments", type: "inflow" }],
+            flows: [{ name: "payments", type: "inflow" }],
           },
         ],
       });
       await instance.init();
 
-      // Insert an orphaned plug with a sync
+      // Insert an orphaned plug with a flow
       const { id: orphanPlugId } = await adapter.upsertPlug({
         name: "orphaned",
         baseUrl: "https://orphaned.com",
         authType: "bearer",
       });
-      await adapter.upsertSync({
+      await adapter.upsertFlow({
         plugId: orphanPlugId,
-        name: "orphan-sync",
+        name: "orphan-flow",
         type: "inflow",
       });
 
-      const res = await instance.handler(makeRequest("/api/khotan/syncs"));
+      const res = await instance.handler(makeRequest("/api/khotan/flows"));
       const data = await res.json();
-      const names = data.map((s: { name: string }) => s.name);
+      const names = data.map((flow: { name: string }) => flow.name);
       expect(names).toContain("payments");
-      expect(names).not.toContain("orphan-sync");
+      expect(names).not.toContain("orphan-flow");
     });
 
     it("GET /resources excludes unregistered resources", async () => {
@@ -951,6 +1386,517 @@ describe("khotan factory", () => {
   });
 });
 
+describe("debug route", () => {
+  let adapter: KhotanAdapter;
+
+  beforeEach(() => {
+    adapter = createMockAdapter();
+  });
+
+  it("returns 404 when KHOTAN_DEBUG is unset", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    delete process.env["KHOTAN_DEBUG"];
+    try {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(async () => ({ ok: true })),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/stripe", "POST", {
+          method: "GET",
+          path: "/products",
+        }),
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      if (originalEnv !== undefined) process.env["KHOTAN_DEBUG"] = originalEnv;
+    }
+  });
+
+  it("proxies a GET request and returns timing + response", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const mockGet = vi.fn(async () => ({ products: [{ id: "p1" }] }));
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: mockGet,
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/stripe", "POST", {
+          method: "GET",
+          path: "/products",
+          params: { limit: "10" },
+        }),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe(200);
+      expect(data.body).toEqual({ products: [{ id: "p1" }] });
+      expect(typeof data.timing).toBe("number");
+      expect(data.timing).toBeGreaterThanOrEqual(0);
+      expect(mockGet).toHaveBeenCalledWith("/products", expect.objectContaining({ params: { limit: "10" } }));
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+
+  it("handles plug errors gracefully", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const error = Object.assign(new Error("Unauthorized"), {
+        status: 401,
+        body: { message: "Invalid API key" },
+      });
+      const mockGet = vi.fn(async () => { throw error; });
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: mockGet,
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/stripe", "POST", {
+          method: "GET",
+          path: "/charges",
+        }),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe(401);
+      expect(data.error).toBe("Unauthorized");
+      expect(data.body).toEqual({ message: "Invalid API key" });
+      expect(typeof data.timing).toBe("number");
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+
+  it("returns 404 for unknown plug name", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/nonexistent", "POST", {
+          method: "GET",
+          path: "/test",
+        }),
+      );
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toBe("Plug not found");
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+
+  it("includes varsConfigured in GET /plugs responses", async () => {
+    const instance = khotan({
+      adapter,
+      plugs: [
+        {
+          name: "stripe",
+          plug: {
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+            get: vi.fn(),
+            post: vi.fn(),
+            put: vi.fn(),
+            patch: vi.fn(),
+            delete: vi.fn(),
+          },
+        },
+      ],
+    });
+
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    expect(data[0]).toMatchObject({
+      name: "stripe",
+      varsConfigured: false,
+    });
+  });
+
+  it("seeds default variable values into storage on init", async () => {
+    const instance = khotan({
+      adapter,
+      secret: "test-secret",
+      plugs: [
+        {
+          name: "stripe",
+          plug: {
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+            get: vi.fn(),
+            post: vi.fn(),
+            put: vi.fn(),
+            patch: vi.fn(),
+            delete: vi.fn(),
+            varFields: [
+              {
+                key: "region",
+                label: "Region",
+                type: "text",
+                defaultValue: "au",
+                required: false,
+              },
+              {
+                key: "apiKey",
+                label: "API Key",
+                type: "password",
+                secret: true,
+                defaultValue: "seed-secret",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    await instance.init();
+
+    await expect(instance.getVars("stripe")).resolves.toEqual({
+      region: "au",
+      apiKey: "seed-secret",
+    });
+
+    const res = await instance.handler(makeRequest("/api/khotan/variables/stripe"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toMatchObject({
+      configured: true,
+      values: {
+        region: "au",
+        apiKey: "••••••••",
+      },
+    });
+  });
+
+  it("merges variable updates so omitted secrets are preserved", async () => {
+    const instance = khotan({
+      adapter,
+      secret: "test-secret",
+      plugs: [
+        {
+          name: "stripe",
+          plug: {
+            baseUrl: "https://api.stripe.com",
+            authType: "bearer",
+            get: vi.fn(),
+            post: vi.fn(),
+            put: vi.fn(),
+            patch: vi.fn(),
+            delete: vi.fn(),
+            varFields: [
+              {
+                key: "apiKey",
+                label: "API Key",
+                type: "password",
+                secret: true,
+              },
+              {
+                key: "orgId",
+                label: "Org ID",
+                type: "text",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    await instance.init();
+    await instance.setVars("stripe", {
+      apiKey: "existing-secret",
+      orgId: "old-org",
+    });
+
+    const saveRes = await instance.handler(
+      makeRequest("/api/khotan/variables/stripe", "POST", {
+        orgId: "new-org",
+      }),
+    );
+    expect(saveRes.status).toBe(200);
+
+    await expect(instance.getVars("stripe")).resolves.toEqual({
+      apiKey: "existing-secret",
+      orgId: "new-org",
+    });
+
+    const res = await instance.handler(makeRequest("/api/khotan/variables/stripe"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.values).toMatchObject({
+      apiKey: "••••••••",
+      orgId: "new-org",
+    });
+  });
+
+  it("serializes nested response schemas in debug metadata", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+              endpoints: {
+                listProducts: {
+                  method: "GET",
+                  path: "/products",
+                  responses: {
+                    200: z.object({
+                      data: z.object({
+                        items: z.array(
+                          z.object({
+                            id: z.string(),
+                            name: z.string(),
+                          }),
+                        ),
+                      }),
+                    }),
+                  },
+                },
+              },
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/debug/stripe"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.endpoints.listProducts.responses["200"]).toEqual({
+        data: {
+          items: {
+            _type: "array",
+            items: {
+              id: "string",
+              name: "string",
+            },
+          },
+        },
+      });
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+
+  it("serializes v4-style schema defs in debug metadata", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const v4StyleBodySchema = {
+        _def: {
+          type: "object",
+          shape: {
+            partnershipId: { _def: { type: "string" } },
+            status: { _def: { type: "enum", entries: { draft: "draft", accepted: "accepted" } } },
+            totalAmount: { _def: { type: "number" } },
+            notes: { _def: { type: "optional", innerType: { _def: { type: "string" } } } },
+            lines: {
+              _def: {
+                type: "array",
+                element: {
+                  _def: {
+                    type: "object",
+                    shape: {
+                      quantity: { _def: { type: "number" } },
+                      description: { _def: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "pollinate",
+            plug: {
+              baseUrl: "https://api.pollinate.tech",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+              endpoints: {
+                createOrder: {
+                  method: "POST",
+                  path: "/orders",
+                  body: v4StyleBodySchema,
+                },
+              },
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(makeRequest("/api/khotan/debug/pollinate"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.endpoints.createOrder.body).toEqual({
+        partnershipId: "string",
+        status: "\"draft\" | \"accepted\"",
+        totalAmount: "number",
+        notes: "string?",
+        lines: {
+          _type: "array",
+          items: {
+            quantity: "number",
+            description: "string",
+          },
+        },
+      });
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+
+  it("includes endpoint metadata when path matches typed endpoint", async () => {
+    const originalEnv = process.env["KHOTAN_DEBUG"];
+    process.env["KHOTAN_DEBUG"] = "1";
+    try {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(async () => []),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            endpoints: {
+              listProducts: { method: "GET", path: "/products" },
+              createCharge: { method: "POST", path: "/charges" },
+            },
+          },
+        ],
+      });
+
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/stripe", "POST", {
+          method: "GET",
+          path: "/products",
+        }),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.endpoint).toEqual({
+        name: "listProducts",
+        method: "GET",
+        path: "/products",
+      });
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env["KHOTAN_DEBUG"] = originalEnv;
+      } else {
+        delete process.env["KHOTAN_DEBUG"];
+      }
+    }
+  });
+});
+
 describe("toNextJsHandler", () => {
   it("wraps handler into GET/POST/PUT/PATCH/DELETE exports", () => {
     const mockHandler = vi.fn(async () => Response.json({ ok: true }));
@@ -979,7 +1925,7 @@ describe("toNextJsHandler", () => {
     );
     const handlers = toNextJsHandler(mockHandler);
 
-    const req = new Request("http://localhost/api/khotan/syncs/1/trigger", {
+    const req = new Request("http://localhost/api/khotan/flows/1/runs", {
       method: "POST",
     });
     const res = await handlers.POST(req);

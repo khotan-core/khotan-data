@@ -62,6 +62,18 @@ export default defineConfig([
         path.resolve(templatesDir, "hub.tsx"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "logs.tsx"),
+        path.resolve(templatesDir, "logs.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "runs-table.tsx"),
+        path.resolve(templatesDir, "runs-table.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "webhook-events-table.tsx"),
+        path.resolve(templatesDir, "webhook-events-table.tsx"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "khotan-route.ts"),
         path.resolve(templatesDir, "khotan-route.ts"),
       );
@@ -80,6 +92,86 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "var-panel.tsx"),
         path.resolve(templatesDir, "var-panel.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "plug-debugger.tsx"),
+        path.resolve(templatesDir, "plug-debugger.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "debug-index-page.tsx"),
+        path.resolve(templatesDir, "debug-index-page.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "debug-page.tsx"),
+        path.resolve(templatesDir, "debug-page.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "logs-page.tsx"),
+        path.resolve(templatesDir, "logs-page.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "catch.ts"),
+        path.resolve(templatesDir, "catch.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "catch.example.ts"),
+        path.resolve(templatesDir, "catch.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "pass.ts"),
+        path.resolve(templatesDir, "pass.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "pass.example.ts"),
+        path.resolve(templatesDir, "pass.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "inflow.ts"),
+        path.resolve(templatesDir, "inflow.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "inflow.example.ts"),
+        path.resolve(templatesDir, "inflow.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "outflow.ts"),
+        path.resolve(templatesDir, "outflow.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "outflow.example.ts"),
+        path.resolve(templatesDir, "outflow.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "relay.ts"),
+        path.resolve(templatesDir, "relay.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "relay.example.ts"),
+        path.resolve(templatesDir, "relay.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "agent-skill.md"),
+        path.resolve(templatesDir, "agent-skill.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-setup.md"),
+        path.resolve(templatesDir, "skill-setup.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-plug.md"),
+        path.resolve(templatesDir, "skill-plug.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-dashboard.md"),
+        path.resolve(templatesDir, "skill-dashboard.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-webhook.md"),
+        path.resolve(templatesDir, "skill-webhook.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "agents.md"),
+        path.resolve(templatesDir, "agents.md"),
       );
     },
   },

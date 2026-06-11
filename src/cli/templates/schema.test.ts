@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { getTableName } from "drizzle-orm";
 import {
   khotanPlugs,
-  khotanSyncs,
+  khotanFlows,
   khotanRuns,
   khotanPlugsRelations,
-  khotanSyncsRelations,
+  khotanFlowsRelations,
   khotanRunsRelations,
 } from "./schema.js";
 import type {
   KhotanPlug,
   NewKhotanPlug,
-  KhotanSync,
-  NewKhotanSync,
+  KhotanFlow,
+  NewKhotanFlow,
   KhotanRun,
   NewKhotanRun,
 } from "./schema.js";
@@ -26,9 +26,9 @@ describe("schema template", () => {
       expect(getTableName(khotanPlugs)).toBe("khotan_plugs");
     });
 
-    it("exports khotanSyncs table", () => {
-      expect(khotanSyncs).toBeDefined();
-      expect(getTableName(khotanSyncs)).toBe("khotan_syncs");
+    it("exports khotanFlows table", () => {
+      expect(khotanFlows).toBeDefined();
+      expect(getTableName(khotanFlows)).toBe("khotan_flows");
     });
 
     it("exports khotanRuns table", () => {
@@ -47,21 +47,22 @@ describe("schema template", () => {
       expect(columns).toContain("enabled");
       expect(columns).toContain("status");
       expect(columns).toContain("statusMessage");
-      expect(columns).toContain("encryptedCredentials");
+      expect(columns).toContain("encryptedVars");
       expect(columns).toContain("createdAt");
       expect(columns).toContain("updatedAt");
     });
   });
 
-  describe("khotanSyncs columns", () => {
+  describe("khotanFlows columns", () => {
     it("has all required columns", () => {
-      const columns = Object.keys(khotanSyncs);
+      const columns = Object.keys(khotanFlows);
       expect(columns).toContain("id");
       expect(columns).toContain("plugId");
       expect(columns).toContain("name");
       expect(columns).toContain("type");
       expect(columns).toContain("enabled");
       expect(columns).toContain("schedule");
+      expect(columns).toContain("resourceId");
       expect(columns).toContain("lastRunAt");
       expect(columns).toContain("lastRunStatus");
       expect(columns).toContain("createdAt");
@@ -73,7 +74,7 @@ describe("schema template", () => {
     it("has all required columns", () => {
       const columns = Object.keys(khotanRuns);
       expect(columns).toContain("id");
-      expect(columns).toContain("syncId");
+      expect(columns).toContain("flowId");
       expect(columns).toContain("runType");
       expect(columns).toContain("status");
       expect(columns).toContain("startedAt");
@@ -95,8 +96,8 @@ describe("schema template", () => {
       expect(khotanPlugsRelations).toBeDefined();
     });
 
-    it("exports syncs relations", () => {
-      expect(khotanSyncsRelations).toBeDefined();
+    it("exports flows relations", () => {
+      expect(khotanFlowsRelations).toBeDefined();
     });
 
     it("exports runs relations", () => {
@@ -112,11 +113,11 @@ describe("schema template", () => {
       expect(_newPlug).toBeDefined();
     });
 
-    it("KhotanSync and NewKhotanSync types exist", () => {
-      const _sync: KhotanSync = {} as KhotanSync;
-      const _newSync: NewKhotanSync = {} as NewKhotanSync;
-      expect(_sync).toBeDefined();
-      expect(_newSync).toBeDefined();
+    it("KhotanFlow and NewKhotanFlow types exist", () => {
+      const _flow: KhotanFlow = {} as KhotanFlow;
+      const _newFlow: NewKhotanFlow = {} as NewKhotanFlow;
+      expect(_flow).toBeDefined();
+      expect(_newFlow).toBeDefined();
     });
 
     it("KhotanRun and NewKhotanRun types exist", () => {

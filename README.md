@@ -16,8 +16,11 @@ npx khotan init
 npx khotan init --full
 
 # Add components (reusable building blocks — never create pages)
-npx khotan add schema    # Drizzle table definitions (plugs, syncs, runs, resources, mappings)
+npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
 npx khotan add plug      # Fetch wrapper with auth, retry, pagination
+npx khotan add inflow    # Workflow-backed flow for pulling data in
+npx khotan add outflow   # Workflow-backed flow for pushing data out
+npx khotan add relay     # Workflow-backed flow for moving data between plugs
 npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
 
 # Add blocks (sample pages composed from components)
@@ -30,11 +33,13 @@ npx khotan add hub --yes        # Auto-accept dependency install prompts
 
 ## Factory (Runtime Engine)
 
-Register plugs, syncs, and resources — the factory upserts them on boot and serves a REST API:
+Register plugs, flows, and resources — the factory upserts them on boot and serves a REST API:
 
 ```typescript
 import { khotan, drizzleAdapter, toNextJsHandler } from "khotan-data/factory";
 import { db } from "@/db";
+import { shopifyPlug } from "@/lib/khotan/plugs/shopify";
+import { shopifyProductsInflow } from "@/lib/khotan/flows/shopify-products";
 
 const khotanData = khotan({
   adapter: drizzleAdapter(db),
@@ -44,10 +49,9 @@ const khotanData = khotan({
   plugs: [
     {
       name: "shopify",
-      baseUrl: "https://myshop.myshopify.com/admin/api",
-      authType: "bearer",
-      syncs: [
-        { name: "products-inflow", type: "inflow", resource: "products" },
+      plug: shopifyPlug,
+      flows: [
+        shopifyProductsInflow,
       ],
     },
   ],
@@ -55,6 +59,11 @@ const khotanData = khotan({
 
 // Next.js App Router: app/api/khotan/[...all]/route.ts
 export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler);
+
+// Start a flow through Khotan so run tracking + Workflow IDs are recorded
+await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
+  runType: "delta",
+});
 ```
 
 ## Install
