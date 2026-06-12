@@ -137,8 +137,9 @@ function createMockAdapter(): KhotanAdapter {
       return [...plugStore.values()].map((p) => ({
         ...p,
         status: "idle",
-        flowCount: [...flowStore.values()].filter((flow) => flow.plugId === p.id)
-          .length,
+        flowCount: [...flowStore.values()].filter(
+          (flow) => flow.plugId === p.id,
+        ).length,
       }));
     }),
 
@@ -174,24 +175,33 @@ function createMockAdapter(): KhotanAdapter {
       return runStore.get(runId) ?? null;
     }),
 
-    listRunsPage: vi.fn(async ({ limit, offset }: { limit: number; offset: number }) => {
-      const rows = [...runStore.values()]
-        .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
-        .slice(offset, offset + limit + 1);
-      return {
-        items: rows.slice(0, limit).map((run) => ({
-          ...run,
-          sourceType: run.flowId ? "flow" : run.webhookHandlerId ? "webhook" : "unknown",
-          sourceName: run.flowId ? flowStore.get(run.flowId)?.name ?? null : null,
-          sourceKind: null,
-          plugName:
-            run.flowId && flowStore.get(run.flowId)
-              ? plugStore.get(flowStore.get(run.flowId)!.plugId)?.name ?? null
+    listRunsPage: vi.fn(
+      async ({ limit, offset }: { limit: number; offset: number }) => {
+        const rows = [...runStore.values()]
+          .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+          .slice(offset, offset + limit + 1);
+        return {
+          items: rows.slice(0, limit).map((run) => ({
+            ...run,
+            sourceType: run.flowId
+              ? "flow"
+              : run.webhookHandlerId
+                ? "webhook"
+                : "unknown",
+            sourceName: run.flowId
+              ? (flowStore.get(run.flowId)?.name ?? null)
               : null,
-        })),
-        hasMore: rows.length > limit,
-      };
-    }),
+            sourceKind: null,
+            plugName:
+              run.flowId && flowStore.get(run.flowId)
+                ? (plugStore.get(flowStore.get(run.flowId)!.plugId)?.name ??
+                  null)
+                : null,
+          })),
+          hasMore: rows.length > limit,
+        };
+      },
+    ),
 
     upsertResource: vi.fn(async (resource) => {
       const existing = [...resourceStore.values()].find(
@@ -215,8 +225,9 @@ function createMockAdapter(): KhotanAdapter {
     listResources: vi.fn(async () => {
       return [...resourceStore.values()].map((r) => ({
         ...r,
-        flowCount: [...flowStore.values()].filter((flow) => flow.resourceId === r.id)
-          .length,
+        flowCount: [...flowStore.values()].filter(
+          (flow) => flow.resourceId === r.id,
+        ).length,
         mappingCount: [...mappingStore.values()].filter(
           (m) => m.resourceId === r.id,
         ).length,
@@ -228,7 +239,9 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     getResourceFlows: vi.fn(async (resourceId: string) => {
-      return [...flowStore.values()].filter((flow) => flow.resourceId === resourceId);
+      return [...flowStore.values()].filter(
+        (flow) => flow.resourceId === resourceId,
+      );
     }),
 
     upsertMapping: vi.fn(async (mapping) => {
@@ -364,23 +377,26 @@ function createMockAdapter(): KhotanAdapter {
       return { id };
     }),
 
-    listWebhookEventsPage: vi.fn(async ({ limit, offset }: { limit: number; offset: number }) => {
-      const rows = [...webhookEventStore.values()]
-        .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
-        .slice(offset, offset + limit + 1);
-      return {
-        items: rows.slice(0, limit).map((event) => ({
-          ...event,
-          handlerName: null,
-          handlerType: null,
-          plugName: null,
-          workflowRunId: runStore.get(event.khotanRunId)?.workflowRunId ?? null,
-          runStatus: runStore.get(event.khotanRunId)?.status ?? null,
-          runStartedAt: runStore.get(event.khotanRunId)?.startedAt ?? null,
-        })),
-        hasMore: rows.length > limit,
-      };
-    }),
+    listWebhookEventsPage: vi.fn(
+      async ({ limit, offset }: { limit: number; offset: number }) => {
+        const rows = [...webhookEventStore.values()]
+          .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
+          .slice(offset, offset + limit + 1);
+        return {
+          items: rows.slice(0, limit).map((event) => ({
+            ...event,
+            handlerName: null,
+            handlerType: null,
+            plugName: null,
+            workflowRunId:
+              runStore.get(event.khotanRunId)?.workflowRunId ?? null,
+            runStatus: runStore.get(event.khotanRunId)?.status ?? null,
+            runStartedAt: runStore.get(event.khotanRunId)?.startedAt ?? null,
+          })),
+          hasMore: rows.length > limit,
+        };
+      },
+    ),
 
     updateFlowLastRun: vi.fn(async (flowId, updates) => {
       const flow = flowStore.get(flowId);
@@ -710,7 +726,9 @@ describe("khotan factory", () => {
         status: "running",
       });
 
-      const res = await instance.handler(makeRequest("/api/khotan/runs?limit=2"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/runs?limit=2"),
+      );
       expect(res.status).toBe(200);
 
       const data = await res.json();
@@ -1107,9 +1125,13 @@ describe("khotan factory", () => {
       });
 
       await flowInstance.init();
-      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
 
-      const res = await flowInstance.handler(makeRequest("/api/khotan/runs/run-1"));
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/runs/run-1"),
+      );
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toMatchObject({
         id: "run-1",
@@ -1159,7 +1181,9 @@ describe("khotan factory", () => {
       });
 
       await flowInstance.init();
-      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
 
       const res = await flowInstance.handler(
         makeRequest("/api/khotan/runs/run-1/stream?startIndex=-50"),
@@ -1199,7 +1223,9 @@ describe("khotan factory", () => {
       });
 
       await flowInstance.init();
-      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
 
       const res = await flowInstance.handler(
         makeRequest("/api/khotan/runs/run-1/cancel", "POST"),
@@ -1220,9 +1246,12 @@ describe("khotan factory", () => {
 
     it("POST /api/khotan/flows/:id/runs reconciles cancelled workflow runs", async () => {
       const workflow = vi.fn(async () => undefined);
-      const cancelError = Object.assign(new Error("Workflow run was cancelled"), {
-        name: "WorkflowRunCancelledError",
-      });
+      const cancelError = Object.assign(
+        new Error("Workflow run was cancelled"),
+        {
+          name: "WorkflowRunCancelledError",
+        },
+      );
       const returnValue = Promise.reject(cancelError);
       __setWorkflowStartForTests(
         vi.fn(async () => ({
@@ -1251,7 +1280,9 @@ describe("khotan factory", () => {
       });
 
       await flowInstance.init();
-      await flowInstance.handler(makeRequest("/api/khotan/flows/flow-1/runs", "POST"));
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
       await returnValue.catch(() => undefined);
       await waitForBackgroundTasks();
 
@@ -1433,7 +1464,12 @@ describe("khotan factory", () => {
 
       expect(res.status).toBe(500);
       const data = await res.json();
-      expect(data).toMatchObject({ id: "run-1", flowId: "flow-1", status: "failed", error: "boom" });
+      expect(data).toMatchObject({
+        id: "run-1",
+        flowId: "flow-1",
+        status: "failed",
+        error: "boom",
+      });
       expect(adapter.updateRun).toHaveBeenCalledWith(
         "run-1",
         expect.objectContaining({
@@ -1952,7 +1988,10 @@ describe("debug route", () => {
       expect(data.body).toEqual({ products: [{ id: "p1" }] });
       expect(typeof data.timing).toBe("number");
       expect(data.timing).toBeGreaterThanOrEqual(0);
-      expect(mockGet).toHaveBeenCalledWith("/products", expect.objectContaining({ params: { limit: "10" } }));
+      expect(mockGet).toHaveBeenCalledWith(
+        "/products",
+        expect.objectContaining({ params: { limit: "10" } }),
+      );
     } finally {
       if (originalEnv !== undefined) {
         process.env["KHOTAN_DEBUG"] = originalEnv;
@@ -1970,7 +2009,9 @@ describe("debug route", () => {
         status: 401,
         body: { message: "Invalid API key" },
       });
-      const mockGet = vi.fn(async () => { throw error; });
+      const mockGet = vi.fn(async () => {
+        throw error;
+      });
       const instance = khotan({
         adapter,
         plugs: [
@@ -2122,7 +2163,9 @@ describe("debug route", () => {
       apiKey: "seed-secret",
     });
 
-    const res = await instance.handler(makeRequest("/api/khotan/variables/stripe"));
+    const res = await instance.handler(
+      makeRequest("/api/khotan/variables/stripe"),
+    );
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toMatchObject({
@@ -2185,7 +2228,9 @@ describe("debug route", () => {
       orgId: "new-org",
     });
 
-    const res = await instance.handler(makeRequest("/api/khotan/variables/stripe"));
+    const res = await instance.handler(
+      makeRequest("/api/khotan/variables/stripe"),
+    );
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.values).toMatchObject({
@@ -2234,7 +2279,9 @@ describe("debug route", () => {
         ],
       });
 
-      const res = await instance.handler(makeRequest("/api/khotan/debug/stripe"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/stripe"),
+      );
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.endpoints.listProducts.responses["200"]).toEqual({
@@ -2266,9 +2313,19 @@ describe("debug route", () => {
           type: "object",
           shape: {
             partnershipId: { _def: { type: "string" } },
-            status: { _def: { type: "enum", entries: { draft: "draft", accepted: "accepted" } } },
+            status: {
+              _def: {
+                type: "enum",
+                entries: { draft: "draft", accepted: "accepted" },
+              },
+            },
             totalAmount: { _def: { type: "number" } },
-            notes: { _def: { type: "optional", innerType: { _def: { type: "string" } } } },
+            notes: {
+              _def: {
+                type: "optional",
+                innerType: { _def: { type: "string" } },
+              },
+            },
             lines: {
               _def: {
                 type: "array",
@@ -2312,12 +2369,14 @@ describe("debug route", () => {
         ],
       });
 
-      const res = await instance.handler(makeRequest("/api/khotan/debug/pollinate"));
+      const res = await instance.handler(
+        makeRequest("/api/khotan/debug/pollinate"),
+      );
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.endpoints.createOrder.body).toEqual({
         partnershipId: "string",
-        status: "\"draft\" | \"accepted\"",
+        status: '"draft" | "accepted"',
         totalAmount: "number",
         notes: "string?",
         lines: {

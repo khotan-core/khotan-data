@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createPlugClient, defineContract, type PlugLike } from "./plug-client.js";
+import {
+  createPlugClient,
+  defineContract,
+  type PlugLike,
+} from "./plug-client.js";
 
 function createMockPlug(
   response: unknown = { id: "1", name: "Widget" },
-): PlugLike & { calls: Array<{ method: string; path: string; options?: unknown }> } {
+): PlugLike & {
+  calls: Array<{ method: string; path: string; options?: unknown }>;
+} {
   const calls: Array<{ method: string; path: string; options?: unknown }> = [];
   return {
     calls,
@@ -195,7 +201,10 @@ describe("createPlugClient — response validation", () => {
 
     const result = await client.getProduct({ params: { id: "abc" } });
 
-    expect(result).toEqual({ status: 200, body: { id: "abc", name: "Widget" } });
+    expect(result).toEqual({
+      status: 200,
+      body: { id: "abc", name: "Widget" },
+    });
   });
 
   it("strips unknown fields from response (Zod default)", async () => {
@@ -209,7 +218,9 @@ describe("createPlugClient — response validation", () => {
     const result = await client.getProduct({ params: { id: "abc" } });
 
     expect(result.body).toEqual({ id: "abc", name: "Widget" });
-    expect((result.body as Record<string, unknown>)["extraField"]).toBeUndefined();
+    expect(
+      (result.body as Record<string, unknown>)["extraField"],
+    ).toBeUndefined();
   });
 
   it("throws ZodError when response is invalid", async () => {
@@ -274,9 +285,9 @@ describe("createPlugClient — status-code-aware responses", () => {
     const plug = createErrorPlug(500, "internal error");
     const client = createPlugClient(testContract, plug);
 
-    await expect(
-      client.getProduct({ params: { id: "abc" } }),
-    ).rejects.toThrow("Request failed with 500");
+    await expect(client.getProduct({ params: { id: "abc" } })).rejects.toThrow(
+      "Request failed with 500",
+    );
   });
 });
 

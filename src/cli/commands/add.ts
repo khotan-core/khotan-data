@@ -23,10 +23,7 @@ import {
   installPackages,
   installShadcnComponents,
 } from "../deps.js";
-import {
-  installSkills,
-  type SkillDefinition,
-} from "../agent-detect.js";
+import { installSkills, type SkillDefinition } from "../agent-detect.js";
 import { ensureWorkflowNextConfig } from "../next-config.js";
 
 async function loadConfig(): Promise<{ outputDir: string } | null> {
@@ -217,7 +214,10 @@ export const addCommand = new Command("add")
   .option("-y, --yes", "Auto-accept all install prompts")
   .option("--without-ui", "Skip UI component scaffolding")
   .action(
-    async (componentName: string, opts: { force?: boolean; yes?: boolean; withoutUi?: boolean }) => {
+    async (
+      componentName: string,
+      opts: { force?: boolean; yes?: boolean; withoutUi?: boolean },
+    ) => {
       let config = await loadConfig();
 
       if (!config) {
@@ -301,11 +301,7 @@ export const addCommand = new Command("add")
         if (opts.withoutUi) {
           delete deps.shadcnComponents;
         }
-        await checkAndInstallDeps(
-          cwd,
-          deps,
-          opts.yes ?? false,
-        );
+        await checkAndInstallDeps(cwd, deps, opts.yes ?? false);
       }
 
       // shadcn detection for components that require it
@@ -366,12 +362,20 @@ export const addCommand = new Command("add")
             const baseDir = resolveOutputBase(file, cwd, config.outputDir);
             const outputPath = path.join(baseDir, file.outputFile);
             const routeDir = path.dirname(outputPath);
-            const pageExtensions = ["page.tsx", "page.ts", "page.jsx", "page.js"];
+            const pageExtensions = [
+              "page.tsx",
+              "page.ts",
+              "page.jsx",
+              "page.js",
+            ];
             const existing = pageExtensions.find((ext) =>
               fs.existsSync(path.join(routeDir, ext)),
             );
             if (existing && existing !== path.basename(file.outputFile)) {
-              const relRoute = path.relative(cwd, path.join(routeDir, existing));
+              const relRoute = path.relative(
+                cwd,
+                path.join(routeDir, existing),
+              );
               console.warn(
                 `\n⚠ Route collision: ${relRoute} already exists at this path.`,
               );
@@ -584,19 +588,17 @@ export const addCommand = new Command("add")
         const importBase = config.outputDir.replace(/^src\//, "@/");
         if (componentName === "wire") {
           console.log(`\nUsage:\n`);
-          console.log(
-            `  import { wire } from "${importBase}/wire";`,
-          );
-          console.log(
-            `  import { myPlug } from "${importBase}/plugs/plug";`,
-          );
+          console.log(`  import { wire } from "${importBase}/wire";`);
+          console.log(`  import { myPlug } from "${importBase}/plugs/plug";`);
           console.log(`  import { db } from "@/db";\n`);
           console.log(`  const myWire = wire({`);
           console.log(`    plug: myPlug,`);
           console.log(`    db,`);
           console.log(`    subscribe: {`);
           console.log(`      path: "/webhooks",`);
-          console.log(`      buildBody: (callbackUrl) => ({ url: callbackUrl, events: ["*"] }),`);
+          console.log(
+            `      buildBody: (callbackUrl) => ({ url: callbackUrl, events: ["*"] }),`,
+          );
           console.log(`      parseId: (res) => (res as { id: string }).id,`);
           console.log(`    },`);
           console.log(`    unsubscribe: {`);

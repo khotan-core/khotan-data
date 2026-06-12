@@ -212,7 +212,11 @@ function normalizeRuns(value: unknown): RunRecord[] {
     return value as RunRecord[];
   }
 
-  if (value && typeof value === "object" && Array.isArray((value as RunPageResponse).items)) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as RunPageResponse).items)
+  ) {
     return (value as RunPageResponse).items ?? [];
   }
 
@@ -238,7 +242,12 @@ function runKey(run: RunRecord): string | null {
     return `flow:${run.plugName}:${run.sourceName}`;
   }
 
-  if (run.sourceType === "webhook" && run.sourceName && run.sourceKind && run.plugName) {
+  if (
+    run.sourceType === "webhook" &&
+    run.sourceName &&
+    run.sourceKind &&
+    run.plugName
+  ) {
     return `webhook:${run.plugName}:${run.sourceKind}:${run.sourceName}`;
   }
 
@@ -324,7 +333,9 @@ function buildTopologyModel(snapshot: TopologySnapshot): TopologyModel {
   const runningRuns = buildRunningRunSet(snapshot.runs);
   const plugs = sortByName(snapshot.plugs);
   const flows = [...snapshot.flows].sort((a, b) =>
-    `${a.plugName ?? ""}:${a.name}`.localeCompare(`${b.plugName ?? ""}:${b.name}`),
+    `${a.plugName ?? ""}:${a.name}`.localeCompare(
+      `${b.plugName ?? ""}:${b.name}`,
+    ),
   );
   const webhookHandlers = [...snapshot.webhookHandlers].sort((a, b) =>
     `${a.plugName}:${a.type}:${a.name}`.localeCompare(
@@ -495,7 +506,9 @@ function buildTopologyModel(snapshot: TopologySnapshot): TopologyModel {
       lane: "webhook",
       label: handler.name,
       subtitle: WEBHOOK_TYPE_LABEL[handler.type],
-      detail: handler.events?.length ? handler.events.join(", ") : "wire events",
+      detail: handler.events?.length
+        ? handler.events.join(", ")
+        : "wire events",
       health,
       muted: !handler.enabled,
       ownerPlugId: sourcePlug.id,
@@ -548,7 +561,8 @@ function buildTopologyModel(snapshot: TopologySnapshot): TopologyModel {
       category: "plug",
       lane: "destination",
       label: "Destination unavailable",
-      subtitle: "Pass target could not be resolved from the current plug registry",
+      subtitle:
+        "Pass target could not be resolved from the current plug registry",
       detail: handler.destinationPlugId ?? "configure a destination plug",
       health: "idle",
       muted: true,
@@ -590,7 +604,10 @@ function buildTopologyModel(snapshot: TopologySnapshot): TopologyModel {
 }
 
 function arraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function createDefaultFilters(model: TopologyModel): TopologyFilters {
@@ -610,16 +627,14 @@ function reconcileFilters(
   if (!current) return defaults;
 
   const next: TopologyFilters = {
-    plugIds: current.plugIds.filter((id) =>
-      defaults.plugIds.includes(id),
-    ),
-    flowIds: current.flowIds.filter((id) =>
-      defaults.flowIds.includes(id),
-    ),
+    plugIds: current.plugIds.filter((id) => defaults.plugIds.includes(id)),
+    flowIds: current.flowIds.filter((id) => defaults.flowIds.includes(id)),
     webhookIds: current.webhookIds.filter((id) =>
       defaults.webhookIds.includes(id),
     ),
-    healths: current.healths.filter((value) => defaults.healths.includes(value)),
+    healths: current.healths.filter((value) =>
+      defaults.healths.includes(value),
+    ),
   };
 
   if (next.plugIds.length === 0 && defaults.plugIds.length > 0) {
@@ -698,11 +713,7 @@ function reconcileNodes(
 function buildEdgeStyle(edge: GraphEdgeModel): CSSProperties {
   return {
     strokeWidth:
-      edge.health === "failed"
-        ? 2.7
-        : edge.health === "active"
-          ? 2.35
-          : 1.7,
+      edge.health === "failed" ? 2.7 : edge.health === "active" ? 2.35 : 1.7,
     stroke:
       edge.health === "failed"
         ? "#ef4444"
@@ -751,7 +762,11 @@ function buildReactFlowGraph(
       continue;
     }
 
-    if (node.category === "plug" && !node.isVirtual && selectedPlugIds.has(node.entityId)) {
+    if (
+      node.category === "plug" &&
+      !node.isVirtual &&
+      selectedPlugIds.has(node.entityId)
+    ) {
       visibleNodeIds.add(node.id);
     }
   }
@@ -782,7 +797,9 @@ function buildReactFlowGraph(
     visibleNodeIds.add(edge.target);
   }
 
-  const visibleNodes = model.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const visibleNodes = model.nodes.filter((node) =>
+    visibleNodeIds.has(node.id),
+  );
   const laidOutNodes = layoutNodes(visibleNodes);
   const edges: Edge[] = visibleEdges.map((edge) => {
     const style = buildEdgeStyle(edge);
@@ -818,8 +835,10 @@ function buildReactFlowGraph(
       visibleNodes: visibleNodes.length,
       totalNodes: model.nodes.filter((node) => !node.isVirtual).length,
       visibleEdges: visibleEdges.length,
-      activeNodes: visibleNodes.filter((node) => node.health === "active").length,
-      failedNodes: visibleNodes.filter((node) => node.health === "failed").length,
+      activeNodes: visibleNodes.filter((node) => node.health === "active")
+        .length,
+      failedNodes: visibleNodes.filter((node) => node.health === "failed")
+        .length,
     },
     hasAnyConfiguredTopology:
       model.filters.plugs.length > 0 &&
@@ -884,8 +903,12 @@ function FilterDropdown({
                   className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900"
                 />
                 <span className="min-w-0">
-                  <span className="block text-xs font-medium text-slate-800">{option.label}</span>
-                  <span className="block text-[11px] text-slate-500">{option.hint}</span>
+                  <span className="block text-xs font-medium text-slate-800">
+                    {option.label}
+                  </span>
+                  <span className="block text-[11px] text-slate-500">
+                    {option.hint}
+                  </span>
                 </span>
               </label>
             );
@@ -969,7 +992,9 @@ function TopologyNode({ data }: NodeProps<TopologyNodeData>) {
 
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="text-sm font-semibold text-slate-950">{data.label}</div>
+          <div className="text-sm font-semibold text-slate-950">
+            {data.label}
+          </div>
           <div className="text-xs text-slate-500">{data.subtitle}</div>
         </div>
         <div
@@ -984,7 +1009,10 @@ function TopologyNode({ data }: NodeProps<TopologyNodeData>) {
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Badge variant="outline" className="border-slate-200 bg-white/70 text-slate-600">
+        <Badge
+          variant="outline"
+          className="border-slate-200 bg-white/70 text-slate-600"
+        >
           {CATEGORY_LABEL[data.category]}
         </Badge>
         <Badge
@@ -1000,7 +1028,10 @@ function TopologyNode({ data }: NodeProps<TopologyNodeData>) {
           {HEALTH_LABEL[data.health]}
         </Badge>
         {data.muted ? (
-          <Badge variant="outline" className="border-slate-200 bg-white/70 text-slate-500">
+          <Badge
+            variant="outline"
+            className="border-slate-200 bg-white/70 text-slate-500"
+          >
             Disabled
           </Badge>
         ) : null}
@@ -1159,8 +1190,8 @@ function TopologyCanvasInner() {
         <CardContent className="space-y-3 text-sm">
           <p className="text-red-600">{error}</p>
           <p className="text-slate-500">
-            Make sure the catch-all Khotan route is mounted and your dev server is
-            running.
+            Make sure the catch-all Khotan route is mounted and your dev server
+            is running.
           </p>
         </CardContent>
       </Card>
@@ -1186,8 +1217,8 @@ function TopologyCanvasInner() {
             then refresh this page.
           </p>
           <p>
-            Webhook handlers will appear automatically once a plug has a configured
-            wire plus catch/pass registrations.
+            Webhook handlers will appear automatically once a plug has a
+            configured wire plus catch/pass registrations.
           </p>
         </CardContent>
       </Card>
@@ -1199,19 +1230,34 @@ function TopologyCanvasInner() {
       <CardHeader className="border-b border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.74))] pb-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Badge variant="outline" className="border-slate-200 bg-white/90 text-slate-600">
+            <Badge
+              variant="outline"
+              className="border-slate-200 bg-white/90 text-slate-600"
+            >
               Polling every {POLL_INTERVAL_MS / 1000}s
             </Badge>
-            <Badge variant="outline" className="border-slate-200 bg-white/90 text-slate-600">
+            <Badge
+              variant="outline"
+              className="border-slate-200 bg-white/90 text-slate-600"
+            >
               Visible {graph.stats.visibleNodes}/{graph.stats.totalNodes}
             </Badge>
-            <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+            <Badge
+              variant="outline"
+              className="border-amber-200 bg-amber-50 text-amber-700"
+            >
               Running {graph.stats.activeNodes}
             </Badge>
-            <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+            <Badge
+              variant="outline"
+              className="border-red-200 bg-red-50 text-red-700"
+            >
               Failed {graph.stats.failedNodes}
             </Badge>
-            <Badge variant="outline" className="border-slate-200 bg-white/90 text-slate-600">
+            <Badge
+              variant="outline"
+              className="border-slate-200 bg-white/90 text-slate-600"
+            >
               Updated {formatTime(lastUpdatedAt)}
             </Badge>
           </div>
@@ -1224,8 +1270,12 @@ function TopologyCanvasInner() {
               onToggle={(id) =>
                 setFilters((current) => {
                   if (!current) return current;
-                  return { ...current, plugIds: toggleValue(current.plugIds, id) };
-                })}
+                  return {
+                    ...current,
+                    plugIds: toggleValue(current.plugIds, id),
+                  };
+                })
+              }
             />
             <FilterDropdown
               label="Flows"
@@ -1234,8 +1284,12 @@ function TopologyCanvasInner() {
               onToggle={(id) =>
                 setFilters((current) => {
                   if (!current) return current;
-                  return { ...current, flowIds: toggleValue(current.flowIds, id) };
-                })}
+                  return {
+                    ...current,
+                    flowIds: toggleValue(current.flowIds, id),
+                  };
+                })
+              }
             />
             <FilterDropdown
               label="Webhook handlers"
@@ -1248,7 +1302,8 @@ function TopologyCanvasInner() {
                     ...current,
                     webhookIds: toggleValue(current.webhookIds, id),
                   };
-                })}
+                })
+              }
             />
             <StatusDropdown
               selected={filters.healths}
@@ -1259,7 +1314,8 @@ function TopologyCanvasInner() {
                     ...current,
                     healths: toggleHealth(current.healths, health),
                   };
-                })}
+                })
+              }
             />
             <button
               type="button"
@@ -1297,7 +1353,8 @@ function TopologyCanvasInner() {
                   border: "1px solid rgba(226,232,240,0.9)",
                 }}
                 nodeColor={(node) => {
-                  const nodeHealth = (node.data as TopologyNodeData | undefined)?.health;
+                  const nodeHealth = (node.data as TopologyNodeData | undefined)
+                    ?.health;
                   if (nodeHealth === "failed") return "#ef4444";
                   if (nodeHealth === "active") return "#f59e0b";
                   return "#64748b";
@@ -1320,8 +1377,8 @@ function TopologyCanvasInner() {
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   Try re-enabling a plug, flow, webhook handler, or status chip.
-                  The graph only shows connected topology that survives the current
-                  filter set.
+                  The graph only shows connected topology that survives the
+                  current filter set.
                 </p>
                 <button
                   type="button"

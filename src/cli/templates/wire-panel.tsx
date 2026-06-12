@@ -31,9 +31,15 @@ interface WirePanelProps {
   webhookUrl?: string;
 }
 
-export function WirePanel({ plugName, label, basePath = "/api/khotan", webhookUrl }: WirePanelProps) {
+export function WirePanel({
+  plugName,
+  label,
+  basePath = "/api/khotan",
+  webhookUrl,
+}: WirePanelProps) {
   const displayName = label ?? plugName;
-  const resolvedWebhookUrl = webhookUrl || (typeof window !== "undefined" ? window.location.origin : "");
+  const resolvedWebhookUrl =
+    webhookUrl || (typeof window !== "undefined" ? window.location.origin : "");
   const [wire, setWire] = useState<WireRecord | null>(null);
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -141,14 +147,18 @@ export function WirePanel({ plugName, label, basePath = "/api/khotan", webhookUr
         <CardTitle className="text-sm font-medium capitalize">
           {displayName} Wire
         </CardTitle>
-        <Badge variant={isActive ? "default" : isPending ? "outline" : "secondary"}>
-          {isActive ? "Connected" : isPending ? "Not Connected" : "Disconnected"}
+        <Badge
+          variant={isActive ? "default" : isPending ? "outline" : "secondary"}
+        >
+          {isActive
+            ? "Connected"
+            : isPending
+              ? "Not Connected"
+              : "Disconnected"}
         </Badge>
       </CardHeader>
       <CardContent className="space-y-3">
-        {error && (
-          <p className="text-sm text-destructive">{error}</p>
-        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         {isActive ? (
           <div className="space-y-2">
@@ -195,11 +205,7 @@ export function WirePanel({ plugName, label, basePath = "/api/khotan", webhookUr
                 {resolvedWebhookUrl}/api/khotan/webhook/{plugName}
               </code>
             </p>
-            <Button
-              size="sm"
-              onClick={handleCreate}
-              disabled={acting}
-            >
+            <Button size="sm" onClick={handleCreate} disabled={acting}>
               {acting ? "Connecting..." : "Connect Webhook"}
             </Button>
           </div>

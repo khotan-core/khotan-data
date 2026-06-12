@@ -37,10 +37,10 @@
 
 ## 7. Test in brs-khotan-connector
 
-- [ ] 7.1 Install Vercel Workflow DevKit in test app
-- [ ] 7.2 Add `onVerify` to the existing `pollinateWire` definition
-- [ ] 7.3 Scaffold catch template: `npx khotan add catch`
-- [ ] 7.4 Create `pollinate-catch.ts` workflow that persists events to a Drizzle table
-- [ ] 7.5 Register `pollinateCatch` in `khotan.ts` on the pollinate plug config
-- [ ] 7.6 Test: send a signed POST to `/api/khotan/webhook/pollinate` and verify event is persisted
-- [ ] 7.7 (Optional) Create a pass workflow forwarding to another plug and verify delivery
+- [x] 7.1 Install Vercel Workflow DevKit in test app
+- [x] 7.2 Add `onVerify` to the existing `pollinateWire` definition
+- [x] 7.3 Scaffold catch template: `npx khotan add catch`
+- [x] 7.4 Create `pollinate-catch.ts` workflow that persists events to a Drizzle table
+- [x] 7.5 Register `pollinateCatch` in `khotan.ts` on the pollinate plug config
+- [x] 7.6 Test: send a signed POST to `/api/khotan/webhook/pollinate` and verify event is persisted
+- [x] 7.7 (Optional) Create a pass workflow forwarding to another plug and verify delivery

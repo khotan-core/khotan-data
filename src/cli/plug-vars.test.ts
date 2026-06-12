@@ -17,9 +17,11 @@ async function runPlugVarsAction(args: string[]) {
       writes.push(typeof chunk === "string" ? chunk : String(chunk));
       return true;
     });
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number) => {
-    throw new Error(`EXIT:${String(code ?? 0)}`);
-  });
+  const exitSpy = vi
+    .spyOn(process, "exit")
+    .mockImplementation((code?: number) => {
+      throw new Error(`EXIT:${String(code ?? 0)}`);
+    });
 
   let thrown: unknown = null;
   try {
@@ -50,7 +52,9 @@ describe("plug vars command", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           configured: true,
-          fields: [{ key: "apiKey", label: "API Key", type: "password", secret: true }],
+          fields: [
+            { key: "apiKey", label: "API Key", type: "password", secret: true },
+          ],
           values: { apiKey: "••••••••" },
         }),
       );
@@ -66,7 +70,9 @@ describe("plug vars command", () => {
       ok: true,
       plugName: "pollinate",
       configured: true,
-      fields: [{ key: "apiKey", label: "API Key", type: "password", secret: true }],
+      fields: [
+        { key: "apiKey", label: "API Key", type: "password", secret: true },
+      ],
       values: { apiKey: "••••••••" },
     });
   });
@@ -103,12 +109,18 @@ describe("plug vars command", () => {
 
   it("lists variable state for all plugs", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }, { name: "shopify" }]))
-      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }, { name: "shopify" }]))
+      .mockResolvedValueOnce(
+        jsonResponse([{ name: "pollinate" }, { name: "shopify" }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ name: "pollinate" }, { name: "shopify" }]),
+      )
       .mockResolvedValueOnce(
         jsonResponse({
           configured: true,
-          fields: [{ key: "apiKey", label: "API Key", type: "password", secret: true }],
+          fields: [
+            { key: "apiKey", label: "API Key", type: "password", secret: true },
+          ],
           values: { apiKey: "••••••••" },
         }),
       )
@@ -133,7 +145,9 @@ describe("plug vars command", () => {
         {
           plugName: "pollinate",
           configured: true,
-          fields: [{ key: "apiKey", label: "API Key", type: "password", secret: true }],
+          fields: [
+            { key: "apiKey", label: "API Key", type: "password", secret: true },
+          ],
           values: { apiKey: "••••••••" },
         },
         {

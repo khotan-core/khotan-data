@@ -17,9 +17,11 @@ async function runWireAction(args: string[]) {
       writes.push(typeof chunk === "string" ? chunk : String(chunk));
       return true;
     });
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number) => {
-    throw new Error(`EXIT:${String(code ?? 0)}`);
-  });
+  const exitSpy = vi
+    .spyOn(process, "exit")
+    .mockImplementation((code?: number) => {
+      throw new Error(`EXIT:${String(code ?? 0)}`);
+    });
 
   let thrown: unknown = null;
   try {
@@ -46,12 +48,25 @@ describe("wire command", () => {
 
   it("lists plug wire state", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }, { name: "shopify" }]))
-      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }, { name: "shopify" }]))
-      .mockResolvedValueOnce(jsonResponse({ wire: { id: "wire_1", status: "active" }, configured: true }))
+      .mockResolvedValueOnce(
+        jsonResponse([{ name: "pollinate" }, { name: "shopify" }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ name: "pollinate" }, { name: "shopify" }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          wire: { id: "wire_1", status: "active" },
+          configured: true,
+        }),
+      )
       .mockResolvedValueOnce(jsonResponse({ wire: null, configured: false }));
 
-    const { parsed, thrown } = await runWireAction(["--list", "--base-path", "/api/khotan"]);
+    const { parsed, thrown } = await runWireAction([
+      "--list",
+      "--base-path",
+      "/api/khotan",
+    ]);
 
     expect(thrown).toBeNull();
     expect(parsed[0]).toEqual({
@@ -76,13 +91,19 @@ describe("wire command", () => {
   it("connects a wire using the khotan catch-all webhook path", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
-      .mockResolvedValueOnce(jsonResponse({
-        wire: {
-          id: "wire_1",
-          callbackUrl: "https://example.ngrok.app/api/khotan/webhook/pollinate",
-          status: "active",
-        },
-      }, 201));
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            wire: {
+              id: "wire_1",
+              callbackUrl:
+                "https://example.ngrok.app/api/khotan/webhook/pollinate",
+              status: "active",
+            },
+          },
+          201,
+        ),
+      );
 
     const { parsed, thrown } = await runWireAction([
       "pollinate",
@@ -110,7 +131,9 @@ describe("wire command", () => {
   it("disconnects the current wire when no wire id is provided", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
-      .mockResolvedValueOnce(jsonResponse({ wire: { id: "wire_1" }, configured: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({ wire: { id: "wire_1" }, configured: true }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     const { parsed, thrown } = await runWireAction([

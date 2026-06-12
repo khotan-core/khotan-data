@@ -24,7 +24,14 @@ interface WebhookEventItem {
   handlerType: "catch" | "pass" | null;
   plugName: string | null;
   workflowRunId: string | null;
-  runStatus: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled" | null;
+  runStatus:
+    | "pending"
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "cancelled"
+    | null;
 }
 
 interface PageResponse<T> {
@@ -50,7 +57,10 @@ const statusVariant = {
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 }
 
 function formatHandler(item: WebhookEventItem): string {
@@ -59,7 +69,9 @@ function formatHandler(item: WebhookEventItem): string {
   return `${item.handlerType}:${item.handlerName}`;
 }
 
-export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
+export function KhotanWebhookEventsTable({
+  pageSize = 10,
+}: { pageSize?: number } = {}) {
   const [data, setData] = useState<PageResponse<WebhookEventItem> | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -73,7 +85,9 @@ export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number 
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/khotan/webhook-events?limit=${String(pageSize)}&offset=${String(offset)}`);
+        const res = await fetch(
+          `/api/khotan/webhook-events?limit=${String(pageSize)}&offset=${String(offset)}`,
+        );
         if (!res.ok) {
           throw new Error("Failed to load webhook events");
         }
@@ -107,7 +121,11 @@ export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number 
             Recent inbound events captured by Khotan before workflow execution.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setRefreshKey((v) => v + 1)}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setRefreshKey((v) => v + 1)}
+        >
           Refresh
         </Button>
       </CardHeader>
@@ -132,7 +150,10 @@ export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number 
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={6}
+                  className="text-sm text-muted-foreground"
+                >
                   Loading webhook events...
                 </TableCell>
               </TableRow>
@@ -152,7 +173,9 @@ export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number 
                     {item.plugName ?? "-"}
                   </TableCell>
                   <TableCell className="space-y-1 text-xs">
-                    <div className="font-mono text-muted-foreground">{item.khotanRunId}</div>
+                    <div className="font-mono text-muted-foreground">
+                      {item.khotanRunId}
+                    </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {item.runStatus ? (
                         <Badge variant={statusVariant[item.runStatus]}>
@@ -178,7 +201,10 @@ export function KhotanWebhookEventsTable({ pageSize = 10 }: { pageSize?: number 
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={6}
+                  className="text-sm text-muted-foreground"
+                >
                   No webhook events recorded yet.
                 </TableCell>
               </TableRow>

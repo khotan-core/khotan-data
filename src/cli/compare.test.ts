@@ -241,7 +241,10 @@ describe("diffSchemas", () => {
   });
 
   it("handles _type array schemas", () => {
-    const expected = { _type: "array", items: { id: "string", name: "string" } };
+    const expected = {
+      _type: "array",
+      items: { id: "string", name: "string" },
+    };
     const actual: SchemaNode = {
       type: "array",
       items: {
@@ -256,7 +259,10 @@ describe("diffSchemas", () => {
   });
 
   it("detects mismatches inside array items", () => {
-    const expected = { _type: "array", items: { id: "string", name: "string" } };
+    const expected = {
+      _type: "array",
+      items: { id: "string", name: "string" },
+    };
     const actual: SchemaNode = {
       type: "array",
       items: {

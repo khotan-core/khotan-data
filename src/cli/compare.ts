@@ -67,8 +67,8 @@ function mergeShapes(shapes: SchemaNode[]): SchemaNode {
       for (const [key, node] of Object.entries(shape.properties)) {
         if (!merged[key]) {
           merged[key] = node;
-        } else if (merged[key]!.type === "object" && node.type === "object") {
-          merged[key] = mergeShapes([merged[key]!, node]);
+        } else if (merged[key].type === "object" && node.type === "object") {
+          merged[key] = mergeShapes([merged[key], node]);
         }
       }
     }

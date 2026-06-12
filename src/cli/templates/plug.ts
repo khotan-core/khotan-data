@@ -5,7 +5,8 @@
 // This file is yours. Edit anything — auth strategies, retry logic,
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const _khotanDebug = typeof process !== "undefined" && process.env?.KHOTAN_DEBUG;
+const _khotanDebug =
+  typeof process !== "undefined" && process.env?.KHOTAN_DEBUG;
 function kd(scope: string, ...args: unknown[]) {
   if (_khotanDebug) console.log(`[khotan:${scope}]`, ...args);
 }
@@ -153,7 +154,11 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
 
   async function fetchToken(): Promise<string> {
     const vars = await config.getVariables();
-    kd("auth", "tokenExchange: fetching token, has variables:", Object.keys(vars).join(", "));
+    kd(
+      "auth",
+      "tokenExchange: fetching token, has variables:",
+      Object.keys(vars).join(", "),
+    );
     const reqConfig = config.buildTokenRequest(vars);
 
     const headers = new Headers(reqConfig.headers);
@@ -183,16 +188,28 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
     }
 
     const data = await res.json();
-    kd("auth", "tokenExchange: raw response keys:", Object.keys(data as object));
+    kd(
+      "auth",
+      "tokenExchange: raw response keys:",
+      Object.keys(data as object),
+    );
     const parsed = config.parseTokenResponse(data);
     cachedToken = parsed.accessToken;
     if (!cachedToken) {
-      kd("auth", "tokenExchange: WARNING - accessToken is undefined/null, check parseTokenResponse");
+      kd(
+        "auth",
+        "tokenExchange: WARNING - accessToken is undefined/null, check parseTokenResponse",
+      );
     }
     if (parsed.expiresIn) {
       tokenExpiresAt = Date.now() + parsed.expiresIn * 1000;
     }
-    kd("auth", "tokenExchange: got token, expires in", parsed.expiresIn ?? "unknown", "seconds");
+    kd(
+      "auth",
+      "tokenExchange: got token, expires in",
+      parsed.expiresIn ?? "unknown",
+      "seconds",
+    );
     return cachedToken;
   }
 
@@ -204,7 +221,11 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
         await fetchToken();
       }
       headers.set("Authorization", `Bearer ${cachedToken}`);
-      kd("auth", "tokenExchange: applied bearer token", cachedToken ? `${cachedToken.slice(0, 8)}...` : "MISSING");
+      kd(
+        "auth",
+        "tokenExchange: applied bearer token",
+        cachedToken ? `${cachedToken.slice(0, 8)}...` : "MISSING",
+      );
 
       if (config.extraHeaders) {
         const vars = await config.getVariables();
@@ -512,7 +533,12 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
         authWithQuery.queryParam.name,
         authWithQuery.queryParam.value,
       );
-      return this._fetchWithAuthRetry<T>(method, u.toString(), headers, options);
+      return this._fetchWithAuthRetry<T>(
+        method,
+        u.toString(),
+        headers,
+        options,
+      );
     }
 
     return this._fetchWithAuthRetry<T>(method, url, headers, options);
@@ -608,7 +634,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
         error.status === 401 &&
         this.config.auth?.onUnauthorized
       ) {
-        kd("request", `${this.name}: 401 on ${method} ${url}, retrying with fresh auth`);
+        kd(
+          "request",
+          `${this.name}: 401 on ${method} ${url}, retrying with fresh auth`,
+        );
         await this.config.auth.onUnauthorized();
         const freshHeaders = this.buildHeaders(options?.headers);
         await this.config.auth.apply(freshHeaders);
@@ -762,7 +791,9 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function plug<const V extends readonly VarField[]>(config: PlugConfig<V>): Plug<V> {
+export function plug<const V extends readonly VarField[]>(
+  config: PlugConfig<V>,
+): Plug<V> {
   return new Plug(config);
 }
 

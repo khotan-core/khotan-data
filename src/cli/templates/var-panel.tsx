@@ -32,7 +32,11 @@ interface VarPanelProps {
   basePath?: string;
 }
 
-export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanelProps) {
+export function VarPanel({
+  plugName,
+  label,
+  basePath = "/api/khotan",
+}: VarPanelProps) {
   const displayName = label ?? plugName;
   const [fields, setFields] = useState<VarField[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -43,7 +47,9 @@ export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanel
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({});
+  const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const fetchVariables = useCallback(async () => {
     try {
@@ -151,12 +157,8 @@ export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanel
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4">
-        {error && (
-          <p className="text-sm text-destructive">{error}</p>
-        )}
-        {success && (
-          <p className="text-sm text-green-600">{success}</p>
-        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {success && <p className="text-sm text-green-600">{success}</p>}
 
         {!editing && configured ? (
           <div className="space-y-3">
@@ -203,7 +205,10 @@ export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanel
           <div className="space-y-3">
             {fields.map((field) => (
               <div key={field.key} className="space-y-1">
-                <Label htmlFor={`var-${plugName}-${field.key}`} className="text-xs">
+                <Label
+                  htmlFor={`var-${plugName}-${field.key}`}
+                  className="text-xs"
+                >
                   {field.label}
                   {field.required !== false && (
                     <span className="text-destructive ml-0.5">*</span>
@@ -212,8 +217,15 @@ export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanel
                 <div className="relative">
                   <Input
                     id={`var-${plugName}-${field.key}`}
-                    type={field.secret && !visibleSecrets[field.key] ? "password" : "text"}
-                    placeholder={field.placeholder ?? (field.secret ? "Enter value..." : "")}
+                    type={
+                      field.secret && !visibleSecrets[field.key]
+                        ? "password"
+                        : "text"
+                    }
+                    placeholder={
+                      field.placeholder ??
+                      (field.secret ? "Enter value..." : "")
+                    }
                     value={formValues[field.key] ?? ""}
                     onChange={(e) =>
                       setFormValues((prev) => ({
@@ -240,11 +252,7 @@ export function VarPanel({ plugName, label, basePath = "/api/khotan" }: VarPanel
               </div>
             ))}
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={saving}
-              >
+              <Button size="sm" onClick={handleSave} disabled={saving}>
                 {saving ? "Saving..." : "Save Variables"}
               </Button>
               {editing && (

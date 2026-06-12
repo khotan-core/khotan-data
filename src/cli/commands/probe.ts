@@ -90,7 +90,9 @@ async function checkConnectivity(baseUrl: string): Promise<void> {
 
 export const plugCommand = new Command("plug")
   .alias("probe")
-  .description("Inspect and test plugs via the running dev server's debug route")
+  .description(
+    "Inspect and test plugs via the running dev server's debug route",
+  )
   .argument("[plugName]", "Name of the plug to probe")
   .argument("[method]", "HTTP method (GET, POST, PUT, DELETE, PATCH)")
   .argument("[path]", "Request path (e.g. /products)")
@@ -129,19 +131,19 @@ export const plugCommand = new Command("plug")
         try {
           const res = await fetch(`${baseUrl}/plugs`);
           const data = (await res.json()) as
-            | Array<{
+            | {
                 name: string;
                 baseUrl: string;
                 authType: string;
                 varsConfigured?: boolean;
-              }>
+              }[]
             | {
-                plugs?: Array<{
+                plugs?: {
                   name: string;
                   baseUrl: string;
                   authType: string;
                   varsConfigured?: boolean;
-                }>;
+                }[];
               };
           const raw = Array.isArray(data) ? data : (data.plugs ?? []);
           const plugs = raw.map((p) => ({
@@ -203,7 +205,7 @@ export const plugCommand = new Command("plug")
             endpoints?: Record<string, Record<string, unknown>>;
           };
           allEndpoints = data.endpoints ?? null;
-          if (!allEndpoints || !allEndpoints[opts.endpoint]) {
+          if (!allEndpoints?.[opts.endpoint]) {
             fail(
               "endpoint_not_found",
               `Endpoint "${opts.endpoint}" not found on plug "${plugName}". Use --info to see available endpoints.`,
@@ -301,7 +303,8 @@ export const plugCommand = new Command("plug")
         },
         response: {
           status: responseStatus,
-          statusText: (debugData["statusText"] as string) ?? debugRes.statusText,
+          statusText:
+            (debugData["statusText"] as string) ?? debugRes.statusText,
           timing: debugData["timing"] ?? null,
           size,
           headers: debugData["headers"] ?? null,

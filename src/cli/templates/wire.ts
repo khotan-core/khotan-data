@@ -19,11 +19,29 @@ import type { Plug } from "../plugs/plug";
 export interface BoundPlug {
   readonly name: string;
   readonly baseUrl: string;
-  get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>;
-  post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>;
-  put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>;
-  patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>;
-  delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T>;
+  get<T>(
+    path: string,
+    options?: {
+      params?: Record<string, unknown>;
+      headers?: Record<string, string>;
+    },
+  ): Promise<T>;
+  post<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  put<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  patch<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  delete<T>(
+    path: string,
+    options?: { headers?: Record<string, string> },
+  ): Promise<T>;
 }
 
 // ---------------------------------------------------------------------------

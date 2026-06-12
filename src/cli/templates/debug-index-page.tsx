@@ -50,7 +50,11 @@ export default function DebugIndexPage() {
       <main className="container mx-auto max-w-3xl px-4 py-10">
         <h1 className="text-2xl font-bold tracking-tight mb-4">Debug</h1>
         <p className="text-muted-foreground">
-          Debug mode is not enabled. Set <code className="bg-muted px-1.5 py-0.5 rounded text-sm">KHOTAN_DEBUG=1</code> in your environment and restart the server.
+          Debug mode is not enabled. Set{" "}
+          <code className="bg-muted px-1.5 py-0.5 rounded text-sm">
+            KHOTAN_DEBUG=1
+          </code>{" "}
+          in your environment and restart the server.
         </p>
       </main>
     );
@@ -84,7 +88,9 @@ export default function DebugIndexPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">{plug.authType}</span>
+              <span className="text-xs text-muted-foreground">
+                {plug.authType}
+              </span>
               <span className="text-muted-foreground">→</span>
             </div>
           </Link>

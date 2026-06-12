@@ -88,7 +88,7 @@ function parseJsonOption(value: string | undefined, label: string): unknown {
   }
 }
 
-type FlowRecord = {
+interface FlowRecord {
   id: string;
   name: string;
   type: string;
@@ -100,12 +100,12 @@ type FlowRecord = {
   lastRunStatus?: string | null;
   createdAt?: string;
   updatedAt?: string;
-};
+}
 
-type ApiOptions = {
+interface ApiOptions {
   port?: string;
   basePath: string;
-};
+}
 
 async function listFlows(baseUrl: string): Promise<FlowRecord[]> {
   const data = await fetchJson<FlowRecord[] | { flows?: FlowRecord[] }>(

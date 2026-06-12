@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFile, execSync } from "node:child_process";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 
 const CLI_PATH = path.resolve(__dirname, "../../dist/cli.js");
@@ -11,7 +15,7 @@ const CLI_PATH = path.resolve(__dirname, "../../dist/cli.js");
 function run(
   args: string,
   cwd: string,
-  timeout = 30_000,
+  timeout = 60_000,
 ): { output: string; exitCode: number } {
   try {
     const stdout = execSync(`node ${CLI_PATH} ${args} 2>&1`, {
@@ -33,7 +37,7 @@ function run(
 function runAsync(
   args: string[],
   cwd: string,
-  timeout = 30_000,
+  timeout = 60_000,
 ): Promise<{ output: string; exitCode: number }> {
   return new Promise((resolve) => {
     execFile(
@@ -227,13 +231,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add plug", tmpDir);
       expect(result.exitCode).toBe(0);
 
-      const plugPath = path.join(
-        tmpDir,
-        "src",
-        "khotan",
-        "plugs",
-        "plug.ts",
-      );
+      const plugPath = path.join(tmpDir, "src", "khotan", "plugs", "plug.ts");
       expect(fs.existsSync(plugPath)).toBe(true);
     });
 
@@ -283,7 +281,12 @@ describe("CLI", { timeout: 30_000 }, () => {
         const result = run(`add ${component} --yes`, tmpDir, 90_000);
         expect(result.exitCode).toBe(0);
 
-        const flowPath = path.join(tmpDir, "khotan", "flows", `${component}.ts`);
+        const flowPath = path.join(
+          tmpDir,
+          "khotan",
+          "flows",
+          `${component}.ts`,
+        );
         const examplePath = path.join(
           tmpDir,
           "khotan",
@@ -292,9 +295,13 @@ describe("CLI", { timeout: 30_000 }, () => {
         );
         expect(fs.existsSync(flowPath)).toBe(true);
         expect(fs.existsSync(examplePath)).toBe(true);
-        expect(fs.readFileSync(flowPath, "utf-8")).toContain("FlowRegistration");
+        expect(fs.readFileSync(flowPath, "utf-8")).toContain(
+          "FlowRegistration",
+        );
         expect(fs.readFileSync(flowPath, "utf-8")).toContain('"use workflow"');
-        expect(fs.readFileSync(examplePath, "utf-8")).toContain('"use workflow"');
+        expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+          '"use workflow"',
+        );
       },
       90_000,
     );
@@ -548,7 +555,8 @@ describe("CLI", { timeout: 30_000 }, () => {
       const port = (server.address() as AddressInfo).port;
       return {
         port,
-        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+        close: () =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
         getTriggerBody: () => triggerBody,
       };
     }
@@ -561,7 +569,10 @@ describe("CLI", { timeout: 30_000 }, () => {
           tmpDir,
         );
         expect(result.exitCode).toBe(0);
-        const data = JSON.parse(result.output) as { ok: boolean; flows: unknown[] };
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          flows: unknown[];
+        };
         expect(data.ok).toBe(true);
         expect(data.flows).toHaveLength(3);
       } finally {
@@ -577,7 +588,10 @@ describe("CLI", { timeout: 30_000 }, () => {
           tmpDir,
         );
         expect(result.exitCode).toBe(1);
-        const data = JSON.parse(result.output) as { error: string; hint: string };
+        const data = JSON.parse(result.output) as {
+          error: string;
+          hint: string;
+        };
         expect(data.error).toBe("ambiguous_flow");
         expect(data.hint).toContain("--plug");
       } finally {
@@ -643,7 +657,9 @@ describe("CLI", { timeout: 30_000 }, () => {
           runs: Array<{ id: string }>;
         };
         expect(data.ok).toBe(true);
-        expect(data.runs).toEqual([{ id: "run-1", flowId: "flow-pollinate-products", status: "ok" }]);
+        expect(data.runs).toEqual([
+          { id: "run-1", flowId: "flow-pollinate-products", status: "ok" },
+        ]);
       } finally {
         await api.close();
       }
@@ -673,13 +689,22 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add catch --yes", tmpDir);
 
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Updated next.config.ts with Workflow integration");
+      expect(result.output).toContain(
+        "Updated next.config.ts with Workflow integration",
+      );
 
-      const content = fs.readFileSync(path.join(tmpDir, "next.config.ts"), "utf-8");
-      expect(content).toContain('import { withWorkflow } from "workflow/next";');
+      const content = fs.readFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        "utf-8",
+      );
+      expect(content).toContain(
+        'import { withWorkflow } from "workflow/next";',
+      );
       expect(content).toContain("export default withWorkflow(nextConfig);");
       expect(
-        fs.existsSync(path.join(tmpDir, "khotan", "webhooks", "catch.example.ts")),
+        fs.existsSync(
+          path.join(tmpDir, "khotan", "webhooks", "catch.example.ts"),
+        ),
       ).toBe(true);
     });
 
@@ -694,13 +719,22 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add pass --yes", tmpDir);
 
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created next.config.ts with Workflow integration");
+      expect(result.output).toContain(
+        "Created next.config.ts with Workflow integration",
+      );
 
-      const content = fs.readFileSync(path.join(tmpDir, "next.config.ts"), "utf-8");
-      expect(content).toContain('import { withWorkflow } from "workflow/next";');
+      const content = fs.readFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        "utf-8",
+      );
+      expect(content).toContain(
+        'import { withWorkflow } from "workflow/next";',
+      );
       expect(content).toContain("export default withWorkflow(nextConfig);");
       expect(
-        fs.existsSync(path.join(tmpDir, "khotan", "webhooks", "pass.example.ts")),
+        fs.existsSync(
+          path.join(tmpDir, "khotan", "webhooks", "pass.example.ts"),
+        ),
       ).toBe(true);
     });
   });
@@ -715,7 +749,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "src", "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -760,7 +802,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -768,18 +818,14 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
 
       expect(
-        fs.existsSync(
-          path.join(tmpDir, "components", "khotan", "hub.tsx"),
-        ),
+        fs.existsSync(path.join(tmpDir, "components", "khotan", "hub.tsx")),
       ).toBe(true);
       expect(
-        fs.existsSync(
-          path.join(tmpDir, "components", "khotan", "wire.tsx"),
-        ),
+        fs.existsSync(path.join(tmpDir, "components", "khotan", "wire.tsx")),
       ).toBe(true);
-      expect(
-        fs.existsSync(path.join(tmpDir, "khotan", "khotan.ts")),
-      ).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "khotan", "khotan.ts"))).toBe(
+        true,
+      );
       expect(
         fs.existsSync(
           path.join(tmpDir, "app", "api", "khotan", "[...all]", "route.ts"),
@@ -811,18 +857,21 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
       run("add hub --force", tmpDir);
 
-      const hubPath = path.join(
-        tmpDir,
-        "components",
-        "khotan",
-        "hub.tsx",
-      );
+      const hubPath = path.join(tmpDir, "components", "khotan", "hub.tsx");
       const content = fs.readFileSync(hubPath, "utf-8");
       expect(content).not.toContain('from "khotan-data"');
       expect(content).not.toContain("from 'khotan-data'");
@@ -837,7 +886,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -855,7 +912,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -909,18 +974,21 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
       run("add hub --force", tmpDir);
 
-      const hubPath = path.join(
-        tmpDir,
-        "components",
-        "khotan",
-        "hub.tsx",
-      );
+      const hubPath = path.join(tmpDir, "components", "khotan", "hub.tsx");
       const content = fs.readFileSync(hubPath, "utf-8");
       expect(content).toContain('"PATCH"');
       expect(content).toContain("/api/khotan/flows");
@@ -993,7 +1061,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const c of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const c of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
       }
       run("init", tmpDir);
@@ -1001,9 +1077,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Adding required component: hub");
       expect(
-        fs.existsSync(
-          path.join(tmpDir, "components", "khotan", "hub.tsx"),
-        ),
+        fs.existsSync(path.join(tmpDir, "components", "khotan", "hub.tsx")),
       ).toBe(true);
       expect(
         fs.existsSync(path.join(tmpDir, "app", "config", "page.tsx")),
@@ -1077,9 +1151,9 @@ describe("CLI", { timeout: 30_000 }, () => {
           path.join(tmpDir, "components", "khotan", "topology-canvas.tsx"),
         ),
       ).toBe(true);
-      expect(
-        fs.existsSync(path.join(tmpDir, "app", "graph", "page.tsx")),
-      ).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "app", "graph", "page.tsx"))).toBe(
+        true,
+      );
     });
   });
 
@@ -1134,7 +1208,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const uiDir = path.join(tmpDir, "components", "ui");
       fs.mkdirSync(uiDir, { recursive: true });
-      for (const comp of ["card", "badge", "table", "switch", "button", "input", "label"]) {
+      for (const comp of [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ]) {
         fs.writeFileSync(path.join(uiDir, `${comp}.tsx`), "");
       }
       run("init", tmpDir);

@@ -18,7 +18,13 @@ import {
 interface RunLogItem {
   id: string;
   runType: string;
-  status: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "cancelled";
   workflowRunId: string | null;
   sourceType: "flow" | "webhook" | "unknown";
   sourceName: string | null;
@@ -69,7 +75,10 @@ function formatDateTime(value: string | null): string {
   if (!value) return "Never";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 }
 
 function formatSource(item: RunLogItem): string {
@@ -92,11 +101,16 @@ function formatCounts(item: RunLogItem): string {
 
 function formatStreamLine(line: string): string {
   try {
-    const parsed = JSON.parse(line) as { timestamp?: string; message?: string; type?: string };
+    const parsed = JSON.parse(line) as {
+      timestamp?: string;
+      message?: string;
+      type?: string;
+    };
     const parsedDate = parsed.timestamp ? new Date(parsed.timestamp) : null;
-    const prefix = parsedDate && !Number.isNaN(parsedDate.getTime())
-      ? `[${parsedDate.toISOString().slice(11, 19)} UTC] `
-      : "";
+    const prefix =
+      parsedDate && !Number.isNaN(parsedDate.getTime())
+        ? `[${parsedDate.toISOString().slice(11, 19)} UTC] `
+        : "";
     const type = parsed.type ? `${parsed.type}: ` : "";
     return `${prefix}${type}${parsed.message ?? line}`;
   } catch {
@@ -121,7 +135,9 @@ function RunDetails({
   const [busy, setBusy] = useState<"cancel" | "retry" | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
-  const fetchDetail = useCallback(async (): Promise<Record<string, unknown>> => {
+  const fetchDetail = useCallback(async (): Promise<
+    Record<string, unknown>
+  > => {
     const res = await fetch(`/api/khotan/runs/${run.id}`);
     if (!res.ok) throw new Error("Failed to load run detail");
     return (await res.json()) as Record<string, unknown>;
@@ -136,7 +152,8 @@ function RunDetails({
         if (!cancelled) setDetail(json);
         if (!cancelled) setLastUpdatedAt(new Date().toISOString());
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Unknown error");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : "Unknown error");
       }
     }
 
@@ -166,9 +183,12 @@ function RunDetails({
 
     async function readStream() {
       try {
-        const res = await fetch(`/api/khotan/runs/${run.id}/stream?startIndex=-50`, {
-          signal: controller.signal,
-        });
+        const res = await fetch(
+          `/api/khotan/runs/${run.id}/stream?startIndex=-50`,
+          {
+            signal: controller.signal,
+          },
+        );
         if (!res.ok || !res.body) return;
 
         const reader = res.body.getReader();
@@ -206,7 +226,13 @@ function RunDetails({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [onStreamInbound, run.id, run.status, run.workflowRunId, streamingEnabled]);
+  }, [
+    onStreamInbound,
+    run.id,
+    run.status,
+    run.workflowRunId,
+    streamingEnabled,
+  ]);
 
   async function refreshDetail() {
     setError(null);
@@ -238,9 +264,10 @@ function RunDetails({
     }
   }
 
-  const workflowStatus = typeof detail?.["workflowStatus"] === "string"
-    ? detail["workflowStatus"]
-    : null;
+  const workflowStatus =
+    typeof detail?.["workflowStatus"] === "string"
+      ? detail["workflowStatus"]
+      : null;
 
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
@@ -261,7 +288,8 @@ function RunDetails({
             </div>
           ) : null}
           <div className="text-xs text-muted-foreground">
-            Last updated: {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
+            Last updated:{" "}
+            {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -276,7 +304,9 @@ function RunDetails({
           <Button
             variant="outline"
             size="sm"
-            disabled={!run.workflowRunId || busy !== null || run.status !== "running"}
+            disabled={
+              !run.workflowRunId || busy !== null || run.status !== "running"
+            }
             onClick={() => void postAction("cancel")}
           >
             {busy === "cancel" ? "Cancelling..." : "Cancel"}
@@ -348,7 +378,9 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/khotan/runs?limit=${String(pageSize)}&offset=${String(offset)}`);
+        const res = await fetch(
+          `/api/khotan/runs?limit=${String(pageSize)}&offset=${String(offset)}`,
+        );
         if (!res.ok) {
           throw new Error("Failed to load runs");
         }
@@ -383,7 +415,8 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
             Recent flow and webhook execution history.
           </p>
           <p className="text-xs text-muted-foreground">
-            Last updated: {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
+            Last updated:{" "}
+            {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -442,7 +475,10 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={8}
+                  className="text-sm text-muted-foreground"
+                >
                   Loading runs...
                 </TableCell>
               </TableRow>
@@ -453,7 +489,9 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                     <TableCell className="text-sm text-muted-foreground">
                       <div>{formatDateTime(item.startedAt)}</div>
                       <div className="text-xs">
-                        {item.completedAt ? `completed ${formatDateTime(item.completedAt)}` : "in progress"}
+                        {item.completedAt
+                          ? `completed ${formatDateTime(item.completedAt)}`
+                          : "in progress"}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -461,12 +499,17 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                         {statusLabel[item.status]}
                       </Badge>
                       {item.error ? (
-                        <div className="mt-1 max-w-56 truncate text-xs text-destructive" title={item.error}>
+                        <div
+                          className="mt-1 max-w-56 truncate text-xs text-destructive"
+                          title={item.error}
+                        >
                           {item.error}
                         </div>
                       ) : null}
                     </TableCell>
-                    <TableCell className="font-medium">{formatSource(item)}</TableCell>
+                    <TableCell className="font-medium">
+                      {formatSource(item)}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {item.plugName ?? "-"}
                     </TableCell>
@@ -484,7 +527,9 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                         variant="outline"
                         size="sm"
                         onClick={() =>
-                          setExpandedRunId((current) => current === item.id ? null : item.id)
+                          setExpandedRunId((current) =>
+                            current === item.id ? null : item.id,
+                          )
                         }
                       >
                         {expandedRunId === item.id ? "Hide" : "Details"}
@@ -507,7 +552,10 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={8}
+                  className="text-sm text-muted-foreground"
+                >
                   No runs recorded yet.
                 </TableCell>
               </TableRow>

@@ -46,7 +46,11 @@ interface PlugMeta {
   baseUrl: string;
   authType: string;
   endpoints: Record<string, EndpointMeta> | null;
-  vars: { fields: VarField[]; configured: boolean; values?: Record<string, string> };
+  vars: {
+    fields: VarField[];
+    configured: boolean;
+    values?: Record<string, string>;
+  };
 }
 
 interface DebugResponse {
@@ -104,7 +108,10 @@ function extractPathParams(pathTemplate: string): string[] {
   return (pathTemplate.match(/:([a-zA-Z_]\w*)/g) ?? []).map((p) => p.slice(1));
 }
 
-function interpolatePath(pathTemplate: string, values: Record<string, string>): string {
+function interpolatePath(
+  pathTemplate: string,
+  values: Record<string, string>,
+): string {
   let result = pathTemplate;
   for (const [key, val] of Object.entries(values)) {
     if (val) result = result.replace(`:${key}`, encodeURIComponent(val));
@@ -136,7 +143,8 @@ function buildJsonTree(
     return <span className="text-foreground">{JSON.stringify(obj)}</span>;
   }
   if (Array.isArray(obj)) {
-    if (obj.length === 0) return <span className="text-muted-foreground">[]</span>;
+    if (obj.length === 0)
+      return <span className="text-muted-foreground">[]</span>;
     return (
       <div className="pl-3">
         {obj.slice(0, 20).map((item, i) => (
@@ -148,11 +156,19 @@ function buildJsonTree(
             >
               [{i}]
             </button>
-            {buildJsonTree(item, `${prefix}[${i}]`, onCopy, undefined, depth + 1)}
+            {buildJsonTree(
+              item,
+              `${prefix}[${i}]`,
+              onCopy,
+              undefined,
+              depth + 1,
+            )}
           </div>
         ))}
         {obj.length > 20 && (
-          <p className="text-[10px] text-muted-foreground italic">...{obj.length - 20} more items</p>
+          <p className="text-[10px] text-muted-foreground italic">
+            ...{obj.length - 20} more items
+          </p>
         )}
       </div>
     );
@@ -162,13 +178,22 @@ function buildJsonTree(
   return (
     <div className={depth > 0 ? "pl-3" : ""}>
       {/* Missing fields at top (only at depth 0) */}
-      {diff && depth === 0 && diff.missing.map((key) => (
-        <div key={`missing-${key}`} className="my-0.5 -mx-1 px-1 rounded bg-red-500/10">
-          <span className="select-none inline-block w-4 text-[10px] text-red-500">−</span>
-          <span className="text-xs font-mono text-red-400 line-through">{key}</span>
-          <span className="text-red-400/60 text-xs">: ...</span>
-        </div>
-      ))}
+      {diff &&
+        depth === 0 &&
+        diff.missing.map((key) => (
+          <div
+            key={`missing-${key}`}
+            className="my-0.5 -mx-1 px-1 rounded bg-red-500/10"
+          >
+            <span className="select-none inline-block w-4 text-[10px] text-red-500">
+              −
+            </span>
+            <span className="text-xs font-mono text-red-400 line-through">
+              {key}
+            </span>
+            <span className="text-red-400/60 text-xs">: ...</span>
+          </div>
+        ))}
       {entries.map(([key, val]) => {
         const fullPath = prefix ? `${prefix}.${key}` : key;
         const isObject = val !== null && typeof val === "object";
@@ -185,7 +210,9 @@ function buildJsonTree(
         return (
           <div key={key} className={`my-0.5 ${bgClass}`}>
             {diff && depth === 0 && (
-              <span className={`select-none inline-block w-4 text-[10px] ${prefixChar === "+" ? "text-amber-600" : "text-transparent"}`}>
+              <span
+                className={`select-none inline-block w-4 text-[10px] ${prefixChar === "+" ? "text-amber-600" : "text-transparent"}`}
+              >
                 {prefixChar}
               </span>
             )}
@@ -215,7 +242,13 @@ function buildJsonTree(
 // Schema block display
 // ---------------------------------------------------------------------------
 
-function SchemaBlock({ title, schema }: { title: string; schema: Record<string, unknown> }) {
+function SchemaBlock({
+  title,
+  schema,
+}: {
+  title: string;
+  schema: Record<string, unknown>;
+}) {
   if (schema._type === "array" && schema.items) {
     return (
       <div className="space-y-1">
@@ -225,12 +258,14 @@ function SchemaBlock({ title, schema }: { title: string; schema: Record<string, 
         <div className="rounded bg-muted/50 p-2 font-mono text-[11px]">
           <span className="text-muted-foreground">Array of:</span>
           <div className="pl-2 mt-0.5">
-            {Object.entries(schema.items as Record<string, unknown>).map(([key, val]) => (
-              <div key={key}>
-                <span className="text-foreground">{key}</span>
-                <span className="text-muted-foreground">: {String(val)}</span>
-              </div>
-            ))}
+            {Object.entries(schema.items as Record<string, unknown>).map(
+              ([key, val]) => (
+                <div key={key}>
+                  <span className="text-foreground">{key}</span>
+                  <span className="text-muted-foreground">: {String(val)}</span>
+                </div>
+              ),
+            )}
           </div>
         </div>
       </div>
@@ -249,7 +284,9 @@ function SchemaBlock({ title, schema }: { title: string; schema: Record<string, 
         {entries.map(([key, val]) => (
           <div key={key}>
             <span className="text-foreground">{key}</span>
-            <span className="text-muted-foreground">: {typeof val === "object" && val ? "object" : String(val)}</span>
+            <span className="text-muted-foreground">
+              : {typeof val === "object" && val ? "object" : String(val)}
+            </span>
           </div>
         ))}
       </div>
@@ -268,13 +305,20 @@ function loadHistory(plugName: string): HistoryEntry[] {
   try {
     const raw = sessionStorage.getItem(`${HISTORY_KEY}:${plugName}`);
     return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 function saveHistory(plugName: string, entries: HistoryEntry[]) {
   try {
-    sessionStorage.setItem(`${HISTORY_KEY}:${plugName}`, JSON.stringify(entries.slice(0, MAX_HISTORY)));
-  } catch { /* quota exceeded */ }
+    sessionStorage.setItem(
+      `${HISTORY_KEY}:${plugName}`,
+      JSON.stringify(entries.slice(0, MAX_HISTORY)),
+    );
+  } catch {
+    /* quota exceeded */
+  }
 }
 
 // ===========================================================================
@@ -294,7 +338,9 @@ export function PlugDebugger({
   const [body, setBody] = useState("");
   const [params, setParams] = useState("");
   const [headers, setHeaders] = useState("");
-  const [activeTab, setActiveTab] = useState<"body" | "params" | "headers">("params");
+  const [activeTab, setActiveTab] = useState<"body" | "params" | "headers">(
+    "params",
+  );
 
   const [sending, setSending] = useState(false);
   const [response, setResponse] = useState<DebugResponse | null>(null);
@@ -309,14 +355,24 @@ export function PlugDebugger({
   const fetchMeta = useCallback(async () => {
     try {
       const res = await fetch(`${basePath}/debug/${plugName}`);
-      if (!res.ok) { setMeta(null); return; }
+      if (!res.ok) {
+        setMeta(null);
+        return;
+      }
       setMeta(await res.json());
-    } catch { setMeta(null); }
-    finally { setLoading(false); }
+    } catch {
+      setMeta(null);
+    } finally {
+      setLoading(false);
+    }
   }, [basePath, plugName]);
 
-  useEffect(() => { fetchMeta(); }, [fetchMeta]);
-  useEffect(() => { setHistory(loadHistory(plugName)); }, [plugName]);
+  useEffect(() => {
+    fetchMeta();
+  }, [fetchMeta]);
+  useEffect(() => {
+    setHistory(loadHistory(plugName));
+  }, [plugName]);
 
   // Cmd+Enter global shortcut
   useEffect(() => {
@@ -333,7 +389,8 @@ export function PlugDebugger({
 
   // Detect path params when path changes
   const detectedParams = extractPathParams(path);
-  const resolvedPath = detectedParams.length > 0 ? interpolatePath(path, pathParams) : path;
+  const resolvedPath =
+    detectedParams.length > 0 ? interpolatePath(path, pathParams) : path;
 
   if (loading) {
     return (
@@ -396,13 +453,25 @@ export function PlugDebugger({
       const payload: Record<string, unknown> = { method, path: finalPath };
 
       if (body.trim()) {
-        try { payload.body = JSON.parse(body); } catch { payload.body = body; }
+        try {
+          payload.body = JSON.parse(body);
+        } catch {
+          payload.body = body;
+        }
       }
       if (params.trim()) {
-        try { payload.params = JSON.parse(params); } catch { /* skip */ }
+        try {
+          payload.params = JSON.parse(params);
+        } catch {
+          /* skip */
+        }
       }
       if (headers.trim()) {
-        try { payload.headers = JSON.parse(headers); } catch { /* skip */ }
+        try {
+          payload.headers = JSON.parse(headers);
+        } catch {
+          /* skip */
+        }
       }
 
       const res = await fetch(`${basePath}/debug/${plugName}`, {
@@ -447,7 +516,9 @@ export function PlugDebugger({
       const parsed = JSON.parse(body);
       const formatted = JSON.stringify(parsed, null, 2);
       if (formatted !== body) setBody(formatted);
-    } catch { /* not valid JSON, leave as-is */ }
+    } catch {
+      /* not valid JSON, leave as-is */
+    }
   }
 
   function copyJsonPath(jsonPath: string) {
@@ -459,18 +530,32 @@ export function PlugDebugger({
   const statusColor = response ? getStatusColor(response.status) : "";
 
   // Compute response size
-  const responseRaw = response?.body != null
-    ? (typeof response.body === "string" ? response.body : JSON.stringify(response.body))
-    : "";
-  const responseSizeKB = responseRaw ? (new Blob([responseRaw]).size / 1024).toFixed(1) : "0";
+  const responseRaw =
+    response?.body != null
+      ? typeof response.body === "string"
+        ? response.body
+        : JSON.stringify(response.body)
+      : "";
+  const responseSizeKB = responseRaw
+    ? (new Blob([responseRaw]).size / 1024).toFixed(1)
+    : "0";
 
   // Schema diff computation
   const schemaDiff = (() => {
-    if (!selectedEndpoint?.responses || !response?.body || typeof response.body !== "object") return null;
+    if (
+      !selectedEndpoint?.responses ||
+      !response?.body ||
+      typeof response.body !== "object"
+    )
+      return null;
     const schemaForStatus = selectedEndpoint.responses[String(response.status)];
     if (!schemaForStatus) return null;
-    const expectedKeys = new Set(Object.keys(schemaForStatus).filter((k) => k !== "_type"));
-    const actualKeys = new Set(Object.keys(response.body as Record<string, unknown>));
+    const expectedKeys = new Set(
+      Object.keys(schemaForStatus).filter((k) => k !== "_type"),
+    );
+    const actualKeys = new Set(
+      Object.keys(response.body as Record<string, unknown>),
+    );
     const matched = [...expectedKeys].filter((k) => actualKeys.has(k));
     const unexpected = [...actualKeys].filter((k) => !expectedKeys.has(k));
     const missing = [...expectedKeys].filter((k) => !actualKeys.has(k));
@@ -486,7 +571,10 @@ export function PlugDebugger({
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {meta.name}
           </p>
-          <p className="text-xs text-muted-foreground truncate" title={meta.baseUrl}>
+          <p
+            className="text-xs text-muted-foreground truncate"
+            title={meta.baseUrl}
+          >
             {meta.baseUrl}
           </p>
           <div className="flex items-center gap-2 flex-wrap">
@@ -508,14 +596,18 @@ export function PlugDebugger({
                 const value = meta.vars.values?.[f.key];
                 return (
                   <div key={f.key} className="text-[10px]">
-                    <span className="text-muted-foreground">{f.label || f.key}</span>
+                    <span className="text-muted-foreground">
+                      {f.label || f.key}
+                    </span>
                     {value && (
                       <span className="ml-1.5 font-mono text-foreground">
                         {f.secret ? "••••••••" : value}
                       </span>
                     )}
                     {!value && (
-                      <span className="ml-1.5 text-muted-foreground/50 italic">not set</span>
+                      <span className="ml-1.5 text-muted-foreground/50 italic">
+                        not set
+                      </span>
                     )}
                   </div>
                 );
@@ -577,9 +669,9 @@ export function PlugDebugger({
         {endpointList.length === 0 && (
           <div className="rounded-lg border border-dashed border-border p-3 text-center">
             <p className="text-[10px] text-muted-foreground">
-              No typed endpoints registered.
-              Add <code className="bg-muted px-1 rounded">endpoints</code> to
-              your plug config to see them here.
+              No typed endpoints registered. Add{" "}
+              <code className="bg-muted px-1 rounded">endpoints</code> to your
+              plug config to see them here.
             </p>
           </div>
         )}
@@ -592,7 +684,10 @@ export function PlugDebugger({
                 History
               </p>
               <button
-                onClick={() => { setHistory([]); saveHistory(plugName, []); }}
+                onClick={() => {
+                  setHistory([]);
+                  saveHistory(plugName, []);
+                }}
                 className="text-[10px] text-muted-foreground hover:text-foreground"
               >
                 Clear
@@ -604,13 +699,21 @@ export function PlugDebugger({
                 onClick={() => loadFromHistory(entry)}
                 className="w-full text-left rounded-md px-2 py-1 text-[10px] transition-colors hover:bg-muted"
               >
-                <span className={`inline-block w-10 font-mono font-semibold ${METHOD_COLORS[entry.method]?.split(" ")[1] ?? ""}`}>
+                <span
+                  className={`inline-block w-10 font-mono font-semibold ${METHOD_COLORS[entry.method]?.split(" ")[1] ?? ""}`}
+                >
                   {entry.method}
                 </span>
-                <span className="text-muted-foreground ml-1 truncate">{entry.path}</span>
+                <span className="text-muted-foreground ml-1 truncate">
+                  {entry.path}
+                </span>
                 <span className="float-right">
-                  <span className={`font-mono ${getStatusColor(entry.status)}`}>{entry.status}</span>
-                  <span className="text-muted-foreground/50 ml-1">{entry.timing}ms</span>
+                  <span className={`font-mono ${getStatusColor(entry.status)}`}>
+                    {entry.status}
+                  </span>
+                  <span className="text-muted-foreground/50 ml-1">
+                    {entry.timing}ms
+                  </span>
                 </span>
               </button>
             ))}
@@ -647,7 +750,12 @@ export function PlugDebugger({
               ⌘↵
             </span>
           </div>
-          <Button onClick={fireRequest} disabled={sending || !path} size="sm" className="px-4">
+          <Button
+            onClick={fireRequest}
+            disabled={sending || !path}
+            size="sm"
+            className="px-4"
+          >
             {sending ? "..." : "Send"}
           </Button>
         </div>
@@ -657,12 +765,19 @@ export function PlugDebugger({
           <div className="flex items-center gap-3 flex-wrap">
             {detectedParams.map((param) => (
               <div key={param} className="flex items-center gap-1.5">
-                <Label className="text-[10px] text-muted-foreground font-mono">:{param}</Label>
+                <Label className="text-[10px] text-muted-foreground font-mono">
+                  :{param}
+                </Label>
                 <Input
                   className="w-32 h-7 text-xs font-mono"
                   placeholder={param}
                   value={pathParams[param] ?? ""}
-                  onChange={(e) => setPathParams((prev) => ({ ...prev, [param]: e.target.value }))}
+                  onChange={(e) =>
+                    setPathParams((prev) => ({
+                      ...prev,
+                      [param]: e.target.value,
+                    }))
+                  }
                 />
               </div>
             ))}
@@ -687,7 +802,11 @@ export function PlugDebugger({
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {tab === "body" ? "Body" : tab === "params" ? "Params" : "Headers"}
+                {tab === "body"
+                  ? "Body"
+                  : tab === "params"
+                    ? "Params"
+                    : "Headers"}
               </button>
             ))}
           </div>
@@ -736,28 +855,43 @@ export function PlugDebugger({
         </div>
 
         {/* Schema info for selected endpoint */}
-        {selectedEndpoint && (selectedEndpoint.body || selectedEndpoint.query || selectedEndpoint.responses) && (
-          <div className="rounded-lg border border-border">
-            <div className="px-4 py-2 border-b border-border">
-              <p className="text-xs font-medium">
-                {selectedEndpoint.description || selectedEndpoint.name}
-              </p>
+        {selectedEndpoint &&
+          (selectedEndpoint.body ||
+            selectedEndpoint.query ||
+            selectedEndpoint.responses) && (
+            <div className="rounded-lg border border-border">
+              <div className="px-4 py-2 border-b border-border">
+                <p className="text-xs font-medium">
+                  {selectedEndpoint.description || selectedEndpoint.name}
+                </p>
+              </div>
+              <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                {selectedEndpoint.body && (
+                  <SchemaBlock
+                    title="Request Body"
+                    schema={selectedEndpoint.body}
+                  />
+                )}
+                {selectedEndpoint.query && (
+                  <SchemaBlock
+                    title="Query Params"
+                    schema={selectedEndpoint.query}
+                  />
+                )}
+                {selectedEndpoint.responses &&
+                  Object.entries(selectedEndpoint.responses).map(
+                    ([code, schema]) =>
+                      schema ? (
+                        <SchemaBlock
+                          key={code}
+                          title={`Response ${code}`}
+                          schema={schema}
+                        />
+                      ) : null,
+                  )}
+              </div>
             </div>
-            <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              {selectedEndpoint.body && (
-                <SchemaBlock title="Request Body" schema={selectedEndpoint.body} />
-              )}
-              {selectedEndpoint.query && (
-                <SchemaBlock title="Query Params" schema={selectedEndpoint.query} />
-              )}
-              {selectedEndpoint.responses && Object.entries(selectedEndpoint.responses).map(([code, schema]) =>
-                schema ? (
-                  <SchemaBlock key={code} title={`Response ${code}`} schema={schema} />
-                ) : null,
-              )}
-            </div>
-          </div>
-        )}
+          )}
 
         {/* Response */}
         {response && (
@@ -790,27 +924,35 @@ export function PlugDebugger({
             )}
 
             {/* Schema diff summary */}
-            {schemaDiff && (schemaDiff.unexpected.length > 0 || schemaDiff.missing.length > 0) && (
-              <div className="px-4 py-2 border-b border-border bg-muted/30">
-                <div className="flex flex-wrap gap-2 text-[10px]">
-                  {schemaDiff.matched.length > 0 && (
-                    <span className="text-emerald-600">
-                      ✓ {schemaDiff.matched.length} matched
-                    </span>
-                  )}
-                  {schemaDiff.unexpected.length > 0 && (
-                    <span className="text-amber-600">
-                      + {schemaDiff.unexpected.length} undocumented: <span className="font-mono">{schemaDiff.unexpected.join(", ")}</span>
-                    </span>
-                  )}
-                  {schemaDiff.missing.length > 0 && (
-                    <span className="text-red-600">
-                      − {schemaDiff.missing.length} missing: <span className="font-mono">{schemaDiff.missing.join(", ")}</span>
-                    </span>
-                  )}
+            {schemaDiff &&
+              (schemaDiff.unexpected.length > 0 ||
+                schemaDiff.missing.length > 0) && (
+                <div className="px-4 py-2 border-b border-border bg-muted/30">
+                  <div className="flex flex-wrap gap-2 text-[10px]">
+                    {schemaDiff.matched.length > 0 && (
+                      <span className="text-emerald-600">
+                        ✓ {schemaDiff.matched.length} matched
+                      </span>
+                    )}
+                    {schemaDiff.unexpected.length > 0 && (
+                      <span className="text-amber-600">
+                        + {schemaDiff.unexpected.length} undocumented:{" "}
+                        <span className="font-mono">
+                          {schemaDiff.unexpected.join(", ")}
+                        </span>
+                      </span>
+                    )}
+                    {schemaDiff.missing.length > 0 && (
+                      <span className="text-red-600">
+                        − {schemaDiff.missing.length} missing:{" "}
+                        <span className="font-mono">
+                          {schemaDiff.missing.join(", ")}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             <div className="flex items-center border-b border-border">
               <div className="flex flex-1">
@@ -824,7 +966,9 @@ export function PlugDebugger({
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {tab === "body" ? "Body" : `Headers (${Object.keys(response.headers).length})`}
+                    {tab === "body"
+                      ? "Body"
+                      : `Headers (${Object.keys(response.headers).length})`}
                   </button>
                 ))}
                 {responseTab === "body" && (
@@ -846,14 +990,17 @@ export function PlugDebugger({
               </div>
               <div className="flex items-center gap-1">
                 {copiedPath && (
-                  <span className="text-[10px] text-emerald-600 mr-1">{copiedPath}</span>
+                  <span className="text-[10px] text-emerald-600 mr-1">
+                    {copiedPath}
+                  </span>
                 )}
                 {responseTab === "body" && (
                   <button
                     onClick={() => {
-                      const text = typeof response.body === "string"
-                        ? response.body
-                        : JSON.stringify(response.body, null, 2);
+                      const text =
+                        typeof response.body === "string"
+                          ? response.body
+                          : JSON.stringify(response.body, null, 2);
                       navigator.clipboard.writeText(text);
                     }}
                     className="px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
@@ -866,103 +1013,133 @@ export function PlugDebugger({
             </div>
 
             <div className="p-4 max-h-[480px] overflow-auto">
-              {responseTab === "body" && responseView === "raw" && (() => {
-                const raw = typeof response.body === "string"
-                  ? response.body
-                  : JSON.stringify(response.body, null, 2);
-                const MAX_DISPLAY = 50_000;
-                const truncated = raw.length > MAX_DISPLAY;
-                const displayRaw = truncated ? raw.slice(0, MAX_DISPLAY) : raw;
+              {responseTab === "body" &&
+                responseView === "raw" &&
+                (() => {
+                  const raw =
+                    typeof response.body === "string"
+                      ? response.body
+                      : JSON.stringify(response.body, null, 2);
+                  const MAX_DISPLAY = 50_000;
+                  const truncated = raw.length > MAX_DISPLAY;
+                  const displayRaw = truncated
+                    ? raw.slice(0, MAX_DISPLAY)
+                    : raw;
 
-                if (!schemaDiff || typeof response.body !== "object" || response.body === null) {
+                  if (
+                    !schemaDiff ||
+                    typeof response.body !== "object" ||
+                    response.body === null
+                  ) {
+                    return (
+                      <>
+                        <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                          {displayRaw}
+                        </pre>
+                        {truncated && (
+                          <div className="mt-3 rounded bg-muted/50 px-3 py-2 text-center">
+                            <p className="text-[10px] text-muted-foreground">
+                              Response truncated (
+                              {(raw.length / 1024).toFixed(0)} KB total). Copy
+                              to see full output.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  }
+
+                  const lines = displayRaw.split("\n");
+                  const topLevelKeys = new Set([
+                    ...schemaDiff.matched,
+                    ...schemaDiff.unexpected,
+                  ]);
+                  const keyLineMap = new Map<
+                    string,
+                    "matched" | "unexpected"
+                  >();
+                  for (const k of schemaDiff.matched)
+                    keyLineMap.set(k, "matched");
+                  for (const k of schemaDiff.unexpected)
+                    keyLineMap.set(k, "unexpected");
+
+                  const missingLines = schemaDiff.missing.map((key) => ({
+                    key,
+                    line: `  "${key}": ...`,
+                  }));
+
                   return (
                     <>
-                      <pre className="text-xs font-mono whitespace-pre-wrap break-words">
-                        {displayRaw}
-                      </pre>
+                      <div className="text-xs font-mono whitespace-pre-wrap break-words">
+                        {lines.map((line, i) => {
+                          const isOpeningBrace = line.trim() === "{";
+
+                          const keyMatch = line.match(/^\s+"([^"]+)":/);
+                          let bg = "";
+                          let prefix = " ";
+                          if (keyMatch && topLevelKeys.has(keyMatch[1])) {
+                            const status = keyLineMap.get(keyMatch[1]);
+                            if (status === "matched") {
+                              bg = "bg-emerald-500/10";
+                            } else if (status === "unexpected") {
+                              bg = "bg-amber-500/10";
+                              prefix = "+";
+                            }
+                          }
+
+                          return (
+                            <React.Fragment key={i}>
+                              <div className={`px-1 -mx-1 rounded-sm ${bg}`}>
+                                <span
+                                  className={`select-none inline-block w-4 text-[10px] ${prefix === "+" ? "text-amber-600" : "text-transparent"}`}
+                                >
+                                  {prefix}
+                                </span>
+                                {line}
+                              </div>
+                              {isOpeningBrace &&
+                                missingLines.length > 0 &&
+                                missingLines.map((m) => (
+                                  <div
+                                    key={m.key}
+                                    className="px-1 -mx-1 rounded-sm bg-red-500/10"
+                                  >
+                                    <span className="select-none inline-block w-4 text-[10px] text-red-500">
+                                      −
+                                    </span>
+                                    <span className="text-red-400 line-through">
+                                      {m.line}
+                                    </span>
+                                  </div>
+                                ))}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
                       {truncated && (
                         <div className="mt-3 rounded bg-muted/50 px-3 py-2 text-center">
                           <p className="text-[10px] text-muted-foreground">
-                            Response truncated ({(raw.length / 1024).toFixed(0)} KB total). Copy to see full output.
+                            Response truncated ({(raw.length / 1024).toFixed(0)}{" "}
+                            KB total). Copy to see full output.
                           </p>
                         </div>
                       )}
                     </>
                   );
-                }
-
-                const lines = displayRaw.split("\n");
-                const topLevelKeys = new Set([
-                  ...schemaDiff.matched,
-                  ...schemaDiff.unexpected,
-                ]);
-                const keyLineMap = new Map<string, "matched" | "unexpected">();
-                for (const k of schemaDiff.matched) keyLineMap.set(k, "matched");
-                for (const k of schemaDiff.unexpected) keyLineMap.set(k, "unexpected");
-
-                const missingLines = schemaDiff.missing.map((key) => ({
-                  key,
-                  line: `  "${key}": ...`,
-                }));
-
-                return (
-                  <>
-                    <div className="text-xs font-mono whitespace-pre-wrap break-words">
-                      {lines.map((line, i) => {
-                        const isOpeningBrace = line.trim() === "{";
-
-                        const keyMatch = line.match(/^\s+"([^"]+)":/);
-                        let bg = "";
-                        let prefix = " ";
-                        if (keyMatch && topLevelKeys.has(keyMatch[1])) {
-                          const status = keyLineMap.get(keyMatch[1]);
-                          if (status === "matched") {
-                            bg = "bg-emerald-500/10";
-                          } else if (status === "unexpected") {
-                            bg = "bg-amber-500/10";
-                            prefix = "+";
-                          }
-                        }
-
-                        return (
-                          <React.Fragment key={i}>
-                            <div className={`px-1 -mx-1 rounded-sm ${bg}`}>
-                              <span className={`select-none inline-block w-4 text-[10px] ${prefix === "+" ? "text-amber-600" : "text-transparent"}`}>
-                                {prefix}
-                              </span>
-                              {line}
-                            </div>
-                            {isOpeningBrace && missingLines.length > 0 && missingLines.map((m) => (
-                              <div key={m.key} className="px-1 -mx-1 rounded-sm bg-red-500/10">
-                                <span className="select-none inline-block w-4 text-[10px] text-red-500">−</span>
-                                <span className="text-red-400 line-through">{m.line}</span>
-                              </div>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-                    </div>
-                    {truncated && (
-                      <div className="mt-3 rounded bg-muted/50 px-3 py-2 text-center">
-                        <p className="text-[10px] text-muted-foreground">
-                          Response truncated ({(raw.length / 1024).toFixed(0)} KB total). Copy to see full output.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
+                })()}
               {responseTab === "body" && responseView === "tree" && (
                 <div className="text-xs">
                   {buildJsonTree(
                     response.body,
                     "",
                     copyJsonPath,
-                    schemaDiff ? {
-                      matched: new Set(schemaDiff.matched),
-                      unexpected: new Set(schemaDiff.unexpected),
-                      missing: schemaDiff.missing,
-                    } : undefined,
+                    schemaDiff
+                      ? {
+                          matched: new Set(schemaDiff.matched),
+                          unexpected: new Set(schemaDiff.unexpected),
+                          missing: schemaDiff.missing,
+                        }
+                      : undefined,
                   )}
                 </div>
               )}
@@ -997,7 +1174,8 @@ export function PlugDebugger({
                 : "Enter a path and hit Send to fire a request through this plug."}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              Requests flow through the real plug code path — auth, retry, and hooks all apply.
+              Requests flow through the real plug code path — auth, retry, and
+              hooks all apply.
             </p>
           </div>
         )}

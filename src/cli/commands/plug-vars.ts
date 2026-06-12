@@ -63,8 +63,8 @@ async function checkConnectivity(baseUrl: string): Promise<void> {
   }
 }
 
-type VariablesResponse = {
-  fields: Array<{
+interface VariablesResponse {
+  fields: {
     key: string;
     label: string;
     type: "text" | "password" | "url";
@@ -73,10 +73,10 @@ type VariablesResponse = {
     required?: boolean;
     placeholder?: string;
     defaultValue?: string;
-  }>;
+  }[];
   values: Record<string, string>;
   configured: boolean;
-};
+}
 
 export const varsCommand = new Command("vars")
   .description("View and manage plug variables via the running Khotan API")
@@ -104,7 +104,7 @@ export const varsCommand = new Command("vars")
 
       if (opts.list) {
         const plugsRes = await fetch(`${baseUrl}/plugs`);
-        const plugs = (await plugsRes.json()) as Array<{ name: string }>;
+        const plugs = (await plugsRes.json()) as { name: string }[];
         const variables = await Promise.all(
           plugs.map(async (plug) => {
             const res = await fetch(`${baseUrl}/variables/${plug.name}`);
@@ -174,9 +174,12 @@ export const varsCommand = new Command("vars")
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json().catch(() => ({})) as { error?: string };
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
         if (!res.ok) {
-          fail("set_failed", data.error ?? `Failed to set variables for "${plugName}"`);
+          fail(
+            "set_failed",
+            data.error ?? `Failed to set variables for "${plugName}"`,
+          );
         }
         output({ ok: true, action: "set", plugName });
         return;
@@ -187,8 +190,13 @@ export const varsCommand = new Command("vars")
           method: "DELETE",
         });
         if (!res.ok && res.status !== 204) {
-          const data = await res.json().catch(() => ({})) as { error?: string };
-          fail("clear_failed", data.error ?? `Failed to clear variables for "${plugName}"`);
+          const data = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          fail(
+            "clear_failed",
+            data.error ?? `Failed to clear variables for "${plugName}"`,
+          );
         }
         output({ ok: true, action: "clear", plugName });
         return;

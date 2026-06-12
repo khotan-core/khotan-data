@@ -16,7 +16,13 @@ export interface ComponentFile {
    * - "projectRoot" — the project root (cwd)
    * - "agentSkills" — installed to all detected agent directories (Cursor, Claude, Codex, etc.)
    */
-  outputBase: "outputDir" | "components" | "app" | "appRoot" | "projectRoot" | "agentSkills";
+  outputBase:
+    | "outputDir"
+    | "components"
+    | "app"
+    | "appRoot"
+    | "projectRoot"
+    | "agentSkills";
 }
 
 /** Skill name extracted from an agentSkills entry (the directory name) */
@@ -122,7 +128,15 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     requiresShadcn: true,
     dependencies: {
       npmPackages: ["drizzle-orm"],
-      shadcnComponents: ["card", "badge", "table", "switch", "button", "input", "label"],
+      shadcnComponents: [
+        "card",
+        "badge",
+        "table",
+        "switch",
+        "button",
+        "input",
+        "label",
+      ],
     },
     files: [
       {
@@ -161,7 +175,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "components",
       },
       {
-        templatePath: path.resolve(__dirname, "templates", "webhook-events-table.tsx"),
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "webhook-events-table.tsx",
+        ),
         outputFile: "webhook-events-table.tsx",
         outputBase: "components",
       },
@@ -169,8 +187,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   "plug-debugger": {
     name: "plug-debugger",
-    description:
-      "Dev-only debug panel for testing plug requests interactively",
+    description: "Dev-only debug panel for testing plug requests interactively",
     requiresShadcn: true,
     requires: ["plug"],
     dependencies: {
@@ -186,8 +203,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   catch: {
     name: "catch",
-    description:
-      "Durable webhook event processing via Vercel Workflow",
+    description: "Durable webhook event processing via Vercel Workflow",
     requires: ["wire"],
     requiresWorkflowIntegration: true,
     dependencies: {
@@ -230,7 +246,8 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   inflow: {
     name: "inflow",
-    description: "Durable flow for pulling data from a plug into your app via Vercel Workflow",
+    description:
+      "Durable flow for pulling data from a plug into your app via Vercel Workflow",
     requires: ["plug", "schema"],
     requiresWorkflowIntegration: true,
     dependencies: {
@@ -251,7 +268,8 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   outflow: {
     name: "outflow",
-    description: "Durable flow for pushing app data out through a plug via Vercel Workflow",
+    description:
+      "Durable flow for pushing app data out through a plug via Vercel Workflow",
     requires: ["plug", "schema"],
     requiresWorkflowIntegration: true,
     dependencies: {
@@ -264,7 +282,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "outputDir",
       },
       {
-        templatePath: path.resolve(__dirname, "templates", "outflow.example.ts"),
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "outflow.example.ts",
+        ),
         outputFile: "flows/outflow.example.ts",
         outputBase: "outputDir",
       },
@@ -272,7 +294,8 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   relay: {
     name: "relay",
-    description: "Durable flow for moving data between plugs via Vercel Workflow",
+    description:
+      "Durable flow for moving data between plugs via Vercel Workflow",
     requires: ["plug", "schema"],
     requiresWorkflowIntegration: true,
     dependencies: {
@@ -305,8 +328,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
   },
   "skill-setup": {
     name: "skill-setup",
-    description:
-      "Agent skill for setting up khotan-data in a Next.js project",
+    description: "Agent skill for setting up khotan-data in a Next.js project",
     files: [
       {
         templatePath: path.resolve(__dirname, "templates", "skill-setup.md"),
@@ -333,7 +355,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       "Agent skill for setting up the Hub dashboard and Plug Debugger UI",
     files: [
       {
-        templatePath: path.resolve(__dirname, "templates", "skill-dashboard.md"),
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "skill-dashboard.md",
+        ),
         outputFile: "khotan-dashboard",
         outputBase: "agentSkills",
       },
@@ -390,7 +416,8 @@ const BLOCKS: Record<string, ComponentEntry> = {
   },
   "logs-page-1": {
     name: "logs-page-1",
-    description: "Page route at /logs that renders recent runs and webhook events",
+    description:
+      "Page route at /logs that renders recent runs and webhook events",
     requires: ["logs"],
     files: [
       {
@@ -402,7 +429,8 @@ const BLOCKS: Record<string, ComponentEntry> = {
   },
   graph: {
     name: "graph",
-    description: "Standalone topology graph page at /graph with filtering and run-state overlays",
+    description:
+      "Standalone topology graph page at /graph with filtering and run-state overlays",
     requiresShadcn: true,
     dependencies: {
       npmPackages: ["@xyflow/react"],
@@ -410,7 +438,11 @@ const BLOCKS: Record<string, ComponentEntry> = {
     },
     files: [
       {
-        templatePath: path.resolve(__dirname, "templates", "topology-canvas.tsx"),
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "topology-canvas.tsx",
+        ),
         outputFile: "topology-canvas.tsx",
         outputBase: "components",
       },

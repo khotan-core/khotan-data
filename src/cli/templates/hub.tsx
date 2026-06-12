@@ -58,7 +58,14 @@ interface WebhookHandler {
   events: string[] | null;
   enabled: boolean;
   lastRunAt: string | null;
-  lastRunStatus: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled" | null;
+  lastRunStatus:
+    | "pending"
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "cancelled"
+    | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -234,7 +241,13 @@ export function KhotanHub({
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold tracking-tight">Khotan Hub</h2>
-        <Button variant="outline" size="sm" onClick={() => { window.location.href = logsHref; }}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            window.location.href = logsHref;
+          }}
+        >
           Open Logs
         </Button>
       </div>
@@ -313,7 +326,9 @@ export function KhotanHub({
                   <TableBody>
                     {plugFlows.map((flow) => (
                       <TableRow key={flow.id}>
-                        <TableCell className="font-medium">{flow.name}</TableCell>
+                        <TableCell className="font-medium">
+                          {flow.name}
+                        </TableCell>
                         <TableCell>
                           <Badge
                             variant={flowTypeVariant[flow.type] ?? "outline"}
@@ -327,7 +342,10 @@ export function KhotanHub({
                         <TableCell>
                           {flow.lastRunStatus ? (
                             <Badge
-                              variant={runStatusVariant[flow.lastRunStatus] ?? "secondary"}
+                              variant={
+                                runStatusVariant[flow.lastRunStatus] ??
+                                "secondary"
+                              }
                             >
                               {flow.lastRunStatus}
                             </Badge>
@@ -369,24 +387,37 @@ export function KhotanHub({
                   <TableBody>
                     {webhookHandlers.map((handler) => (
                       <TableRow key={handler.id}>
-                        <TableCell className="font-medium">{handler.name}</TableCell>
+                        <TableCell className="font-medium">
+                          {handler.name}
+                        </TableCell>
                         <TableCell>
-                          <Badge variant={handler.type === "catch" ? "default" : "secondary"}>
+                          <Badge
+                            variant={
+                              handler.type === "catch" ? "default" : "secondary"
+                            }
+                          >
                             {handler.type}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {handler.events?.length ? handler.events.join(", ") : "from wire config"}
+                          {handler.events?.length
+                            ? handler.events.join(", ")
+                            : "from wire config"}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {handler.destinationPlugId
-                            ? plugs.find((p) => p.id === handler.destinationPlugId)?.name ?? handler.destinationPlugId
+                            ? (plugs.find(
+                                (p) => p.id === handler.destinationPlugId,
+                              )?.name ?? handler.destinationPlugId)
                             : "—"}
                         </TableCell>
                         <TableCell>
                           {handler.lastRunStatus ? (
                             <Badge
-                              variant={runStatusVariant[handler.lastRunStatus] ?? "secondary"}
+                              variant={
+                                runStatusVariant[handler.lastRunStatus] ??
+                                "secondary"
+                              }
                             >
                               {handler.lastRunStatus}
                             </Badge>

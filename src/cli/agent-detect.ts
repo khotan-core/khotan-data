@@ -55,7 +55,9 @@ export function detectAgents(cwd: string): AgentTarget[] {
 
   if (detected.length > 0) return detected;
 
-  return AGENT_TARGETS.filter((t) => t.agent === "cursor" || t.agent === "claude");
+  return AGENT_TARGETS.filter(
+    (t) => t.agent === "cursor" || t.agent === "claude",
+  );
 }
 
 export interface SkillDefinition {

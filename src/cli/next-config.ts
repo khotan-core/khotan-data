@@ -23,11 +23,15 @@ function findNextConfigPath(cwd: string): string {
 }
 
 function ensureWorkflowImport(source: string): string {
-  if (source.includes(`from "workflow/next"`) || source.includes(`from 'workflow/next'`)) {
+  if (
+    source.includes(`from "workflow/next"`) ||
+    source.includes(`from 'workflow/next'`)
+  ) {
     return source;
   }
 
-  const nextImportPattern = /import\s+type\s+\{\s*NextConfig\s*\}\s+from\s+["']next["'];?\n?/;
+  const nextImportPattern =
+    /import\s+type\s+\{\s*NextConfig\s*\}\s+from\s+["']next["'];?\n?/;
   if (nextImportPattern.test(source)) {
     return source.replace(
       nextImportPattern,
@@ -45,18 +49,26 @@ function wrapDefaultExport(source: string): string | null {
 
   const namedExportPattern = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/;
   if (namedExportPattern.test(source)) {
-    return source.replace(namedExportPattern, "export default withWorkflow($1);");
+    return source.replace(
+      namedExportPattern,
+      "export default withWorkflow($1);",
+    );
   }
 
   const objectExportPattern = /export\s+default\s+(\{[\s\S]*\})\s*;?/m;
   if (objectExportPattern.test(source)) {
-    return source.replace(objectExportPattern, "export default withWorkflow($1);");
+    return source.replace(
+      objectExportPattern,
+      "export default withWorkflow($1);",
+    );
   }
 
   return null;
 }
 
-export function ensureWorkflowNextConfig(cwd: string): EnsureWorkflowNextConfigResult {
+export function ensureWorkflowNextConfig(
+  cwd: string,
+): EnsureWorkflowNextConfigResult {
   const configPath = findNextConfigPath(cwd);
 
   if (!fs.existsSync(configPath)) {

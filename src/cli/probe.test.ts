@@ -1,10 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  formatSize,
-  parsePortFromEnvFile,
-} from "./commands/probe.js";
+import { formatSize, parsePortFromEnvFile } from "./commands/probe.js";
 import { plugCommand, probeCommand } from "./commands/probe.js";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +9,10 @@ import { plugCommand, probeCommand } from "./commands/probe.js";
 // ---------------------------------------------------------------------------
 
 describe("probe port detection", () => {
-  const tmpDir = path.join(import.meta.dirname ?? __dirname, "__probe_test_tmp");
+  const tmpDir = path.join(
+    import.meta.dirname ?? __dirname,
+    "__probe_test_tmp",
+  );
 
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -167,9 +167,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-async function runProbeAction(
-  args: string[],
-) {
+async function runProbeAction(args: string[]) {
   const writes: string[] = [];
   const writeSpy = vi
     .spyOn(process.stdout, "write")
@@ -178,9 +176,11 @@ async function runProbeAction(
       writes.push(typeof chunk === "string" ? chunk : String(chunk));
       return true;
     });
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number) => {
-    throw new Error(`EXIT:${String(code ?? 0)}`);
-  });
+  const exitSpy = vi
+    .spyOn(process, "exit")
+    .mockImplementation((code?: number) => {
+      throw new Error(`EXIT:${String(code ?? 0)}`);
+    });
 
   let thrown: unknown = null;
   try {
@@ -227,8 +227,12 @@ describe("probe command integration", () => {
     ]);
 
     expect(thrown).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:3000/api/khotan/debug");
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:3000/api/khotan/plugs");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/khotan/debug",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/khotan/plugs",
+    );
     expect(parsed[0]).toEqual({
       ok: true,
       plugs: [
@@ -256,7 +260,9 @@ describe("probe command integration", () => {
     ]);
 
     expect(thrown).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:3000/api/khotan/debug");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/khotan/debug",
+    );
     expect(parsed[0]).toEqual({
       ok: true,
       plugs: [],

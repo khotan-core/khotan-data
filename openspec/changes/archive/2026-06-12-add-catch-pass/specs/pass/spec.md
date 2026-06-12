@@ -8,7 +8,7 @@ The scaffolded `pass.ts` SHALL export a `pass()` builder function that accepts a
 - **THEN** the function SHALL return a `PassRegistration` object with `type: "pass"`, the `to` field, and a reference to the workflow function
 
 ### Requirement: PassContext type
-The scaffolded `pass.ts` SHALL export a `PassContext` interface with: `event` (Record<string, unknown>), `eventType` (string), `headers` (Record<string, string>), and `destVars` (Record<string, string> — serialized credentials for the destination plug, auto-injected by the factory).
+The scaffolded `pass.ts` SHALL export a `PassContext` interface with: `event` (Record<string, unknown>), `eventType` (string), `headers` (Record<string, string>), `destVars` (Record<string, string> — variables for the destination plug, auto-injected by the factory), and `khotanRunId` (string — the run identifier created by the factory for tracking).
 
 #### Scenario: PassContext includes destination vars
 - **WHEN** the factory starts a pass workflow

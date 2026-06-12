@@ -2,7 +2,7 @@ import { eq, desc, sql, count, inArray } from "drizzle-orm";
 
 declare const process: { env: Record<string, string | undefined> };
 
-const _khotanDebug = typeof process !== "undefined" && process.env?.["KHOTAN_DEBUG"];
+const _khotanDebug = process?.env?.["KHOTAN_DEBUG"];
 function kd(scope: string, ...args: unknown[]) {
   if (_khotanDebug) console.log(`[khotan:${scope}]`, ...args);
 }
@@ -145,7 +145,10 @@ const khotanWebhookHandlers = pgTable(
       .notNull(),
   },
   (table) => [
-    unique("khotan_webhook_handlers_wire_id_name_unique").on(table.wireId, table.name),
+    unique("khotan_webhook_handlers_wire_id_name_unique").on(
+      table.wireId,
+      table.name,
+    ),
     index("khotan_webhook_handlers_wire_id_idx").on(table.wireId),
   ],
 );
@@ -168,7 +171,9 @@ const khotanWebhookEvents = pgTable(
   },
   (table) => [
     index("khotan_webhook_events_wire_id_idx").on(table.wireId),
-    index("khotan_webhook_events_webhook_handler_id_idx").on(table.webhookHandlerId),
+    index("khotan_webhook_events_webhook_handler_id_idx").on(
+      table.webhookHandlerId,
+    ),
     index("khotan_webhook_events_khotan_run_id_idx").on(table.khotanRunId),
     index("khotan_webhook_events_received_at_idx").on(table.receivedAt.desc()),
   ],
@@ -188,7 +193,14 @@ const khotanRuns = pgTable(
       enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
     }).notNull(),
     status: text("status", {
-      enum: ["pending", "running", "completed", "partial", "failed", "cancelled"],
+      enum: [
+        "pending",
+        "running",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled",
+      ],
     })
       .default("pending")
       .notNull(),
@@ -252,19 +264,13 @@ const khotanMappings = pgTable(
 async function deriveKey(secret: string): Promise<CryptoKey> {
   const encoded = new TextEncoder().encode(secret);
   const hash = await crypto.subtle.digest("SHA-256", encoded);
-  return crypto.subtle.importKey(
-    "raw",
-    hash,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt", "decrypt"],
-  );
+  return crypto.subtle.importKey("raw", hash, { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
-async function encryptVars(
-  plaintext: string,
-  secret: string,
-): Promise<string> {
+async function encryptVars(plaintext: string, secret: string): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(secret);
   const encoded = new TextEncoder().encode(plaintext);
@@ -279,10 +285,7 @@ async function encryptVars(
   return bytesToHex(combined);
 }
 
-async function decryptVars(
-  encrypted: string,
-  secret: string,
-): Promise<string> {
+async function decryptVars(encrypted: string, secret: string): Promise<string> {
   const combined = hexToBytes(encrypted);
   const iv = combined.slice(0, 12);
   const ciphertext = combined.slice(12);
@@ -321,8 +324,18 @@ export interface ResourceRegistration {
 
 export type FlowType = "inflow" | "outflow" | "relay" | "webhook";
 
-export type KhotanRunStatus = "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
-export type KhotanTerminalRunStatus = "completed" | "partial" | "failed" | "cancelled";
+export type KhotanRunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
+export type KhotanTerminalRunStatus =
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
 
 export interface FlowRunResult {
   status?: KhotanTerminalRunStatus;
@@ -337,8 +350,38 @@ export interface FlowRunResult {
 }
 
 export interface FlowRunContext {
-  plug: { get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T> };
-  flow: { id: string; name: string; type: FlowType; resource?: string | null; to?: string | null };
+  plug: {
+    get<T>(
+      path: string,
+      options?: {
+        params?: Record<string, unknown>;
+        headers?: Record<string, string>;
+      },
+    ): Promise<T>;
+    post<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    put<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    patch<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    delete<T>(
+      path: string,
+      options?: { headers?: Record<string, string> },
+    ): Promise<T>;
+  };
+  flow: {
+    id: string;
+    name: string;
+    type: FlowType;
+    resource?: string | null;
+    to?: string | null;
+  };
   runType: string;
   body?: unknown;
   vars: Record<string, string>;
@@ -346,7 +389,13 @@ export interface FlowRunContext {
 }
 
 export interface FlowWorkflowContext {
-  flow: { id: string; name: string; type: FlowType; resource?: string | null; to?: string | null };
+  flow: {
+    id: string;
+    name: string;
+    type: FlowType;
+    resource?: string | null;
+    to?: string | null;
+  };
   runType: string;
   body?: unknown;
   vars: Record<string, string>;
@@ -377,7 +426,31 @@ export interface FlowRegistration {
 }
 
 export interface WireSubscribeContext {
-  plug: { get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T> };
+  plug: {
+    get<T>(
+      path: string,
+      options?: {
+        params?: Record<string, unknown>;
+        headers?: Record<string, string>;
+      },
+    ): Promise<T>;
+    post<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    put<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    patch<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    delete<T>(
+      path: string,
+      options?: { headers?: Record<string, string> },
+    ): Promise<T>;
+  };
   callbackUrl: string;
   events: string[];
   wireVars: Record<string, string>;
@@ -385,7 +458,31 @@ export interface WireSubscribeContext {
 }
 
 export interface WireUnsubscribeContext {
-  plug: { get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string> }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string> }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T> };
+  plug: {
+    get<T>(
+      path: string,
+      options?: {
+        params?: Record<string, unknown>;
+        headers?: Record<string, string>;
+      },
+    ): Promise<T>;
+    post<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    put<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    patch<T>(
+      path: string,
+      options?: { body?: unknown; headers?: Record<string, string> },
+    ): Promise<T>;
+    delete<T>(
+      path: string,
+      options?: { headers?: Record<string, string> },
+    ): Promise<T>;
+  };
   remoteId: string;
   wireVars: Record<string, string>;
   setWireVars(updates: Record<string, string>): Promise<void>;
@@ -408,7 +505,12 @@ export interface CatchRegistration {
   type: "catch";
   name: string;
   events?: string[];
-  workflow: (ctx: { event: Record<string, unknown>; eventType: string; headers: Record<string, string>; khotanRunId: string }) => Promise<void>;
+  workflow: (ctx: {
+    event: Record<string, unknown>;
+    eventType: string;
+    headers: Record<string, string>;
+    khotanRunId: string;
+  }) => Promise<void>;
 }
 
 export interface PassRegistration {
@@ -416,7 +518,13 @@ export interface PassRegistration {
   name: string;
   to: string;
   events?: string[];
-  workflow: (ctx: { event: Record<string, unknown>; eventType: string; headers: Record<string, string>; destVars: Record<string, string>; khotanRunId: string }) => Promise<void>;
+  workflow: (ctx: {
+    event: Record<string, unknown>;
+    eventType: string;
+    headers: Record<string, string>;
+    destVars: Record<string, string>;
+    khotanRunId: string;
+  }) => Promise<void>;
 }
 
 export type WebhookRegistration = CatchRegistration | PassRegistration;
@@ -434,7 +542,74 @@ export interface VarField {
 
 export interface PlugRegistration {
   name: string;
-  plug: { baseUrl: string; authType: string; varFields?: readonly VarField[]; endpoints?: Record<string, { method: string; path: string; description?: string; body?: { _def?: unknown; shape?: Record<string, unknown> }; query?: { _def?: unknown; shape?: Record<string, unknown> }; responses?: Record<number, { _def?: unknown; shape?: Record<string, unknown> }> }>; get<T>(path: string, options?: { params?: Record<string, unknown>; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; post<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; put<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; patch<T>(path: string, options?: { body?: unknown; headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T>; delete<T>(path: string, options?: { headers?: Record<string, string>; vars?: Record<string, string>; _setVars?: (updates: Record<string, string>) => Promise<void>; _skipHooks?: boolean }): Promise<T> };
+  plug: {
+    baseUrl: string;
+    authType: string;
+    varFields?: readonly VarField[];
+    endpoints?: Record<
+      string,
+      {
+        method: string;
+        path: string;
+        description?: string;
+        body?: { _def?: unknown; shape?: Record<string, unknown> };
+        query?: { _def?: unknown; shape?: Record<string, unknown> };
+        responses?: Record<
+          number,
+          { _def?: unknown; shape?: Record<string, unknown> }
+        >;
+      }
+    >;
+    get<T>(
+      path: string,
+      options?: {
+        params?: Record<string, unknown>;
+        headers?: Record<string, string>;
+        vars?: Record<string, string>;
+        _setVars?: (updates: Record<string, string>) => Promise<void>;
+        _skipHooks?: boolean;
+      },
+    ): Promise<T>;
+    post<T>(
+      path: string,
+      options?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        vars?: Record<string, string>;
+        _setVars?: (updates: Record<string, string>) => Promise<void>;
+        _skipHooks?: boolean;
+      },
+    ): Promise<T>;
+    put<T>(
+      path: string,
+      options?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        vars?: Record<string, string>;
+        _setVars?: (updates: Record<string, string>) => Promise<void>;
+        _skipHooks?: boolean;
+      },
+    ): Promise<T>;
+    patch<T>(
+      path: string,
+      options?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        vars?: Record<string, string>;
+        _setVars?: (updates: Record<string, string>) => Promise<void>;
+        _skipHooks?: boolean;
+      },
+    ): Promise<T>;
+    delete<T>(
+      path: string,
+      options?: {
+        headers?: Record<string, string>;
+        vars?: Record<string, string>;
+        _setVars?: (updates: Record<string, string>) => Promise<void>;
+        _skipHooks?: boolean;
+      },
+    ): Promise<T>;
+  };
   vars?: VarField[];
   flows?: FlowRegistration[];
   endpoints?: Record<string, { method: string; path: string }>;
@@ -496,7 +671,10 @@ export interface KhotanAdapter {
   updateFlowResourceId(flowId: string, resourceId: string): Promise<void>;
   togglePlugEnabled(plugId: string, enabled: boolean): Promise<void>;
   toggleFlowEnabled(flowId: string, enabled: boolean): Promise<void>;
-  toggleWebhookHandlerEnabled(handlerId: string, enabled: boolean): Promise<void>;
+  toggleWebhookHandlerEnabled(
+    handlerId: string,
+    enabled: boolean,
+  ): Promise<void>;
 
   insertWire(wire: {
     plugId: string;
@@ -508,8 +686,19 @@ export interface KhotanAdapter {
   getActiveWire(plugId: string): Promise<Record<string, unknown> | null>;
   getPlugWire(plugId: string): Promise<Record<string, unknown> | null>;
   getWire(wireId: string): Promise<Record<string, unknown> | null>;
-  updateWireStatus(wireId: string, status: "active" | "disabled" | "pending"): Promise<void>;
-  updateWireDetails(wireId: string, details: { remoteId: string; callbackUrl: string; eventTypes: string[]; status: "active" }): Promise<void>;
+  updateWireStatus(
+    wireId: string,
+    status: "active" | "disabled" | "pending",
+  ): Promise<void>;
+  updateWireDetails(
+    wireId: string,
+    details: {
+      remoteId: string;
+      callbackUrl: string;
+      eventTypes: string[];
+      status: "active";
+    },
+  ): Promise<void>;
   getWireMetadata(wireId: string): Promise<string | null>;
   updateWireMetadata(wireId: string, metadata: string): Promise<void>;
   getEncryptedVariables(plugId: string): Promise<string | null>;
@@ -523,7 +712,9 @@ export interface KhotanAdapter {
     destinationPlugId?: string | null;
   }): Promise<{ id: string }>;
   listWebhookHandlers(wireId: string): Promise<Record<string, unknown>[]>;
-  getLatestWebhookHandlerRun(handlerId: string): Promise<Record<string, unknown> | null>;
+  getLatestWebhookHandlerRun(
+    handlerId: string,
+  ): Promise<Record<string, unknown> | null>;
 
   insertRun(run: {
     flowId?: string | null;
@@ -533,20 +724,23 @@ export interface KhotanAdapter {
     runType: string;
     status: string;
   }): Promise<{ id: string }>;
-  updateRun(runId: string, updates: {
-    status: KhotanRunStatus;
-    workflowRunId?: string | null;
-    completedAt?: Date;
-    durationMs?: number;
-    extracted?: number;
-    transformed?: number;
-    created?: number;
-    updated?: number;
-    deleted?: number;
-    failed?: number;
-    error?: string | null;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<void>;
+  updateRun(
+    runId: string,
+    updates: {
+      status: KhotanRunStatus;
+      workflowRunId?: string | null;
+      completedAt?: Date;
+      durationMs?: number;
+      extracted?: number;
+      transformed?: number;
+      created?: number;
+      updated?: number;
+      deleted?: number;
+      failed?: number;
+      error?: string | null;
+      metadata?: Record<string, unknown> | null;
+    },
+  ): Promise<void>;
   insertWebhookEvent(event: {
     wireId: string;
     webhookHandlerId: string;
@@ -559,10 +753,13 @@ export interface KhotanAdapter {
     limit: number;
     offset: number;
   }): Promise<{ items: Record<string, unknown>[]; hasMore: boolean }>;
-  updateFlowLastRun(flowId: string, updates: {
-    lastRunAt: Date;
-    lastRunStatus: KhotanTerminalRunStatus;
-  }): Promise<void>;
+  updateFlowLastRun(
+    flowId: string,
+    updates: {
+      lastRunAt: Date;
+      lastRunStatus: KhotanTerminalRunStatus;
+    },
+  ): Promise<void>;
 }
 
 export interface KhotanConfig {
@@ -772,42 +969,51 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
       const hasMore = rows.length > limit;
       const pageRows = rows.slice(0, limit);
 
-      const flowIds = [...new Set(
-        pageRows
-          .map((row) => row.flowId)
-          .filter((value): value is string => typeof value === "string"),
-      )];
-      const handlerIds = [...new Set(
-        pageRows
-          .map((row) => row.webhookHandlerId)
-          .filter((value): value is string => typeof value === "string"),
-      )];
+      const flowIds = [
+        ...new Set(
+          pageRows
+            .map((row) => row.flowId)
+            .filter((value): value is string => typeof value === "string"),
+        ),
+      ];
+      const handlerIds = [
+        ...new Set(
+          pageRows
+            .map((row) => row.webhookHandlerId)
+            .filter((value): value is string => typeof value === "string"),
+        ),
+      ];
 
-      const flowRows = flowIds.length > 0
-        ? await db
-            .select({
-              id: khotanFlows.id,
-              name: khotanFlows.name,
-              plugName: khotanPlugs.name,
-            })
-            .from(khotanFlows)
-            .leftJoin(khotanPlugs, eq(khotanFlows.plugId, khotanPlugs.id))
-            .where(inArray(khotanFlows.id, flowIds))
-        : [];
+      const flowRows =
+        flowIds.length > 0
+          ? await db
+              .select({
+                id: khotanFlows.id,
+                name: khotanFlows.name,
+                plugName: khotanPlugs.name,
+              })
+              .from(khotanFlows)
+              .leftJoin(khotanPlugs, eq(khotanFlows.plugId, khotanPlugs.id))
+              .where(inArray(khotanFlows.id, flowIds))
+          : [];
 
-      const handlerRows = handlerIds.length > 0
-        ? await db
-            .select({
-              id: khotanWebhookHandlers.id,
-              name: khotanWebhookHandlers.name,
-              type: khotanWebhookHandlers.type,
-              plugName: khotanPlugs.name,
-            })
-            .from(khotanWebhookHandlers)
-            .leftJoin(khotanWires, eq(khotanWebhookHandlers.wireId, khotanWires.id))
-            .leftJoin(khotanPlugs, eq(khotanWires.plugId, khotanPlugs.id))
-            .where(inArray(khotanWebhookHandlers.id, handlerIds))
-        : [];
+      const handlerRows =
+        handlerIds.length > 0
+          ? await db
+              .select({
+                id: khotanWebhookHandlers.id,
+                name: khotanWebhookHandlers.name,
+                type: khotanWebhookHandlers.type,
+                plugName: khotanPlugs.name,
+              })
+              .from(khotanWebhookHandlers)
+              .leftJoin(
+                khotanWires,
+                eq(khotanWebhookHandlers.wireId, khotanWires.id),
+              )
+              .leftJoin(khotanPlugs, eq(khotanWires.plugId, khotanPlugs.id))
+              .where(inArray(khotanWebhookHandlers.id, handlerIds))
+          : [];
 
       const flowMap = new Map(flowRows.map((row) => [row.id, row]));
       const handlerMap = new Map(handlerRows.map((row) => [row.id, row]));
@@ -815,7 +1021,9 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
       return {
         items: pageRows.map((row) => {
           const flow = row.flowId ? flowMap.get(row.flowId) : null;
-          const handler = row.webhookHandlerId ? handlerMap.get(row.webhookHandlerId) : null;
+          const handler = row.webhookHandlerId
+            ? handlerMap.get(row.webhookHandlerId)
+            : null;
           return {
             ...row,
             sourceType: flow ? "flow" : handler ? "webhook" : "unknown",
@@ -1186,7 +1394,13 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           wireId: run.wireId ?? null,
           webhookHandlerId: run.webhookHandlerId ?? null,
           workflowRunId: run.workflowRunId ?? null,
-          runType: run.runType as "full" | "delta" | "backfill" | "reconcile" | "dry-run" | "webhook",
+          runType: run.runType as
+            | "full"
+            | "delta"
+            | "backfill"
+            | "reconcile"
+            | "dry-run"
+            | "webhook",
           status: run.status as KhotanRunStatus,
         })
         .returning({ id: khotanRuns.id });
@@ -1229,7 +1443,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
     },
 
     async listWebhookEventsPage({ limit, offset }) {
-      let rows: Array<{
+      let rows: {
         id: string;
         wireId: string | null;
         webhookHandlerId: string | null;
@@ -1238,7 +1452,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         payload: Record<string, unknown>;
         headers: Record<string, string>;
         receivedAt: Date;
-      }>;
+      }[];
 
       try {
         rows = await db
@@ -1274,17 +1488,15 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           offset ${offset}
         `);
 
-        const rawRows: Array<Record<string, unknown>> =
-          Array.isArray(legacyResult)
-            ? (legacyResult as Array<Record<string, unknown>>)
-            : "rows" in legacyResult && Array.isArray(legacyResult.rows)
-              ? (legacyResult.rows as Array<Record<string, unknown>>)
-              : [];
+        const rawRows: Record<string, unknown>[] = Array.isArray(legacyResult)
+          ? (legacyResult as Record<string, unknown>[])
+          : "rows" in legacyResult && Array.isArray(legacyResult.rows)
+            ? (legacyResult.rows as Record<string, unknown>[])
+            : [];
 
         rows = rawRows.map((row) => ({
           id: String(row["id"]),
-          wireId:
-            typeof row["wire_id"] === "string" ? row["wire_id"] : null,
+          wireId: typeof row["wire_id"] === "string" ? row["wire_id"] : null,
           webhookHandlerId:
             typeof row["webhook_handler_id"] === "string"
               ? row["webhook_handler_id"]
@@ -1309,42 +1521,51 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
       const hasMore = rows.length > limit;
       const pageRows = rows.slice(0, limit);
 
-      const handlerIds = [...new Set(
-        pageRows
-          .map((row) => row.webhookHandlerId)
-          .filter((value): value is string => typeof value === "string"),
-      )];
-      const runIds = [...new Set(
-        pageRows
-          .map((row) => row.khotanRunId)
-          .filter((value): value is string => typeof value === "string"),
-      )];
+      const handlerIds = [
+        ...new Set(
+          pageRows
+            .map((row) => row.webhookHandlerId)
+            .filter((value): value is string => typeof value === "string"),
+        ),
+      ];
+      const runIds = [
+        ...new Set(
+          pageRows
+            .map((row) => row.khotanRunId)
+            .filter((value): value is string => typeof value === "string"),
+        ),
+      ];
 
-      const handlerRows = handlerIds.length > 0
-        ? await db
-            .select({
-              id: khotanWebhookHandlers.id,
-              name: khotanWebhookHandlers.name,
-              type: khotanWebhookHandlers.type,
-              plugName: khotanPlugs.name,
-            })
-            .from(khotanWebhookHandlers)
-            .leftJoin(khotanWires, eq(khotanWebhookHandlers.wireId, khotanWires.id))
-            .leftJoin(khotanPlugs, eq(khotanWires.plugId, khotanPlugs.id))
-            .where(inArray(khotanWebhookHandlers.id, handlerIds))
-        : [];
+      const handlerRows =
+        handlerIds.length > 0
+          ? await db
+              .select({
+                id: khotanWebhookHandlers.id,
+                name: khotanWebhookHandlers.name,
+                type: khotanWebhookHandlers.type,
+                plugName: khotanPlugs.name,
+              })
+              .from(khotanWebhookHandlers)
+              .leftJoin(
+                khotanWires,
+                eq(khotanWebhookHandlers.wireId, khotanWires.id),
+              )
+              .leftJoin(khotanPlugs, eq(khotanWires.plugId, khotanPlugs.id))
+              .where(inArray(khotanWebhookHandlers.id, handlerIds))
+          : [];
 
-      const runRows = runIds.length > 0
-        ? await db
-            .select({
-              id: khotanRuns.id,
-              workflowRunId: khotanRuns.workflowRunId,
-              status: khotanRuns.status,
-              startedAt: khotanRuns.startedAt,
-            })
-            .from(khotanRuns)
-            .where(inArray(khotanRuns.id, runIds))
-        : [];
+      const runRows =
+        runIds.length > 0
+          ? await db
+              .select({
+                id: khotanRuns.id,
+                workflowRunId: khotanRuns.workflowRunId,
+                status: khotanRuns.status,
+                startedAt: khotanRuns.startedAt,
+              })
+              .from(khotanRuns)
+              .where(inArray(khotanRuns.id, runIds))
+          : [];
 
       const handlerMap = new Map(handlerRows.map((row) => [row.id, row]));
       const runMap = new Map(runRows.map((row) => [row.id, row]));
@@ -1387,37 +1608,51 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WorkflowStartFn = (workflowFn: (...args: any[]) => any, args: unknown[]) => Promise<unknown>;
-type WorkflowRunHandle = {
+type WorkflowStartFn = (
+  workflowFn: (...args: any[]) => any,
+  args: unknown[],
+) => Promise<unknown>;
+interface WorkflowRunHandle {
   runId?: string;
   status?: Promise<string>;
   returnValue?: Promise<unknown>;
   cancel?: () => Promise<void>;
-  getReadable?: (options?: { startIndex?: number; namespace?: string }) => ReadableStream;
-};
+  getReadable?: (options?: {
+    startIndex?: number;
+    namespace?: string;
+  }) => ReadableStream;
+}
 type WorkflowGetRunFn = (runId: string) => WorkflowRunHandle;
-type WorkflowGetWritableFn = <T = unknown>(options?: { namespace?: string }) => WritableStream<T>;
+type WorkflowGetWritableFn = <T = unknown>(options?: {
+  namespace?: string;
+}) => WritableStream<T>;
 
 let _workflowStart: WorkflowStartFn | null = null;
 let _workflowGetRun: WorkflowGetRunFn | null = null;
 let _workflowGetWritable: WorkflowGetWritableFn | null = null;
 
-export function __setWorkflowStartForTests(start: WorkflowStartFn | null): void {
+export function __setWorkflowStartForTests(
+  start: WorkflowStartFn | null,
+): void {
   _workflowStart = start;
 }
 
-export function __setWorkflowGetRunForTests(getRun: WorkflowGetRunFn | null): void {
+export function __setWorkflowGetRunForTests(
+  getRun: WorkflowGetRunFn | null,
+): void {
   _workflowGetRun = getRun;
 }
 
-export function __setWorkflowGetWritableForTests(getWritable: WorkflowGetWritableFn | null): void {
+export function __setWorkflowGetWritableForTests(
+  getWritable: WorkflowGetWritableFn | null,
+): void {
   _workflowGetWritable = getWritable;
 }
 
 async function importWorkflowStart(): Promise<WorkflowStartFn> {
   if (_workflowStart) return _workflowStart;
   try {
-    const mod = await import(/* webpackIgnore: true */ "workflow/api") as {
+    const mod = (await import(/* webpackIgnore: true */ "workflow/api")) as {
       start: WorkflowStartFn;
     };
     _workflowStart = mod.start;
@@ -1432,7 +1667,7 @@ async function importWorkflowStart(): Promise<WorkflowStartFn> {
 async function importWorkflowGetRun(): Promise<WorkflowGetRunFn> {
   if (_workflowGetRun) return _workflowGetRun;
   try {
-    const mod = await import(/* webpackIgnore: true */ "workflow/api") as {
+    const mod = (await import(/* webpackIgnore: true */ "workflow/api")) as {
       getRun: WorkflowGetRunFn;
     };
     _workflowGetRun = mod.getRun;
@@ -1447,7 +1682,7 @@ async function importWorkflowGetRun(): Promise<WorkflowGetRunFn> {
 async function importWorkflowGetWritable(): Promise<WorkflowGetWritableFn> {
   if (_workflowGetWritable) return _workflowGetWritable;
   try {
-    const mod = await import(/* webpackIgnore: true */ "workflow") as {
+    const mod = (await import(/* webpackIgnore: true */ "workflow")) as {
       getWritable: WorkflowGetWritableFn;
     };
     _workflowGetWritable = mod.getWritable;
@@ -1466,9 +1701,10 @@ export async function sendUpdate(
   const getWritable = await importWorkflowGetWritable();
   const writable = getWritable<string>(options);
   const writer = writable.getWriter();
-  const payload = typeof update === "string"
-    ? { type: "log", message: update }
-    : { type: "progress", ...update };
+  const payload =
+    typeof update === "string"
+      ? { type: "log", message: update }
+      : { type: "progress", ...update };
 
   try {
     await writer.write(
@@ -1481,8 +1717,8 @@ export async function sendUpdate(
 
 function getWorkflowRunId(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
-  if ("runId" in result) return String((result as { runId: unknown }).runId);
-  if ("id" in result) return String((result as { id: unknown }).id);
+  if ("runId" in result) return String(result.runId);
+  if ("id" in result) return String(result.id);
   return null;
 }
 
@@ -1490,8 +1726,9 @@ function getWorkflowReturnValue(result: unknown): Promise<unknown> | null {
   if (!result || typeof result !== "object" || !("returnValue" in result)) {
     return null;
   }
-  const returnValue = (result as { returnValue: unknown }).returnValue;
-  return returnValue && typeof (returnValue as Promise<unknown>).then === "function"
+  const returnValue = result.returnValue;
+  return returnValue &&
+    typeof (returnValue as Promise<unknown>).then === "function"
     ? (returnValue as Promise<unknown>)
     : null;
 }
@@ -1514,7 +1751,8 @@ function isWorkflowCancelledError(error: unknown): boolean {
   const record = error as Record<string, unknown>;
   const name = typeof record["name"] === "string" ? record["name"] : "";
   const status = typeof record["status"] === "string" ? record["status"] : "";
-  const message = typeof record["message"] === "string" ? record["message"] : "";
+  const message =
+    typeof record["message"] === "string" ? record["message"] : "";
   return (
     name === "WorkflowRunCancelledError" ||
     status === "cancelled" ||
@@ -1523,9 +1761,7 @@ function isWorkflowCancelledError(error: unknown): boolean {
 }
 
 function toFlowRunResult(value: unknown): FlowRunResult | undefined {
-  return value && typeof value === "object"
-    ? (value as FlowRunResult)
-    : undefined;
+  return value && typeof value === "object" ? value : undefined;
 }
 
 function getFlowRunCounters(result: FlowRunResult | undefined) {
@@ -1559,7 +1795,11 @@ function resolveTerminalRunStatus(
 // ---------------------------------------------------------------------------
 
 function extractEventTypes(body: Record<string, unknown>): string[] {
-  const candidates = body["eventTypes"] ?? body["event_types"] ?? body["events"] ?? body["enabled_events"];
+  const candidates =
+    body["eventTypes"] ??
+    body["event_types"] ??
+    body["events"] ??
+    body["enabled_events"];
   if (Array.isArray(candidates)) return candidates as string[];
   return [];
 }
@@ -1569,23 +1809,30 @@ function serializeZodSchema(schema: any): Record<string, unknown> | null {
   if (!schema) return null;
   try {
     const def = schema?._def ?? schema?.def ?? null;
-    const rawTypeName: string = typeof def?.typeName === "string"
-      ? def.typeName
-      : typeof def?.type === "string"
-        ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
-        : "";
-    const inner = def?.innerType
-      ?? def?.element
-      ?? (typeof def?.type === "object" ? def.type : null)
-      ?? null;
+    const rawTypeName: string =
+      typeof def?.typeName === "string"
+        ? def.typeName
+        : typeof def?.type === "string"
+          ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
+          : "";
+    const inner =
+      def?.innerType ??
+      def?.element ??
+      (typeof def?.type === "object" ? def.type : null) ??
+      null;
 
-    if ((rawTypeName === "ZodOptional" || rawTypeName === "ZodNullable") && inner) {
+    if (
+      (rawTypeName === "ZodOptional" || rawTypeName === "ZodNullable") &&
+      inner
+    ) {
       return serializeZodSchema(inner);
     }
 
-    const shape = typeof schema.shape === "function"
-      ? schema.shape()
-      : schema.shape ?? (typeof def?.shape === "function" ? def.shape() : def?.shape);
+    const shape =
+      typeof schema.shape === "function"
+        ? schema.shape()
+        : (schema.shape ??
+          (typeof def?.shape === "function" ? def.shape() : def?.shape));
     if (shape && typeof shape === "object") {
       const result: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(shape)) {
@@ -1598,7 +1845,7 @@ function serializeZodSchema(schema: any): Record<string, unknown> | null {
       return {
         _type: "array",
         items: serializeZodSchema(inner),
-      } as Record<string, unknown>;
+      };
     }
 
     if (rawTypeName) {
@@ -1614,15 +1861,17 @@ function serializeZodSchema(schema: any): Record<string, unknown> | null {
 function serializeZodField(field: any): string | Record<string, unknown> {
   const def = field?._def ?? field?.def ?? null;
   if (!def) return "unknown";
-  const typeName: string = typeof def.typeName === "string"
-    ? def.typeName
-    : typeof def.type === "string"
-      ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
-      : "";
-  const inner = def.innerType
-    ?? def.element
-    ?? (typeof def.type === "object" ? def.type : null)
-    ?? null;
+  const typeName: string =
+    typeof def.typeName === "string"
+      ? def.typeName
+      : typeof def.type === "string"
+        ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
+        : "";
+  const inner =
+    def.innerType ??
+    def.element ??
+    (typeof def.type === "object" ? def.type : null) ??
+    null;
 
   if (typeName === "ZodOptional" && inner) {
     const serialized = serializeZodField(inner);
@@ -1635,7 +1884,9 @@ function serializeZodField(field: any): string | Record<string, unknown> {
   if (typeName === "ZodNullable" && inner) {
     const serialized = serializeZodField(inner);
     if (typeof serialized === "string") {
-      return serialized.includes(" | null") ? serialized : `${serialized} | null`;
+      return serialized.includes(" | null")
+        ? serialized
+        : `${serialized} | null`;
     }
     return serialized;
   }
@@ -1665,7 +1916,17 @@ function serializeZodField(field: any): string | Record<string, unknown> {
 }
 
 function serializeEndpoints(
-  endpoints: Record<string, { method: string; path: string; description?: string; body?: unknown; query?: unknown; responses?: Record<number, unknown> }> | null,
+  endpoints: Record<
+    string,
+    {
+      method: string;
+      path: string;
+      description?: string;
+      body?: unknown;
+      query?: unknown;
+      responses?: Record<number, unknown>;
+    }
+  > | null,
 ) {
   if (!endpoints) return null;
   const result: Record<string, Record<string, unknown>> = {};
@@ -1681,7 +1942,10 @@ function serializeEndpoints(
     if (querySchema) entry["query"] = querySchema;
     if (ep.responses) {
       entry["responses"] = Object.fromEntries(
-        Object.entries(ep.responses).map(([code, schema]) => [code, serializeZodSchema(schema)]),
+        Object.entries(ep.responses).map(([code, schema]) => [
+          code,
+          serializeZodSchema(schema),
+        ]),
       );
     }
     result[name] = entry;
@@ -1723,7 +1987,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   const registeredFlowKeys = new Set(
     plugs.flatMap((plug) =>
-      (plug.flows ?? []).map((flow) => `${plug.name}\0${flow.name}\0${flow.type}`),
+      (plug.flows ?? []).map(
+        (flow) => `${plug.name}\0${flow.name}\0${flow.type}`,
+      ),
     ),
   );
 
@@ -1732,11 +1998,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       typeof flow["plugName"] === "string" &&
       typeof flow["name"] === "string" &&
       typeof flow["type"] === "string" &&
-      registeredFlowKeys.has(`${flow["plugName"]}\0${flow["name"]}\0${flow["type"]}`)
+      registeredFlowKeys.has(
+        `${flow["plugName"]}\0${flow["name"]}\0${flow["type"]}`,
+      )
     );
   }
 
-  function getWebhookHandlersForPlug(plug: PlugRegistration): WebhookRegistration[] {
+  function getWebhookHandlersForPlug(
+    plug: PlugRegistration,
+  ): WebhookRegistration[] {
     const handlers: WebhookRegistration[] = [];
     if (plug.webhooks) handlers.push(...plug.webhooks);
     if (plug.catches) handlers.push(...plug.catches);
@@ -1752,7 +2022,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       if (!wireConfig?.onVerify) {
         throw new Error(
           `Plug "${plug.name}" has webhook handlers but its wire does not define onVerify. ` +
-          `onVerify is required for webhook processing.`,
+            `onVerify is required for webhook processing.`,
         );
       }
     }
@@ -1824,14 +2094,16 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             }
 
             // Resolve destination plug ID for pass handlers
-            const destPlugRow = await adapter.listPlugs().then(
-              (all) => all.find((row) => row["name"] === handler.to),
-            );
+            const destPlugRow = await adapter
+              .listPlugs()
+              .then((all) => all.find((row) => row["name"] === handler.to));
             await adapter.upsertWebhookHandler({
               wireId,
               name: handler.name,
               type: "pass",
-              destinationPlugId: destPlugRow ? (destPlugRow["id"] as string) : null,
+              destinationPlugId: destPlugRow
+                ? (destPlugRow["id"] as string)
+                : null,
             });
           }
         }
@@ -1856,46 +2128,96 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
     const wireConfig = plugReg.wires[0]!;
 
-    function createBoundPlug(vars: Record<string, string>, _setVars?: (updates: Record<string, string>) => Promise<void>) {
+    function createBoundPlug(
+      vars: Record<string, string>,
+      _setVars?: (updates: Record<string, string>) => Promise<void>,
+    ) {
       const plug = plugReg!.plug;
-      const opts = (extra?: { body?: unknown; headers?: Record<string, string>; params?: Record<string, unknown> }) => ({
+      const opts = (extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        params?: Record<string, unknown>;
+      }) => ({
         ...extra,
         vars,
         ...(_setVars && { _setVars }),
       });
       return {
-        get<T>(path: string, extra?: { params?: Record<string, unknown>; headers?: Record<string, string> }) { return plug.get<T>(path, opts(extra)); },
-        post<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.post<T>(path, opts(extra)); },
-        put<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.put<T>(path, opts(extra)); },
-        patch<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plug.patch<T>(path, opts(extra)); },
-        delete<T>(path: string, extra?: { headers?: Record<string, string> }) { return plug.delete<T>(path, opts(extra)); },
+        get<T>(
+          path: string,
+          extra?: {
+            params?: Record<string, unknown>;
+            headers?: Record<string, string>;
+          },
+        ) {
+          return plug.get<T>(path, opts(extra));
+        },
+        post<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plug.post<T>(path, opts(extra));
+        },
+        put<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plug.put<T>(path, opts(extra));
+        },
+        patch<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plug.patch<T>(path, opts(extra));
+        },
+        delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
+          return plug.delete<T>(path, opts(extra));
+        },
       };
     }
 
-    async function getWireVars(wireId: string): Promise<Record<string, string>> {
+    async function getWireVars(
+      wireId: string,
+    ): Promise<Record<string, string>> {
       const raw = await adapter.getWireMetadata(wireId);
       if (!raw) return {};
       if (!secret) {
-        try { return JSON.parse(raw) as Record<string, string>; } catch { return {}; }
+        try {
+          return JSON.parse(raw) as Record<string, string>;
+        } catch {
+          return {};
+        }
       }
       try {
         const decrypted = await decryptVars(raw, secret);
         return JSON.parse(decrypted) as Record<string, string>;
       } catch {
-        try { return JSON.parse(raw) as Record<string, string>; } catch { return {}; }
+        try {
+          return JSON.parse(raw) as Record<string, string>;
+        } catch {
+          return {};
+        }
       }
     }
 
-    async function setWireVars(wireId: string, vars: Record<string, string>): Promise<void> {
+    async function setWireVars(
+      wireId: string,
+      vars: Record<string, string>,
+    ): Promise<void> {
       const serialized = JSON.stringify(vars);
-      const toStore = secret ? await encryptVars(serialized, secret) : serialized;
+      const toStore = secret
+        ? await encryptVars(serialized, secret)
+        : serialized;
       await adapter.updateWireMetadata(wireId, toStore);
     }
 
     return {
       async create(callbackUrl: string) {
         await init();
-        kd("wire", `${plugName}: creating subscription, callbackUrl=${callbackUrl}`);
+        kd(
+          "wire",
+          `${plugName}: creating subscription, callbackUrl=${callbackUrl}`,
+        );
 
         const allPlugs = await adapter.listPlugs();
         const dbPlug = allPlugs.find((p) => p["name"] === plugName);
@@ -1907,10 +2229,20 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const existingWire = await adapter.getPlugWire(plugId);
         const wireId = existingWire
           ? (existingWire["id"] as string)
-          : (await adapter.insertWire({ plugId, remoteId: "", callbackUrl, eventTypes: wireConfig.events })).id;
+          : (
+              await adapter.insertWire({
+                plugId,
+                remoteId: "",
+                callbackUrl,
+                eventTypes: wireConfig.events,
+              })
+            ).id;
 
         const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
-        const _setVars = secret ? (updates: Record<string, string>) => setVars(plugName, { ...vars, ...updates }) : undefined;
+        const _setVars = secret
+          ? (updates: Record<string, string>) =>
+              setVars(plugName, { ...vars, ...updates })
+          : undefined;
         const boundPlug = createBoundPlug(vars, _setVars);
 
         const wireVars = await getWireVars(wireId);
@@ -1920,10 +2252,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           callbackUrl,
           events: wireConfig.events,
           wireVars,
-          setWireVars: (updates) => setWireVars(wireId, { ...wireVars, ...updates }),
+          setWireVars: (updates) =>
+            setWireVars(wireId, { ...wireVars, ...updates }),
         });
 
-        kd("wire", `${plugName}: subscription created, remoteId=${result.remoteId}`);
+        kd(
+          "wire",
+          `${plugName}: subscription created, remoteId=${result.remoteId}`,
+        );
 
         await adapter.updateWireDetails(wireId, {
           remoteId: result.remoteId,
@@ -1944,7 +2280,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           throw new Error(`Wire "${wireId}" not found`);
         }
 
-        const remoteId = (wireRecord["remoteId"] ?? wireRecord["remote_id"]) as string;
+        const remoteId = (wireRecord["remoteId"] ??
+          wireRecord["remote_id"]) as string;
         kd("wire", `${plugName}: remoteId=${remoteId}`);
         if (!remoteId) {
           await adapter.updateWireStatus(wireId, "disabled");
@@ -1952,7 +2289,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
 
         const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
-        const _setVars = secret ? (updates: Record<string, string>) => setVars(plugName, { ...vars, ...updates }) : undefined;
+        const _setVars = secret
+          ? (updates: Record<string, string>) =>
+              setVars(plugName, { ...vars, ...updates })
+          : undefined;
         const boundPlug = createBoundPlug(vars, _setVars);
 
         const wireVars = await getWireVars(wireId);
@@ -1961,7 +2301,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           plug: boundPlug,
           remoteId,
           wireVars,
-          setWireVars: (updates) => setWireVars(wireId, { ...wireVars, ...updates }),
+          setWireVars: (updates) =>
+            setWireVars(wireId, { ...wireVars, ...updates }),
         });
 
         kd("wire", `${plugName}: unsubscribed successfully`);
@@ -1979,7 +2320,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     };
   }
 
-  async function triggerFlowRun(flowId: string, body: unknown): Promise<Response> {
+  async function triggerFlowRun(
+    flowId: string,
+    body: unknown,
+  ): Promise<Response> {
     const flow = await adapter.getFlow(flowId);
     if (
       !flow ||
@@ -2012,12 +2356,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       );
     }
 
-    const requestBody = body && typeof body === "object"
-      ? (body as Record<string, unknown>)
-      : {};
-    const runType = typeof requestBody["runType"] === "string"
-      ? requestBody["runType"]
-      : "full";
+    const requestBody =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const runType =
+      typeof requestBody["runType"] === "string"
+        ? requestBody["runType"]
+        : "full";
 
     const { id: runId } = await adapter.insertRun({
       flowId,
@@ -2088,17 +2432,46 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       const setFlowVars = async (updates: Record<string, string>) => {
         await setVars(plugName, { ...vars, ...updates });
       };
-      const opts = (extra?: { body?: unknown; headers?: Record<string, string>; params?: Record<string, unknown> }) => ({
+      const opts = (extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        params?: Record<string, unknown>;
+      }) => ({
         ...extra,
         vars,
         ...(secret ? { _setVars: setFlowVars } : {}),
       });
       const boundPlug = {
-        get<T>(path: string, extra?: { params?: Record<string, unknown>; headers?: Record<string, string> }) { return plugReg.plug.get<T>(path, opts(extra)); },
-        post<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plugReg.plug.post<T>(path, opts(extra)); },
-        put<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plugReg.plug.put<T>(path, opts(extra)); },
-        patch<T>(path: string, extra?: { body?: unknown; headers?: Record<string, string> }) { return plugReg.plug.patch<T>(path, opts(extra)); },
-        delete<T>(path: string, extra?: { headers?: Record<string, string> }) { return plugReg.plug.delete<T>(path, opts(extra)); },
+        get<T>(
+          path: string,
+          extra?: {
+            params?: Record<string, unknown>;
+            headers?: Record<string, string>;
+          },
+        ) {
+          return plugReg.plug.get<T>(path, opts(extra));
+        },
+        post<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plugReg.plug.post<T>(path, opts(extra));
+        },
+        put<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plugReg.plug.put<T>(path, opts(extra));
+        },
+        patch<T>(
+          path: string,
+          extra?: { body?: unknown; headers?: Record<string, string> },
+        ) {
+          return plugReg.plug.patch<T>(path, opts(extra));
+        },
+        delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
+          return plugReg.plug.delete<T>(path, opts(extra));
+        },
       };
 
       const flowContext = {
@@ -2111,13 +2484,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       if (flowReg.workflow) {
         const startWorkflow = await importWorkflowStart();
-        const result = await startWorkflow(flowReg.workflow, [{
-          flow: flowContext,
-          runType,
-          body: requestBody["body"],
-          vars,
-          khotanRunId: runId,
-        }]);
+        const result = await startWorkflow(flowReg.workflow, [
+          {
+            flow: flowContext,
+            runType,
+            body: requestBody["body"],
+            vars,
+            khotanRunId: runId,
+          },
+        ]);
         const workflowRunId = getWorkflowRunId(result);
 
         if (workflowRunId) {
@@ -2223,9 +2598,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const payload = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          const message = payload && typeof payload === "object" && "error" in payload
-            ? String((payload as { error: unknown }).error)
-            : `Failed to start flow "${flowNameOrId}"`;
+          const message =
+            payload && typeof payload === "object" && "error" in payload
+              ? String((payload as { error: unknown }).error)
+              : `Failed to start flow "${flowNameOrId}"`;
           throw new Error(message);
         }
 
@@ -2234,15 +2610,18 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     };
   }
 
-  async function getRunWithWorkflowStatus(runId: string): Promise<Record<string, unknown> | null> {
+  async function getRunWithWorkflowStatus(
+    runId: string,
+  ): Promise<Record<string, unknown> | null> {
     const run = await adapter.getRun(runId);
     if (!run) return null;
 
-    const workflowRunId = typeof run["workflowRunId"] === "string"
-      ? run["workflowRunId"]
-      : typeof run["workflow_run_id"] === "string"
-        ? run["workflow_run_id"]
-        : null;
+    const workflowRunId =
+      typeof run["workflowRunId"] === "string"
+        ? run["workflowRunId"]
+        : typeof run["workflow_run_id"] === "string"
+          ? run["workflow_run_id"]
+          : null;
 
     if (!workflowRunId) {
       return { ...run, workflowStatus: null };
@@ -2251,7 +2630,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     try {
       const getRun = await importWorkflowGetRun();
       const workflowRun = getRun(workflowRunId);
-      const workflowStatus = workflowRun.status ? await workflowRun.status : null;
+      const workflowStatus = workflowRun.status
+        ? await workflowRun.status
+        : null;
       return { ...run, workflowStatus };
     } catch (error) {
       return {
@@ -2292,7 +2673,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     const debugIdx = segments.indexOf("debug");
 
     const limit = Math.min(
-      Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+      Math.max(
+        Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20,
+        1,
+      ),
       100,
     );
     const offset = Math.max(
@@ -2303,7 +2687,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     if (request.method === "GET") {
       // GET .../debug — check if debug mode is active
       if (debugIdx !== -1 && debugIdx === segments.length - 1) {
-        const debugActive = typeof process !== "undefined" && process.env?.["KHOTAN_DEBUG"];
+        const debugActive = process?.env?.["KHOTAN_DEBUG"];
         if (!debugActive) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
@@ -2312,7 +2696,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       // GET .../debug/:plugName — plug metadata for the debugger UI
       if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        const debugActive = typeof process !== "undefined" && process.env?.["KHOTAN_DEBUG"];
+        const debugActive = process?.env?.["KHOTAN_DEBUG"];
         if (!debugActive) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
@@ -2323,29 +2707,31 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const fields = plugReg.vars ?? plugReg.plug.varFields ?? [];
         const hasConfigured = await hasVars(plugName).catch(() => false);
-        const rawEndpoints = plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
+        const rawEndpoints =
+          plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
 
         let varValues: Record<string, string> = {};
         if (hasConfigured || Object.keys(getDefaultVars(plugName)).length > 0) {
           try {
             const raw = await getVars(plugName);
             varValues = Object.fromEntries(
-              Object.entries(maskVars(plugName, raw))
-                .filter(([key]) => {
-                  const field = (fields as readonly VarField[]).find((f) => f.key === key);
-                  return field && !field.hidden;
-                }),
+              Object.entries(maskVars(plugName, raw)).filter(([key]) => {
+                const field = fields.find((f) => f.key === key);
+                return field && !field.hidden;
+              }),
             );
-          } catch { /* no secret configured */ }
+          } catch {
+            /* no secret configured */
+          }
         }
 
         return Response.json({
           name: plugReg.name,
           baseUrl: plugReg.plug.baseUrl,
           authType: plugReg.plug.authType,
-          endpoints: serializeEndpoints(rawEndpoints as Record<string, { method: string; path: string; description?: string; body?: unknown; query?: unknown; responses?: Record<number, unknown> }> | null),
+          endpoints: serializeEndpoints(rawEndpoints),
           vars: {
-            fields: (fields as readonly VarField[]).filter((f) => !f.hidden),
+            fields: fields.filter((f) => !f.hidden),
             configured: hasConfigured,
             values: varValues,
           },
@@ -2387,7 +2773,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       }
 
       // GET .../webhook-handlers/:plugName
-      if (webhookHandlersIdx !== -1 && webhookHandlersIdx === segments.length - 2) {
+      if (
+        webhookHandlersIdx !== -1 &&
+        webhookHandlersIdx === segments.length - 2
+      ) {
         const plugName = segments[webhookHandlersIdx + 1]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
@@ -2406,14 +2795,20 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const handlers = await adapter.listWebhookHandlers(wireId);
         const plugReg = plugs.find((p) => p.name === plugName);
         const configuredHandlerEvents = new Map<string, string[] | undefined>();
-        for (const handler of plugReg ? getWebhookHandlersForPlug(plugReg) : []) {
-          configuredHandlerEvents.set(`${handler.type}:${handler.name}`, handler.events);
+        for (const handler of plugReg
+          ? getWebhookHandlersForPlug(plugReg)
+          : []) {
+          configuredHandlerEvents.set(
+            `${handler.type}:${handler.name}`,
+            handler.events,
+          );
         }
         const handlersWithRuns = await Promise.all(
           handlers.map(async (handler) => {
             const handlerId = handler["id"];
             if (typeof handlerId !== "string") return handler;
-            const latestRun = await adapter.getLatestWebhookHandlerRun(handlerId);
+            const latestRun =
+              await adapter.getLatestWebhookHandlerRun(handlerId);
             return {
               ...handler,
               events:
@@ -2517,14 +2912,16 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
 
         const startIndexParam = url.searchParams.get("startIndex");
-        const parsedStartIndex = startIndexParam == null
-          ? null
-          : Number.parseInt(startIndexParam, 10);
+        const parsedStartIndex =
+          startIndexParam == null ? null : Number.parseInt(startIndexParam, 10);
         const namespace = url.searchParams.get("namespace") ?? undefined;
         const getRun = await importWorkflowGetRun();
         const workflowRun = getRun(workflowRunId);
         const streamOptions: { startIndex?: number; namespace?: string } = {};
-        if (typeof parsedStartIndex === "number" && Number.isFinite(parsedStartIndex)) {
+        if (
+          typeof parsedStartIndex === "number" &&
+          Number.isFinite(parsedStartIndex)
+        ) {
           streamOptions.startIndex = parsedStartIndex;
         }
         if (namespace) streamOptions.namespace = namespace;
@@ -2626,12 +3023,18 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const plugName = segments[webhookIdx + 1]!;
         const plugReg = plugs.find((p) => p.name === plugName);
         if (!plugReg) {
-          return Response.json({ error: `Unknown plug: ${plugName}` }, { status: 404 });
+          return Response.json(
+            { error: `Unknown plug: ${plugName}` },
+            { status: 404 },
+          );
         }
 
         const wireConfig = plugReg.wires?.[0];
-        if (!wireConfig || !wireConfig.onVerify) {
-          return Response.json({ error: `No active wire for plug: ${plugName}` }, { status: 404 });
+        if (!wireConfig?.onVerify) {
+          return Response.json(
+            { error: `No active wire for plug: ${plugName}` },
+            { status: 404 },
+          );
         }
 
         const rawBody = await request.text();
@@ -2640,7 +3043,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const allPlugs = await adapter.listPlugs();
         const dbPlug = allPlugs.find((p) => p["name"] === plugName);
         if (!dbPlug) {
-          return Response.json({ error: `Plug "${plugName}" not found in database` }, { status: 404 });
+          return Response.json(
+            { error: `Plug "${plugName}" not found in database` },
+            { status: 404 },
+          );
         }
         const plugId = dbPlug["id"] as string;
         const wireRecord = await adapter.getPlugWire(plugId);
@@ -2655,21 +3061,38 @@ export function khotan(config: KhotanConfig): KhotanInstance {
                 const decrypted = await decryptVars(raw, secret);
                 wireVars = JSON.parse(decrypted) as Record<string, string>;
               } catch {
-                try { wireVars = JSON.parse(raw) as Record<string, string>; } catch { /* empty */ }
+                try {
+                  wireVars = JSON.parse(raw) as Record<string, string>;
+                } catch {
+                  /* empty */
+                }
               }
             } else {
-              try { wireVars = JSON.parse(raw) as Record<string, string>; } catch { /* empty */ }
+              try {
+                wireVars = JSON.parse(raw) as Record<string, string>;
+              } catch {
+                /* empty */
+              }
             }
           }
         }
 
         // Convert headers to plain Record
         const headers: Record<string, string> = {};
-        request.headers.forEach((value, key) => { headers[key] = value; });
+        request.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
 
-        const verified = await wireConfig.onVerify({ headers, body: rawBody, wireVars });
+        const verified = await wireConfig.onVerify({
+          headers,
+          body: rawBody,
+          wireVars,
+        });
         if (!verified) {
-          return Response.json({ error: "Webhook verification failed" }, { status: 401 });
+          return Response.json(
+            { error: "Webhook verification failed" },
+            { status: 401 },
+          );
         }
 
         // Parse JSON after verification
@@ -2679,7 +3102,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         } catch {
           event = {};
         }
-        const eventType = typeof event["type"] === "string" ? event["type"] : "unknown";
+        const eventType =
+          typeof event["type"] === "string" ? event["type"] : "unknown";
 
         const webhookHandlers = getWebhookHandlersForPlug(plugReg);
         const catches = webhookHandlers.filter(
@@ -2694,17 +3118,27 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             const startWorkflow = await importWorkflowStart();
 
             // Look up handler IDs from DB for run tracking
-            const dbHandlers = wireId ? await adapter.listWebhookHandlers(wireId) : [];
+            const dbHandlers = wireId
+              ? await adapter.listWebhookHandlers(wireId)
+              : [];
 
             for (const c of catches) {
-              if (Array.isArray(c.events) && c.events.length > 0 && !c.events.includes(eventType)) {
+              if (
+                Array.isArray(c.events) &&
+                c.events.length > 0 &&
+                !c.events.includes(eventType)
+              ) {
                 continue;
               }
-              const handlerRow = dbHandlers.find((h) => h["name"] === c.name && h["type"] === "catch");
-              if (handlerRow && handlerRow["enabled"] === false) {
+              const handlerRow = dbHandlers.find(
+                (h) => h["name"] === c.name && h["type"] === "catch",
+              );
+              if (handlerRow?.["enabled"] === false) {
                 continue;
               }
-              const handlerId = handlerRow ? (handlerRow["id"] as string) : null;
+              const handlerId = handlerRow
+                ? (handlerRow["id"] as string)
+                : null;
               const { id: khotanRunId } = await adapter.insertRun({
                 webhookHandlerId: handlerId,
                 wireId,
@@ -2723,14 +3157,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
                 });
               }
               try {
-                const result = await startWorkflow(c.workflow, [{ event, eventType, headers, khotanRunId }]);
-                const workflowRunId = result && typeof result === "object"
-                  ? ("runId" in result
-                      ? String((result as { runId: unknown }).runId)
+                const result = await startWorkflow(c.workflow, [
+                  { event, eventType, headers, khotanRunId },
+                ]);
+                const workflowRunId =
+                  result && typeof result === "object"
+                    ? "runId" in result
+                      ? String(result.runId)
                       : "id" in result
-                        ? String((result as { id: unknown }).id)
-                        : null)
-                  : null;
+                        ? String(result.id)
+                        : null
+                    : null;
                 if (workflowRunId) {
                   await adapter.updateRun(khotanRunId, {
                     status: "running",
@@ -2738,7 +3175,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
                   });
                 }
               } catch (err) {
-                const message = err instanceof Error ? err.message : "Unknown error";
+                const message =
+                  err instanceof Error ? err.message : "Unknown error";
                 await adapter.updateRun(khotanRunId, {
                   status: "failed",
                   completedAt: new Date(),
@@ -2750,26 +3188,37 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             }
 
             for (const p of passes) {
-              if (Array.isArray(p.events) && p.events.length > 0 && !p.events.includes(eventType)) {
+              if (
+                Array.isArray(p.events) &&
+                p.events.length > 0 &&
+                !p.events.includes(eventType)
+              ) {
                 continue;
               }
-              const handlerRow = dbHandlers.find((h) => h["name"] === p.name && h["type"] === "pass");
-              if (handlerRow && handlerRow["enabled"] === false) {
+              const handlerRow = dbHandlers.find(
+                (h) => h["name"] === p.name && h["type"] === "pass",
+              );
+              if (handlerRow?.["enabled"] === false) {
                 continue;
               }
               let destVars: Record<string, string> = {};
               const destPlug = allPlugs.find((dp) => dp["name"] === p.to);
               if (destPlug) {
                 const destPlugId = destPlug["id"] as string;
-                const encrypted = await adapter.getEncryptedVariables(destPlugId);
+                const encrypted =
+                  await adapter.getEncryptedVariables(destPlugId);
                 if (encrypted && secret) {
                   try {
                     const json = await decryptVars(encrypted, secret);
                     destVars = JSON.parse(json) as Record<string, string>;
-                  } catch { /* empty */ }
+                  } catch {
+                    /* empty */
+                  }
                 }
               }
-              const handlerId = handlerRow ? (handlerRow["id"] as string) : null;
+              const handlerId = handlerRow
+                ? (handlerRow["id"] as string)
+                : null;
               const { id: khotanRunId } = await adapter.insertRun({
                 webhookHandlerId: handlerId,
                 wireId,
@@ -2788,14 +3237,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
                 });
               }
               try {
-                const result = await startWorkflow(p.workflow, [{ event, eventType, headers, destVars, khotanRunId }]);
-                const workflowRunId = result && typeof result === "object"
-                  ? ("runId" in result
-                      ? String((result as { runId: unknown }).runId)
+                const result = await startWorkflow(p.workflow, [
+                  { event, eventType, headers, destVars, khotanRunId },
+                ]);
+                const workflowRunId =
+                  result && typeof result === "object"
+                    ? "runId" in result
+                      ? String(result.runId)
                       : "id" in result
-                        ? String((result as { id: unknown }).id)
-                        : null)
-                  : null;
+                        ? String(result.id)
+                        : null
+                    : null;
                 if (workflowRunId) {
                   await adapter.updateRun(khotanRunId, {
                     status: "running",
@@ -2803,7 +3255,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
                   });
                 }
               } catch (err) {
-                const message = err instanceof Error ? err.message : "Unknown error";
+                const message =
+                  err instanceof Error ? err.message : "Unknown error";
                 await adapter.updateRun(khotanRunId, {
                   status: "failed",
                   completedAt: new Date(),
@@ -2823,7 +3276,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       // POST .../debug/:plugName — dev-only proxy through plug
       if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        const debugActive = typeof process !== "undefined" && process.env?.["KHOTAN_DEBUG"];
+        const debugActive = process?.env?.["KHOTAN_DEBUG"];
         if (!debugActive) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
@@ -2849,7 +3302,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const plug = plugReg.plug;
           const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
           const _setVars = secret
-            ? (updates: Record<string, string>) => setVars(plugName, { ...vars, ...updates })
+            ? (updates: Record<string, string>) =>
+                setVars(plugName, { ...vars, ...updates })
             : undefined;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const opts: any = { vars };
@@ -2889,14 +3343,20 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             timing,
           };
 
-          const allEndpoints: Record<string, { method: string; path: string }> | undefined =
-            plugReg.plug.endpoints ?? plugReg.endpoints;
+          const allEndpoints:
+            | Record<string, { method: string; path: string }>
+            | undefined = plugReg.plug.endpoints ?? plugReg.endpoints;
           if (allEndpoints) {
             const matched = Object.entries(allEndpoints).find(
-              ([, ep]) => ep.method.toUpperCase() === method && ep.path === reqPath,
+              ([, ep]) =>
+                ep.method.toUpperCase() === method && ep.path === reqPath,
             );
             if (matched) {
-              response["endpoint"] = { name: matched[0], method: matched[1].method, path: matched[1].path };
+              response["endpoint"] = {
+                name: matched[0],
+                method: matched[1].method,
+                path: matched[1].path,
+              };
             }
           }
 
@@ -2904,8 +3364,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         } catch (err) {
           const timing = Date.now() - start;
           const error = err instanceof Error ? err.message : "Unknown error";
-          const errBody = err && typeof err === "object" && "body" in err ? (err as { body: unknown }).body : null;
-          const errStatus = err && typeof err === "object" && "status" in err ? (err as { status: number }).status : 500;
+          const errBody =
+            err && typeof err === "object" && "body" in err ? err.body : null;
+          const errStatus =
+            err && typeof err === "object" && "status" in err
+              ? (err as { status: number }).status
+              : 500;
 
           return Response.json({
             status: errStatus,
@@ -2959,7 +3423,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           await setVars(plugName, vars);
           return Response.json({ ok: true });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           return Response.json({ error: message }, { status: 500 });
         }
       }
@@ -3028,7 +3493,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             { status: 400 },
           );
         }
-        const runType = typeof run["runType"] === "string" ? run["runType"] : "full";
+        const runType =
+          typeof run["runType"] === "string" ? run["runType"] : "full";
         return triggerFlowRun(flowId, { runType });
       }
 
@@ -3051,16 +3517,20 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const body = (await request.json()) as { callbackUrl: string };
         if (!body.callbackUrl) {
-          return Response.json({ error: "callbackUrl is required" }, { status: 400 });
+          return Response.json(
+            { error: "callbackUrl is required" },
+            { status: 400 },
+          );
         }
         try {
           const record = await wire(plugName).create(body.callbackUrl);
           return Response.json({ wire: record }, { status: 201 });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: create failed:`, message);
           if (error && typeof error === "object" && "body" in error) {
-            kd("wire", `${plugName}: response body:`, (error as { body: unknown }).body);
+            kd("wire", `${plugName}: response body:`, error.body);
           }
           return Response.json({ error: message }, { status: 500 });
         }
@@ -3131,7 +3601,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       }
 
       // PATCH .../webhook-handlers/:id
-      if (webhookHandlersIdx !== -1 && webhookHandlersIdx === segments.length - 2) {
+      if (
+        webhookHandlersIdx !== -1 &&
+        webhookHandlersIdx === segments.length - 2
+      ) {
         const handlerId = segments[webhookHandlersIdx + 1]!;
         const body = (await request.json()) as { enabled?: boolean };
         if (typeof body.enabled === "boolean") {
@@ -3175,13 +3648,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const body = (await request.json()) as { wireId: string };
         if (!body.wireId) {
-          return Response.json({ error: "wireId is required" }, { status: 400 });
+          return Response.json(
+            { error: "wireId is required" },
+            { status: 400 },
+          );
         }
         try {
           await wire(plugName).delete(body.wireId);
           return new Response(null, { status: 204 });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
           return Response.json({ error: message }, { status: 500 });
         }
@@ -3220,7 +3697,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return defaults;
   }
 
-  async function getStoredVarsByPlugId(plugId: string): Promise<Record<string, string>> {
+  async function getStoredVarsByPlugId(
+    plugId: string,
+  ): Promise<Record<string, string>> {
     if (!secret) {
       throw new Error("KHOTAN_SECRET is required for var operations");
     }
@@ -3230,7 +3709,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return JSON.parse(json) as Record<string, string>;
   }
 
-  async function setVarsByPlugId(plugId: string, vars: Record<string, string>): Promise<void> {
+  async function setVarsByPlugId(
+    plugId: string,
+    vars: Record<string, string>,
+  ): Promise<void> {
     if (!secret) {
       throw new Error("KHOTAN_SECRET is required for var operations");
     }
@@ -3239,15 +3721,18 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     await adapter.setEncryptedVariables(plugId, encrypted);
   }
 
-  async function seedDefaultVarsForPlug(plugId: string, plugName: string): Promise<void> {
+  async function seedDefaultVarsForPlug(
+    plugId: string,
+    plugName: string,
+  ): Promise<void> {
     const defaults = getDefaultVars(plugName);
     if (!secret || Object.keys(defaults).length === 0) {
       return;
     }
 
-    const storedVars: Record<string, string> = await getStoredVarsByPlugId(plugId).catch(
-      () => ({} as Record<string, string>),
-    );
+    const storedVars: Record<string, string> = await getStoredVarsByPlugId(
+      plugId,
+    ).catch(() => ({}));
     const seededVars = { ...defaults, ...storedVars };
     const hasChanges = Object.keys(seededVars).some(
       (key) => seededVars[key] !== storedVars[key],
@@ -3265,7 +3750,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return { ...defaults, ...stored };
   }
 
-  async function setVars(plugName: string, vars: Record<string, string>): Promise<void> {
+  async function setVars(
+    plugName: string,
+    vars: Record<string, string>,
+  ): Promise<void> {
     const plugId = await resolvePlugId(plugName);
     await setVarsByPlugId(plugId, vars);
   }
@@ -3313,7 +3801,18 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return plugReg.plug;
   }
 
-  return { handler, init, flow, wire, getVars, setVars, clearVars, hasVars, getVarFields, getPlug };
+  return {
+    handler,
+    init,
+    flow,
+    wire,
+    getVars,
+    setVars,
+    clearVars,
+    hasVars,
+    getVarFields,
+    getPlug,
+  };
 }
 
 // ---------------------------------------------------------------------------

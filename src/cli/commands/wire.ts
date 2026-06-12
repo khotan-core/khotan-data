@@ -52,7 +52,11 @@ function resolveWebhookOrigin(originFlag: string | undefined): string {
     ...parseEnvFile(path.join(cwd, ".env")),
     ...parseEnvFile(path.join(cwd, ".env.local")),
   };
-  const origin = env["KHOTAN_WEBHOOK_URL"] ?? env["NGROK_URL"] ?? env["NEXT_PUBLIC_APP_URL"] ?? `http://localhost:${resolvePort(undefined)}`;
+  const origin =
+    env["KHOTAN_WEBHOOK_URL"] ??
+    env["NGROK_URL"] ??
+    env["NEXT_PUBLIC_APP_URL"] ??
+    `http://localhost:${resolvePort(undefined)}`;
   return origin.replace(/\/$/, "");
 }
 
@@ -74,7 +78,7 @@ async function checkConnectivity(baseUrl: string): Promise<void> {
   }
 }
 
-type WireRecord = {
+interface WireRecord {
   id: string;
   plugId: string;
   remoteId: string;
@@ -83,19 +87,27 @@ type WireRecord = {
   status: "active" | "disabled" | "pending";
   createdAt: string;
   updatedAt: string;
-};
+}
 
 export const wireCommand = new Command("wire")
-  .description("Inspect, connect, and disconnect wires via the running Khotan API")
+  .description(
+    "Inspect, connect, and disconnect wires via the running Khotan API",
+  )
   .argument("[plugName]", "Name of the plug whose wire you want to manage")
   .argument("[action]", "Action: info | connect | disconnect")
   .option("--port <port>", "Dev server port")
   .option("--base-path <path>", "API base path", "/api/khotan")
-  .option("--list", "List configured plugs and whether they currently have a wire")
+  .option(
+    "--list",
+    "List configured plugs and whether they currently have a wire",
+  )
   .option("--info", "Show current wire state for the plug")
   .option("--callback-url <url>", "Explicit callback URL to register")
   .option("--webhook-origin <url>", "Origin used to build default callback URL")
-  .option("--wire-id <id>", "Explicit wire ID for disconnect (otherwise current wire is used)")
+  .option(
+    "--wire-id <id>",
+    "Explicit wire ID for disconnect (otherwise current wire is used)",
+  )
   .action(
     async (
       plugName: string | undefined,
@@ -117,11 +129,14 @@ export const wireCommand = new Command("wire")
 
       if (opts.list) {
         const plugsRes = await fetch(`${baseUrl}/plugs`);
-        const plugs = (await plugsRes.json()) as Array<{ name: string }>;
+        const plugs = (await plugsRes.json()) as { name: string }[];
         const wires = await Promise.all(
           plugs.map(async (plug) => {
             const res = await fetch(`${baseUrl}/wires/${plug.name}`);
-            const data = (await res.json()) as { wire?: WireRecord | null; configured?: boolean };
+            const data = (await res.json()) as {
+              wire?: WireRecord | null;
+              configured?: boolean;
+            };
             return {
               plugName: plug.name,
               configured: data.configured ?? false,
@@ -148,23 +163,45 @@ export const wireCommand = new Command("wire")
         if (res.status === 404) {
           fail("plug_not_found", `Plug "${plugName}" not found.`);
         }
-        const data = (await res.json()) as { wire?: WireRecord | null; configured?: boolean };
-        output({ ok: true, plugName, configured: data.configured ?? false, wire: data.wire ?? null });
+        const data = (await res.json()) as {
+          wire?: WireRecord | null;
+          configured?: boolean;
+        };
+        output({
+          ok: true,
+          plugName,
+          configured: data.configured ?? false,
+          wire: data.wire ?? null,
+        });
         return;
       }
 
       if (resolvedAction === "connect") {
-        const callbackUrl = opts.callbackUrl ?? `${resolveWebhookOrigin(opts.webhookOrigin)}/api/khotan/webhook/${plugName}`;
+        const callbackUrl =
+          opts.callbackUrl ??
+          `${resolveWebhookOrigin(opts.webhookOrigin)}/api/khotan/webhook/${plugName}`;
         const res = await fetch(`${baseUrl}/wires/${plugName}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ callbackUrl }),
         });
-        const data = (await res.json()) as { wire?: WireRecord; error?: string };
+        const data = (await res.json()) as {
+          wire?: WireRecord;
+          error?: string;
+        };
         if (!res.ok) {
-          fail("connect_failed", data.error ?? `Failed to connect wire for "${plugName}"`);
+          fail(
+            "connect_failed",
+            data.error ?? `Failed to connect wire for "${plugName}"`,
+          );
         }
-        output({ ok: true, action: "connect", plugName, callbackUrl, wire: data.wire ?? null });
+        output({
+          ok: true,
+          action: "connect",
+          plugName,
+          callbackUrl,
+          wire: data.wire ?? null,
+        });
         return;
       }
 
@@ -172,11 +209,16 @@ export const wireCommand = new Command("wire")
         let wireId = opts.wireId;
         if (!wireId) {
           const currentRes = await fetch(`${baseUrl}/wires/${plugName}`);
-          const current = (await currentRes.json()) as { wire?: WireRecord | null };
+          const current = (await currentRes.json()) as {
+            wire?: WireRecord | null;
+          };
           wireId = current.wire?.id;
         }
         if (!wireId) {
-          fail("missing_wire", `No active wire found for "${plugName}". Use --wire-id to override.`);
+          fail(
+            "missing_wire",
+            `No active wire found for "${plugName}". Use --wire-id to override.`,
+          );
         }
         const res = await fetch(`${baseUrl}/wires/${plugName}`, {
           method: "DELETE",
@@ -185,7 +227,10 @@ export const wireCommand = new Command("wire")
         });
         if (!res.ok && res.status !== 204) {
           const data = (await res.json()) as { error?: string };
-          fail("disconnect_failed", data.error ?? `Failed to disconnect wire "${wireId}"`);
+          fail(
+            "disconnect_failed",
+            data.error ?? `Failed to disconnect wire "${wireId}"`,
+          );
         }
         output({ ok: true, action: "disconnect", plugName, wireId });
         return;

@@ -66,7 +66,9 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
     fs.copyFileSync(khotanConfigTemplatePath, khotanTsPath);
     created.push(path.relative(cwd, khotanTsPath));
   } else {
-    console.log(`✓ ${path.relative(cwd, khotanTsPath)} already exists, skipping`);
+    console.log(
+      `✓ ${path.relative(cwd, khotanTsPath)} already exists, skipping`,
+    );
   }
 
   // Scaffold route.ts (API catch-all) — never overwrite
@@ -199,7 +201,10 @@ async function runFullSetup(cwd: string): Promise<StepResult[]> {
 
   const coreFiles = scaffoldCoreFiles(cwd, outputDir);
   if (coreFiles.length > 0) {
-    results.push({ name: `Scaffold ${coreFiles.join(", ")}`, status: "success" });
+    results.push({
+      name: `Scaffold ${coreFiles.join(", ")}`,
+      status: "success",
+    });
   } else {
     results.push({ name: "Scaffold core files", status: "skipped" });
   }
@@ -275,11 +280,7 @@ function scaffoldAgentSkills(cwd: string): number {
 
   if (skills.length === 0) return 0;
 
-  const agentsTemplatePath = path.resolve(
-    __dirname,
-    "templates",
-    "agents.md",
-  );
+  const agentsTemplatePath = path.resolve(__dirname, "templates", "agents.md");
   const result = installSkills(cwd, skills, agentsTemplatePath);
 
   if (result.created.length > 0) {

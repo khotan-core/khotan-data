@@ -34,9 +34,9 @@ type SchemaOutput<T> = T extends Schema<infer O> ? O : never;
 
 type PathParams<T extends string> =
   T extends `${string}:${infer Param}/${infer Rest}`
-    ? { [K in Param | keyof PathParams<Rest>]: string }
+    ? Record<Param | keyof PathParams<Rest>, string>
     : T extends `${string}:${infer Param}`
-      ? { [K in Param]: string }
+      ? Record<Param, string>
       : never;
 
 type HasKeys<T> = keyof T extends never ? false : true;
@@ -142,10 +142,7 @@ function parseBody(body: unknown): unknown {
 // Path interpolation
 // ---------------------------------------------------------------------------
 
-function interpolatePath(
-  path: string,
-  params: Record<string, string>,
-): string {
+function interpolatePath(path: string, params: Record<string, string>): string {
   return path.replace(/:([^/]+)/g, (_, key: string) => {
     const value = params[key];
     if (value === undefined) {
@@ -170,15 +167,13 @@ export function createPlugClient<T extends ContractRouter>(
     const client: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(router)) {
-      const route = value as RouteDefinition | ContractRouter;
+      const route = value;
 
       if ("method" in route && "path" in route) {
         client[key] = async (input?: Record<string, unknown>) => {
           const def = route as RouteDefinition;
           const params = (input?.["params"] ?? {}) as Record<string, string>;
-          const query = input?.["query"] as
-            | Record<string, unknown>
-            | undefined;
+          const query = input?.["query"] as Record<string, unknown> | undefined;
           const body = input?.["body"];
           const headers = input?.["headers"] as
             | Record<string, string>
@@ -239,7 +234,7 @@ export function createPlugClient<T extends ContractRouter>(
           }
         };
       } else {
-        client[key] = buildClient(route as ContractRouter);
+        client[key] = buildClient(route);
       }
     }
 

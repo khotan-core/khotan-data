@@ -169,7 +169,10 @@ export const khotanWebhookHandlers = pgTable(
       .notNull(),
   },
   (table) => [
-    unique("khotan_webhook_handlers_wire_id_name_unique").on(table.wireId, table.name),
+    unique("khotan_webhook_handlers_wire_id_name_unique").on(
+      table.wireId,
+      table.name,
+    ),
     index("khotan_webhook_handlers_wire_id_idx").on(table.wireId),
   ],
 );
@@ -202,7 +205,9 @@ export const khotanWebhookEvents = pgTable(
   },
   (table) => [
     index("khotan_webhook_events_wire_id_idx").on(table.wireId),
-    index("khotan_webhook_events_webhook_handler_id_idx").on(table.webhookHandlerId),
+    index("khotan_webhook_events_webhook_handler_id_idx").on(
+      table.webhookHandlerId,
+    ),
     index("khotan_webhook_events_khotan_run_id_idx").on(table.khotanRunId),
     index("khotan_webhook_events_received_at_idx").on(table.receivedAt.desc()),
   ],
@@ -220,13 +225,22 @@ export const khotanRuns = pgTable(
       .$defaultFn(() => crypto.randomUUID()),
     flowId: text("flow_id").references(() => khotanFlows.id),
     wireId: text("wire_id").references(() => khotanWires.id),
-    webhookHandlerId: text("webhook_handler_id").references(() => khotanWebhookHandlers.id),
+    webhookHandlerId: text("webhook_handler_id").references(
+      () => khotanWebhookHandlers.id,
+    ),
     workflowRunId: text("workflow_run_id"),
     runType: text("run_type", {
       enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
     }).notNull(),
     status: text("status", {
-      enum: ["pending", "running", "completed", "partial", "failed", "cancelled"],
+      enum: [
+        "pending",
+        "running",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled",
+      ],
     })
       .default("pending")
       .notNull(),
@@ -310,18 +324,15 @@ export const khotanFlowsRelations = relations(khotanFlows, ({ one, many }) => ({
   runs: many(khotanRuns),
 }));
 
-export const khotanWiresRelations = relations(
-  khotanWires,
-  ({ one, many }) => ({
-    plug: one(khotanPlugs, {
-      fields: [khotanWires.plugId],
-      references: [khotanPlugs.id],
-    }),
-    webhookHandlers: many(khotanWebhookHandlers),
-    webhookEvents: many(khotanWebhookEvents),
-    runs: many(khotanRuns),
+export const khotanWiresRelations = relations(khotanWires, ({ one, many }) => ({
+  plug: one(khotanPlugs, {
+    fields: [khotanWires.plugId],
+    references: [khotanPlugs.id],
   }),
-);
+  webhookHandlers: many(khotanWebhookHandlers),
+  webhookEvents: many(khotanWebhookEvents),
+  runs: many(khotanRuns),
+}));
 
 export const khotanWebhookHandlersRelations = relations(
   khotanWebhookHandlers,

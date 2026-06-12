@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: catchEvent builder function
-The scaffolded `catch.ts` SHALL export a `catchEvent()` builder function that accepts a workflow function and returns a `CatchRegistration` object. The workflow function SHALL conform to the `CatchWorkflow` type signature: `(ctx: CatchContext) => Promise<void>`.
+The scaffolded `catch.ts` SHALL export a `catchEvent()` builder function that accepts a `CatchConfig` object with `name` (string), optional `events` (string[]), and `workflow` (CatchWorkflow), and returns a `CatchRegistration` object. The workflow function SHALL conform to the `CatchWorkflow` type signature: `(ctx: CatchContext) => Promise<void>`.
 
 #### Scenario: Define a catch registration
-- **WHEN** a user calls `catchEvent(myWorkflow)`
-- **THEN** the function SHALL return a `CatchRegistration` object with `type: "catch"` and a reference to the workflow function
+- **WHEN** a user calls `catchEvent({ name: "pollinate-orders", events: ["order.created"], workflow: myWorkflow })`
+- **THEN** the function SHALL return a `CatchRegistration` object with `type: "catch"`, `name`, optional `events`, and a reference to the workflow function
 
 ### Requirement: CatchContext type
-The scaffolded `catch.ts` SHALL export a `CatchContext` interface with: `event` (Record<string, unknown> — the parsed webhook payload), `eventType` (string — the event type from the payload or header), and `headers` (Record<string, string> — incoming request headers).
+The scaffolded `catch.ts` SHALL export a `CatchContext` interface with: `event` (Record<string, unknown> — the parsed webhook payload), `eventType` (string — the event type from the payload or header), `headers` (Record<string, string> — incoming request headers), and `khotanRunId` (string — the run identifier created by the factory for tracking).
 
 #### Scenario: CatchContext is serializable
 - **WHEN** the factory starts a catch workflow
@@ -34,7 +34,7 @@ The scaffolded `catch.ts` SHALL have zero runtime imports from `khotan-data`. It
 - **THEN** it SHALL contain zero import statements referencing `khotan-data`
 
 ### Requirement: Commented usage example
-The scaffolded `catch.ts` SHALL include a commented-out usage example showing a complete catch workflow with a step that persists an event to a Drizzle table.
+The scaffolded `catch.ts` SHALL include a commented-out usage example showing a complete catch workflow with `"use workflow"` and `"use step"` directives and an app-specific side effect (for example, logging or persistence).
 
 #### Scenario: Example is present and commented
 - **WHEN** a user opens the scaffolded `catch.ts`

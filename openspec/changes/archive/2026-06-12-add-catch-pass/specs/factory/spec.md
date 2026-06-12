@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Plug registration
-Each plug registration SHALL be an object with `name` (string, unique identifier), `baseUrl` (string), `authType` (string — one of 'bearer', 'basic', 'apiKey', 'custom'), optional `syncs` (array of sync registrations), optional `wires` (array of wire configs), optional `catches` (array of CatchRegistration objects), and optional `passes` (array of PassRegistration objects). Each sync registration SHALL have `name` (string), `type` (string — one of 'inflow', 'outflow', 'relay', 'webhook'), optional `schedule` (string, cron expression), and optional `resource` (string — name of a registered resource this sync feeds).
+Each plug registration SHALL be an object with `name` (string, unique identifier), `baseUrl` (string), `authType` (string — one of 'bearer', 'basic', 'apiKey', 'custom'), optional `flows` (array of flow registrations), optional `wires` (array of wire configs), optional `catches` (array of CatchRegistration objects), and optional `passes` (array of PassRegistration objects). Each flow registration SHALL have `name` (string), `type` (string — one of 'inflow', 'outflow', 'relay', 'webhook'), optional `schedule` (string, cron expression), and optional `resource` (string — name of a registered resource this flow feeds).
 
 #### Scenario: Register a plug with catches
 - **WHEN** a user registers a plug `{ name: "pollinate", ..., catches: [pollinateCatch] }`
@@ -54,7 +54,7 @@ The factory's webhook route SHALL read the raw request body (before JSON parsing
 - **AND** parse it as JSON only after verification succeeds
 
 ### Requirement: Start catch workflows
-After successful verification, the factory SHALL start all catch workflows registered on the plug by calling `start()` from `workflow/api` with a `CatchContext` argument containing the parsed event, event type, and headers.
+After successful verification, the factory SHALL start all catch workflows registered on the plug by calling `start()` from `workflow/api` with a `CatchContext` argument containing the parsed event, event type, headers, and `khotanRunId`.
 
 #### Scenario: Single catch registered
 - **WHEN** a verified event arrives and the plug has one catch registered
@@ -69,7 +69,7 @@ After successful verification, the factory SHALL start all catch workflows regis
 - **THEN** the factory SHALL skip catch processing (not an error)
 
 ### Requirement: Start pass workflows
-After successful verification, the factory SHALL start all pass workflows registered on the plug. For each pass, it SHALL read the destination plug's stored vars from the database (decrypted), then call `start()` with a `PassContext` containing event, event type, headers, and destVars.
+After successful verification, the factory SHALL start all pass workflows registered on the plug. For each pass, it SHALL read the destination plug's stored vars from the database (decrypted), then call `start()` with a `PassContext` containing event, event type, headers, destVars, and `khotanRunId`.
 
 #### Scenario: Pass with destination vars
 - **WHEN** a verified event arrives and the plug has a pass with `to: "slack"`
@@ -85,16 +85,17 @@ After successful verification, the factory SHALL start all pass workflows regist
 - **THEN** the factory SHALL call `start()` for each pass workflow
 
 ### Requirement: Webhook route response
-After starting all workflows, the factory SHALL immediately return 200 with `{ received: true }`. Workflow execution happens asynchronously — the response does not wait for workflow completion.
+After scheduling webhook processing, the factory SHALL immediately return 202 with `{ received: true }`. Workflow execution happens asynchronously — the response does not wait for workflow completion.
 
 #### Scenario: Immediate acknowledgement
-- **WHEN** all workflows are started successfully
-- **THEN** the factory SHALL return `{ received: true }` with status 200
+- **WHEN** webhook processing is accepted for asynchronous execution
+- **THEN** the factory SHALL return `{ received: true }` with status 202
 - **AND** the response SHALL NOT block on workflow completion
 
 #### Scenario: Workflow start failure
-- **WHEN** `start()` throws an error (e.g., workflow/api not available)
-- **THEN** the factory SHALL return 500 with `{ error: "Failed to start webhook processing" }`
+- **WHEN** asynchronous workflow start fails after acknowledgement
+- **THEN** the factory SHALL log the failure for diagnostics
+- **AND** the webhook route response SHALL remain the previously returned accepted acknowledgement
 
 ### Requirement: Event type extraction
 The factory SHALL extract the event type from the parsed JSON payload. It SHALL look for a `type` field at the top level of the payload. If no `type` field exists, it SHALL use `"unknown"` as the event type.
