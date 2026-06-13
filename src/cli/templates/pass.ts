@@ -26,6 +26,8 @@ export interface PassContext {
   destVars: Record<string, string>;
   /** Khotan run ID created for this webhook handler execution */
   khotanRunId: string;
+  /** Internal Khotan instance identifier for helper APIs */
+  khotanInstanceId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,7 @@ export function pass(config: PassConfig): PassRegistration {
 // Usage Example (create a file like webhooks/pollinate-to-slack.ts)
 // ---------------------------------------------------------------------------
 //
+// import { khotanCache } from "khotan-data/factory";
 // import { pass, type PassContext } from "./pass";
 // import { plug } from "../plugs/plug";
 //
@@ -87,6 +90,9 @@ export function pass(config: PassConfig): PassRegistration {
 //
 //   async function forwardEvent() {
 //     "use step";
+//     const cache = khotanCache(ctx, "pollinate-forwarded-events");
+//     const eventId = String(ctx.event["id"] ?? "");
+//     if (eventId && (await cache.get<boolean>(eventId))) return;
 //
 //     // Construct destination plug from destVars
 //     const slackPlug = plug({
@@ -102,6 +108,10 @@ export function pass(config: PassConfig): PassRegistration {
 //         event: ctx.event,
 //       },
 //     });
+//
+//     if (eventId) {
+//       await cache.set(eventId, true);
+//     }
 //   }
 //
 //   await forwardEvent();

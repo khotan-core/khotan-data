@@ -122,6 +122,24 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       npmPackages: ["drizzle-orm"],
     },
   },
+  cache: {
+    name: "cache",
+    description:
+      "First-class durable cache definitions for khotan sync workloads",
+    requires: ["schema"],
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "cache.ts"),
+        outputFile: "caches/cache.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "cache.example.ts"),
+        outputFile: "caches/cache.example.ts",
+        outputBase: "outputDir",
+      },
+    ],
+  },
   hub: {
     name: "hub",
     description: "Dashboard UI for managing plugs and flows",
@@ -181,6 +199,26 @@ const COMPONENTS: Record<string, ComponentEntry> = {
           "webhook-events-table.tsx",
         ),
         outputFile: "webhook-events-table.tsx",
+        outputBase: "components",
+      },
+    ],
+  },
+  "mapping-browser": {
+    name: "mapping-browser",
+    description:
+      "Searchable mappings browser for listing, creating, editing, and deleting resource mappings",
+    requiresShadcn: true,
+    dependencies: {
+      shadcnComponents: ["card", "table", "button", "input", "label"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "mapping-browser.tsx",
+        ),
+        outputFile: "mapping-browser.tsx",
         outputBase: "components",
       },
     ],
@@ -423,6 +461,23 @@ const BLOCKS: Record<string, ComponentEntry> = {
       {
         templatePath: path.resolve(__dirname, "templates", "logs-page.tsx"),
         outputFile: "logs/page.tsx",
+        outputBase: "appRoot",
+      },
+    ],
+  },
+  "mappings-page-1": {
+    name: "mappings-page-1",
+    description:
+      "Page route at /mappings that renders the reusable Khotan mappings browser",
+    requires: ["mapping-browser"],
+    files: [
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "mappings-page.tsx",
+        ),
+        outputFile: "mappings/page.tsx",
         outputBase: "appRoot",
       },
     ],

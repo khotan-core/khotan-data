@@ -98,27 +98,38 @@ export const myPlug = plug({
 
 Endpoints power the plug debugger UI, `khotan plug --compare`, and typed clients.
 
-## Typed Client (Contract Pattern)
+## Preferred Pattern
 
-For separate contract definition + type-safe calls:
+Keep each integration in a single app-owned plug file when possible:
 
 ```typescript
-import { defineContract, createPlugClient } from "khotan-data/plug";
+import { z } from "zod";
+import { plug, basic } from "./plug";
 
-const contract = defineContract({
-  listProducts: {
-    method: "GET",
-    path: "/products",
-    query: z.object({ page: z.number().optional() }),
-    responses: { 200: z.object({ data: z.array(ProductSchema), total: z.number() }) },
-  },
+const ProductSchema = z.object({
+  id: z.string(),
+  sku: z.string(),
+  name: z.string(),
 });
 
-const client = createPlugClient(contract, myPlug);
-const result = await client.listProducts({ query: { page: 1 } });
-// result.status — 200
-// result.body.data — typed as Product[]
+export type Product = z.infer<typeof ProductSchema>;
+
+export const myPlug = plug({
+  name: "my-service",
+  baseUrl: "https://api.example.com",
+  auth: basic(process.env.API_USER!, process.env.API_KEY!),
+  endpoints: {
+    listProducts: {
+      method: "GET",
+      path: "/products",
+      query: z.object({ page: z.number().optional(), limit: z.number().optional() }),
+      responses: { 200: z.array(ProductSchema) },
+    },
+  },
+});
 ```
+
+This keeps the runtime plug, debugger metadata, `khotan plug --compare`, and any exported types in one place.
 
 ## Hooks
 
@@ -178,6 +189,18 @@ npx khotan plug myPlug --endpoint listProducts --compare  # Check schema
 ```
 
 Set `KHOTAN_DEBUG=1` for verbose `[khotan:auth]` and `[khotan:request]` console logs.
+
+### Recommended Plug Workflow
+
+1. Create the plug file and auth/hook setup.
+2. Add a small set of typed endpoints directly on the plug (`listProducts`, `getProduct`, etc).
+3. Run the app with `KHOTAN_DEBUG=1`.
+4. Use `npx khotan plug myPlug --info` to confirm the endpoints are visible to the debugger.
+5. Use `npx khotan plug myPlug --endpoint listProducts --compare` against the live API.
+6. Tighten schemas until the compare output matches the real payload shape you care about.
+7. Only then build inflows, relays, outflows, or webhook handlers on top of those endpoints.
+
+The package does not paginate or delta-sync for you automatically inside user flows. Your app code decides which typed endpoints to call, what page size to use, when to stop, and how to implement full, test, partial, backfill, reconcile, or delta runs.
 
 ## Managing Vars
 

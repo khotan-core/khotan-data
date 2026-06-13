@@ -264,8 +264,37 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(content).toContain("khotan_plugs");
       expect(content).toContain("khotan_flows");
       expect(content).toContain("khotan_runs");
+      expect(content).toContain("khotan_caches");
+      expect(content).toContain("khotan_cache_entries");
       expect(content).not.toContain('from "khotan-data"');
       expect(content).not.toContain("from 'khotan-data'");
+    });
+
+    it("creates cache templates under caches", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      run("init", tmpDir);
+
+      const result = run("add cache --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created");
+
+      const cachePath = path.join(tmpDir, "khotan", "caches", "cache.ts");
+      const examplePath = path.join(
+        tmpDir,
+        "khotan",
+        "caches",
+        "cache.example.ts",
+      );
+      expect(fs.existsSync(cachePath)).toBe(true);
+      expect(fs.existsSync(examplePath)).toBe(true);
+
+      const content = fs.readFileSync(cachePath, "utf-8");
+      expect(content).toContain("export function cache");
+      expect(content).toContain("cin7-products-snapshot");
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "cin7ProductsSnapshotCache",
+      );
     });
 
     it.each(["inflow", "outflow", "relay"])(
@@ -442,6 +471,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.output).toContain("Components:");
       expect(result.output).toContain("Blocks:");
       expect(result.output).toContain("plug");
+      expect(result.output).toContain("cache");
       expect(result.output).toContain("config-page-1");
     });
 
@@ -660,6 +690,396 @@ describe("CLI", { timeout: 30_000 }, () => {
         expect(data.runs).toEqual([
           { id: "run-1", flowId: "flow-pollinate-products", status: "ok" },
         ]);
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
+  describe("mappings command", () => {
+    async function startServer() {
+      let lastLookupBody: unknown = null;
+      let lastUpsertBody: unknown = null;
+      let lastUpdateBody: unknown = null;
+
+      const resources = [
+        {
+          id: "resource-customers",
+          name: "customers",
+          mapping: {
+            connectField: "email",
+          },
+        },
+      ];
+
+      const server = createServer(async (req, res) => {
+        const url = new URL(req.url ?? "/", "http://localhost");
+
+        if (req.method === "GET" && url.pathname === "/api/khotan/flows") {
+          sendJson(res, 200, []);
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/khotan/resources") {
+          sendJson(res, 200, resources);
+          return;
+        }
+
+        if (
+          req.method === "GET" &&
+          url.pathname === "/api/khotan/resources/resource-customers/mappings"
+        ) {
+          sendJson(res, 200, {
+            items: [
+              {
+                id: "mapping-1",
+                resourceId: "resource-customers",
+                connectValue: "alice@example.com",
+                refs: {
+                  shopify: "gid://shopify/Customer/123",
+                  cin7: "cust_456",
+                },
+                metadata: { firstName: "Alice" },
+              },
+            ],
+            page: {
+              limit: Number(url.searchParams.get("limit") ?? "20"),
+              offset: Number(url.searchParams.get("offset") ?? "0"),
+              hasMore: false,
+              prevOffset: 0,
+              nextOffset: Number(url.searchParams.get("offset") ?? "0") + 1,
+              total: 1,
+            },
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/khotan/mappings/lookup") {
+          lastLookupBody = await readJsonBody(req);
+          sendJson(res, 200, {
+            id: "mapping-1",
+            resourceId: "resource-customers",
+            connectValue: "alice@example.com",
+            refs: {
+              shopify: "gid://shopify/Customer/123",
+              cin7: "cust_456",
+            },
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/khotan/mappings") {
+          lastUpsertBody = await readJsonBody(req);
+          sendJson(res, 201, {
+            id: "mapping-1",
+            resourceId: "resource-customers",
+            connectValue: "alice@example.com",
+            refs: {
+              shopify: "gid://shopify/Customer/123",
+            },
+            metadata: { firstName: "Alice" },
+          });
+          return;
+        }
+
+        if (
+          req.method === "PUT" &&
+          url.pathname === "/api/khotan/mappings/mapping-1"
+        ) {
+          lastUpdateBody = await readJsonBody(req);
+          sendJson(res, 200, {
+            id: "mapping-1",
+            resourceId: "resource-customers",
+            connectValue: "alice@example.com",
+            refs: {
+              shopify: "gid://shopify/Customer/123",
+              cin7: "cust_456",
+            },
+            metadata: { firstName: "Alice", lastName: "Jones" },
+          });
+          return;
+        }
+
+        if (
+          req.method === "DELETE" &&
+          url.pathname === "/api/khotan/mappings/mapping-1"
+        ) {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+
+        if (
+          req.method === "DELETE" &&
+          url.pathname === "/api/khotan/mappings/missing"
+        ) {
+          sendJson(res, 404, { error: "Mapping not found" });
+          return;
+        }
+
+        sendJson(res, 404, { error: "not_found" });
+      });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const port = (server.address() as AddressInfo).port;
+      return {
+        port,
+        close: () =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+        getLastLookupBody: () => lastLookupBody,
+        getLastUpsertBody: () => lastUpsertBody,
+        getLastUpdateBody: () => lastUpdateBody,
+      };
+    }
+
+    it("lists mappings for one resource with paging metadata", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "mappings",
+            "list",
+            "customers",
+            "--limit",
+            "25",
+            "--offset",
+            "50",
+            "--search",
+            "alice@example.com",
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          resource: { name: string };
+          items: Array<{ connectValue: string }>;
+          page: { limit: number; offset: number; total: number };
+        };
+        expect(data.ok).toBe(true);
+        expect(data.resource.name).toBe("customers");
+        expect(data.items[0]?.connectValue).toBe("alice@example.com");
+        expect(data.page).toMatchObject({ limit: 25, offset: 50, total: 1 });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("looks up a mapping by canonical connect value", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "mappings",
+            "lookup",
+            "customers",
+            "--connect-value",
+            "alice@example.com",
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          mapping: { connectValue: string };
+        };
+        expect(data.ok).toBe(true);
+        expect(data.mapping.connectValue).toBe("alice@example.com");
+        expect(api.getLastLookupBody()).toEqual({
+          resourceId: "resource-customers",
+          connectValue: "alice@example.com",
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("rejects lookup without a valid mode", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["mappings", "lookup", "customers", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(1);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          error: string;
+          hint: string;
+        };
+        expect(data.ok).toBe(false);
+        expect(data.error).toBe("validation_error");
+        expect(data.hint).toContain("--connect-value");
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("upserts a mapping with refs and metadata JSON", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "mappings",
+            "upsert",
+            "customers",
+            "--connect-value",
+            "alice@example.com",
+            "--refs",
+            '{"shopify":"gid://shopify/Customer/123"}',
+            "--metadata",
+            '{"firstName":"Alice"}',
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          action: string;
+        };
+        expect(data.ok).toBe(true);
+        expect(data.action).toBe("upsert");
+        expect(api.getLastUpsertBody()).toEqual({
+          resourceId: "resource-customers",
+          connectValue: "alice@example.com",
+          refs: { shopify: "gid://shopify/Customer/123" },
+          metadata: { firstName: "Alice" },
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("rejects invalid JSON for refs before sending the request", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "mappings",
+            "upsert",
+            "customers",
+            "--connect-value",
+            "alice@example.com",
+            "--refs",
+            "{bad json",
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(1);
+        const data = JSON.parse(result.output) as {
+          error: string;
+          hint: string;
+        };
+        expect(data.error).toBe("invalid_json");
+        expect(data.hint).toContain("--refs");
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("updates a mapping by row ID", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          [
+            "mappings",
+            "update",
+            "mapping-1",
+            "--resource",
+            "customers",
+            "--connect-value",
+            "alice@example.com",
+            "--refs",
+            '{"shopify":"gid://shopify/Customer/123","cin7":"cust_456"}',
+            "--metadata",
+            '{"firstName":"Alice","lastName":"Jones"}',
+            "--port",
+            String(api.port),
+          ],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          action: string;
+        };
+        expect(data.ok).toBe(true);
+        expect(data.action).toBe("update");
+        expect(api.getLastUpdateBody()).toEqual({
+          resourceId: "resource-customers",
+          connectValue: "alice@example.com",
+          refs: {
+            shopify: "gid://shopify/Customer/123",
+            cin7: "cust_456",
+          },
+          metadata: { firstName: "Alice", lastName: "Jones" },
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("deletes a mapping by row ID", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["mappings", "delete", "mapping-1", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          action: string;
+          id: string;
+        };
+        expect(data).toEqual({
+          ok: true,
+          action: "delete",
+          id: "mapping-1",
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("returns machine-readable connectivity errors", async () => {
+      const result = await runAsync(
+        ["mappings", "list", "customers", "--port", "65535"],
+        tmpDir,
+      );
+      expect(result.exitCode).toBe(1);
+      const data = JSON.parse(result.output) as {
+        ok: boolean;
+        error: string;
+      };
+      expect(data.ok).toBe(false);
+      expect(data.error).toBe("connect_failed");
+    });
+
+    it("returns a machine-readable error when delete misses", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["mappings", "delete", "missing", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(1);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          error: string;
+          hint: string;
+        };
+        expect(data.ok).toBe(false);
+        expect(data.error).toBe("request_failed");
+        expect(data.hint).toContain("Mapping not found");
       } finally {
         await api.close();
       }
@@ -1509,6 +1929,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.output).toContain("generate");
       expect(result.output).toContain("migrate");
       expect(result.output).toContain("wire");
+      expect(result.output).toContain("mappings");
     });
   });
 
@@ -1554,6 +1975,77 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add wire --force --without-ui", tmpDir);
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Adding required component: plug");
+    });
+  });
+
+  describe("add mapping-browser", () => {
+    function seedUi(dir: string, src = false) {
+      const uiDir = src
+        ? path.join(dir, "src", "components", "ui")
+        : path.join(dir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const component of ["card", "table", "button", "input", "label"]) {
+        fs.writeFileSync(path.join(uiDir, `${component}.tsx`), "");
+      }
+    }
+
+    it("scaffolds the reusable mapping browser component", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {});
+      fs.writeFileSync(path.join(tmpDir, "components.json"), JSON.stringify({}));
+      seedUi(tmpDir);
+      run("init", tmpDir);
+
+      const result = run("add mapping-browser --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 1 files");
+
+      const componentPath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "mapping-browser.tsx",
+      );
+      expect(fs.existsSync(componentPath)).toBe(true);
+      const content = fs.readFileSync(componentPath, "utf-8");
+      expect(content).toContain("export function KhotanMappingBrowser");
+      expect(content).toContain('/api/khotan/resources');
+      expect(content).not.toContain('from "khotan-data"');
+      expect(content).not.toContain("from 'khotan-data'");
+    });
+
+    it("scaffolds mappings-page-1 and auto-adds mapping-browser", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+      writePkgJson(tmpDir, {});
+      fs.writeFileSync(path.join(tmpDir, "components.json"), JSON.stringify({}));
+      seedUi(tmpDir, true);
+      run("init", tmpDir);
+
+      const result = run("add mappings-page-1 --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain(
+        "Adding required component: mapping-browser",
+      );
+
+      const componentPath = path.join(
+        tmpDir,
+        "src",
+        "components",
+        "khotan",
+        "mapping-browser.tsx",
+      );
+      const pagePath = path.join(
+        tmpDir,
+        "src",
+        "app",
+        "mappings",
+        "page.tsx",
+      );
+      expect(fs.existsSync(componentPath)).toBe(true);
+      expect(fs.existsSync(pagePath)).toBe(true);
+      expect(fs.readFileSync(pagePath, "utf-8")).toContain(
+        "KhotanMappingBrowser",
+      );
     });
   });
 });

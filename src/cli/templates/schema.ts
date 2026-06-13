@@ -304,6 +304,67 @@ export const khotanMappings = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// khotan_caches — one row per registered durable cache namespace
+// ---------------------------------------------------------------------------
+
+export const khotanCaches = pgTable(
+  "khotan_caches",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull().unique(),
+    scope: jsonb("scope").$type<{
+      plug?: string;
+      resource?: string;
+      flow?: string;
+    }>(),
+    ttlSeconds: integer("ttl_seconds"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("khotan_caches_name_idx").on(table.name)],
+);
+
+// ---------------------------------------------------------------------------
+// khotan_cache_entries — latest-value durable cache rows keyed by cache + key
+// ---------------------------------------------------------------------------
+
+export const khotanCacheEntries = pgTable(
+  "khotan_cache_entries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    cacheId: text("cache_id")
+      .notNull()
+      .references(() => khotanCaches.id),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("khotan_cache_entries_cache_id_key_unique").on(
+      table.cacheId,
+      table.key,
+    ),
+    index("khotan_cache_entries_cache_id_idx").on(table.cacheId),
+    index("khotan_cache_entries_cache_id_key_idx").on(table.cacheId, table.key),
+    index("khotan_cache_entries_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Relations
 // ---------------------------------------------------------------------------
 
@@ -395,6 +456,20 @@ export const khotanMappingsRelations = relations(khotanMappings, ({ one }) => ({
   }),
 }));
 
+export const khotanCachesRelations = relations(khotanCaches, ({ many }) => ({
+  entries: many(khotanCacheEntries),
+}));
+
+export const khotanCacheEntriesRelations = relations(
+  khotanCacheEntries,
+  ({ one }) => ({
+    cache: one(khotanCaches, {
+      fields: [khotanCacheEntries.cacheId],
+      references: [khotanCaches.id],
+    }),
+  }),
+);
+
 // ---------------------------------------------------------------------------
 // Type helpers
 // ---------------------------------------------------------------------------
@@ -422,3 +497,9 @@ export type NewKhotanResource = typeof khotanResources.$inferInsert;
 
 export type KhotanMapping = typeof khotanMappings.$inferSelect;
 export type NewKhotanMapping = typeof khotanMappings.$inferInsert;
+
+export type KhotanCache = typeof khotanCaches.$inferSelect;
+export type NewKhotanCache = typeof khotanCaches.$inferInsert;
+
+export type KhotanCacheEntry = typeof khotanCacheEntries.$inferSelect;
+export type NewKhotanCacheEntry = typeof khotanCacheEntries.$inferInsert;

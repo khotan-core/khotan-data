@@ -42,8 +42,8 @@ import { stripeChargesInflow } from "./flows/stripe-charges";
 const khotanData = khotan({
   adapter: drizzleAdapter(db),
   resources: [
-    { name: "products", connectField: "sku" },
-    { name: "orders", connectField: "order_number" },
+    { name: "products", mapping: { connectField: "sku" } },
+    { name: "orders", mapping: { connectField: "order_number" } },
   ],
   plugs: [
     {
@@ -92,6 +92,7 @@ The schema command auto-detects your Drizzle schema directory, updates `drizzle.
 | `KHOTAN_SECRET` | For variables | AES-256-GCM key for encrypting plug vars |
 | `KHOTAN_DEBUG` | For debugging | Enables `/debug/*` routes and the `plug` CLI (`probe` alias) |
 | `KHOTAN_WEBHOOK_URL` | For webhooks | Public URL for wire callbacks |
+| `CRON_SECRET` | For production cron | Protects the built-in `/api/khotan/cron` dispatcher route |
 
 ## Next.js Config
 
@@ -110,6 +111,47 @@ curl http://localhost:3000/api/khotan/plugs     # Should list registered plugs
 curl http://localhost:3000/api/khotan/flows      # Should list flows
 curl http://localhost:3000/api/khotan/resources   # Should list resources
 ```
+
+## Scheduled Flows On Vercel
+
+Khotan flow `schedule` values are runtime source-of-truth metadata. On Vercel, prefer a single dispatcher CRON instead of defining one platform CRON per flow.
+
+Add one entry to `vercel.json`:
+
+```json
+{
+  "crons": [
+    { "path": "/api/khotan/cron", "schedule": "* * * * *" }
+  ]
+}
+```
+
+Then define schedules only on your flows in `{outputDir}/khotan.ts`:
+
+```typescript
+{
+  name: "products-inflow",
+  type: "inflow",
+  schedule: "0 * * * *",
+  resource: "products",
+}
+```
+
+The dispatcher route evaluates which flows are due on each tick and starts them through the normal run-tracking path. If `CRON_SECRET` is set, Vercel should call the route with `Authorization: Bearer <CRON_SECRET>`.
+
+## Typical Build Order
+
+After init and schema setup, the usual path to a working sync is:
+
+1. Add or author a plug file for the external service.
+2. Define a few typed endpoints directly on the plug with Zod response schemas.
+3. Start the app with `KHOTAN_DEBUG=1`.
+4. Verify the plug is visible with `npx khotan plug --list` and `npx khotan plug myPlug --info`.
+5. Hit live endpoints with `npx khotan plug myPlug --endpoint listProducts --compare` until the schemas match the real API shape you intend to use.
+6. Register the plug in `{outputDir}/khotan.ts` with resources and flows.
+7. Only after endpoint verification, build inflows, relays, outflows, or webhook handlers on top of those live-checked endpoints.
+
+This keeps sync logic grounded in real API payloads before you write pagination, mapping, or transformation code.
 
 ## Troubleshooting
 

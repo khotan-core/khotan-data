@@ -24,6 +24,8 @@ export interface CatchContext {
   headers: Record<string, string>;
   /** Khotan run ID created for this webhook handler execution */
   khotanRunId: string;
+  /** Internal Khotan instance identifier for helper APIs */
+  khotanInstanceId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,19 +75,29 @@ export function catchEvent(config: CatchConfig): CatchRegistration {
 // Usage Example (create a file like webhooks/pollinate-catch.ts)
 // ---------------------------------------------------------------------------
 //
+// import { khotanCache } from "khotan-data/factory";
 // import { catchEvent, type CatchContext } from "./catch";
 // Khotan already records webhook deliveries in khotan_webhook_events and links
-// them to khotan_runs. Use your catch workflow for app-specific side effects.
+// them to khotan_runs. Use your catch workflow for app-specific side effects
+// and optionally khotanCache(ctx, "name") for dedupe or cursor state.
 //
 // async function pollinateCatchWorkflow(ctx: CatchContext) {
 //   "use workflow";
 //
 //   async function notifyOps() {
 //     "use step";
+//     const cache = khotanCache(ctx, "pollinate-webhook-markers");
+//     const eventId = String(ctx.event["id"] ?? "");
+//     if (eventId && (await cache.get<boolean>(eventId))) return;
+//
 //     console.log("Handled webhook", {
 //       eventType: ctx.eventType,
 //       khotanRunId: ctx.khotanRunId,
 //     });
+//
+//     if (eventId) {
+//       await cache.set(eventId, true);
+//     }
 //   }
 //
 //   await notifyOps();

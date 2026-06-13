@@ -4,6 +4,14 @@ Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgr
 
 Built for **Next.js + Drizzle + Postgres** projects. Think better-auth for data management.
 
+## Install
+
+```bash
+npm i khotan-data
+```
+
+Requires `drizzle-orm` as a peer dependency (you almost certainly already have it).
+
 ## CLI
 
 Scaffold components into your Next.js + Drizzle project:
@@ -17,6 +25,7 @@ npx khotan init --full
 
 # Add components (reusable building blocks — never create pages)
 npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
+npx khotan add cache     # Durable key/value caches for workflows and relays
 npx khotan add plug      # Fetch wrapper with auth, retry, pagination
 npx khotan add inflow    # Workflow-backed flow for pulling data in
 npx khotan add outflow   # Workflow-backed flow for pushing data out
@@ -33,18 +42,22 @@ npx khotan add hub --yes        # Auto-accept dependency install prompts
 
 ## Factory (Runtime Engine)
 
-Register plugs, flows, and resources — the factory upserts them on boot and serves a REST API:
+Register plugs, caches, flows, and resources — the factory upserts them on boot and serves a REST API:
 
 ```typescript
 import { khotan, drizzleAdapter, toNextJsHandler } from "khotan-data/factory";
 import { db } from "@/db";
 import { shopifyPlug } from "@/lib/khotan/plugs/shopify";
 import { shopifyProductsInflow } from "@/lib/khotan/flows/shopify-products";
+import { shopifyProductsSnapshotCache } from "@/lib/khotan/caches/shopify-products-snapshot";
 
 const khotanData = khotan({
   adapter: drizzleAdapter(db),
   resources: [
-    { name: "products", connectField: "sku" },
+    { name: "products", mapping: { connectField: "sku" } },
+  ],
+  caches: [
+    shopifyProductsSnapshotCache,
   ],
   plugs: [
     {
@@ -66,13 +79,54 @@ await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
 });
 ```
 
-## Install
+## Caches
 
-```bash
-npm install khotan-data
+Use first-class caches when a flow, relay, catch, or pass needs durable state between runs.
+
+```typescript
+import { cache } from "@/lib/khotan/caches/cache";
+
+export const shopifyProductsSnapshotCache = cache({
+  name: "shopify-products-snapshot",
+  scope: {
+    plug: "shopify",
+    resource: "products",
+    flow: "shopify-products-inflow",
+  },
+  ttl: "6h",
+});
 ```
 
-Requires `drizzle-orm` as a peer dependency (you almost certainly already have it).
+Inside workflows, use `khotanCache(ctx, "name")` for snapshots, cursors, and dedupe markers:
+
+```typescript
+import { khotanCache } from "khotan-data/factory";
+
+async function shopifyProductsWorkflow(ctx: InflowContext) {
+  "use workflow";
+
+  async function syncProducts() {
+    "use step";
+    const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+    const previous =
+      (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
+
+    const response = await shopifyPlug.get<{ data?: Array<Record<string, unknown>> }>("/products");
+    const records = Array.isArray(response.data) ? response.data : [];
+
+    await snapshotCache.set("latest", records);
+
+    return {
+      extracted: records.length,
+      transformed: records.length,
+      created: records.length,
+      metadata: { previousCount: previous.length },
+    };
+  }
+
+  return syncProducts();
+}
+```
 
 ## Quick Start
 

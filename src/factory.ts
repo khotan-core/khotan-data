@@ -1,4 +1,4 @@
-import { eq, desc, sql, count, inArray } from "drizzle-orm";
+import { and, eq, desc, sql, count, inArray } from "drizzle-orm";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -230,7 +230,7 @@ const khotanRuns = pgTable(
   ],
 );
 
-const khotanMappings = pgTable(
+const khotanMappingsTable = pgTable(
   "khotan_mappings",
   {
     id: text("id")
@@ -254,6 +254,53 @@ const khotanMappings = pgTable(
     ),
     index("khotan_mappings_resource_id_idx").on(table.resourceId),
     index("khotan_mappings_refs_gin_idx").using("gin", table.refs),
+  ],
+);
+
+const khotanCaches = pgTable(
+  "khotan_caches",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull().unique(),
+    scope: jsonb("scope").$type<CacheScope>(),
+    ttlSeconds: integer("ttl_seconds"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("khotan_caches_name_idx").on(table.name)],
+);
+
+const khotanCacheEntries = pgTable(
+  "khotan_cache_entries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    cacheId: text("cache_id").notNull(),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull().$type<unknown>(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("khotan_cache_entries_cache_id_key_unique").on(
+      table.cacheId,
+      table.key,
+    ),
+    index("khotan_cache_entries_cache_id_idx").on(table.cacheId),
+    index("khotan_cache_entries_cache_id_key_idx").on(table.cacheId, table.key),
+    index("khotan_cache_entries_expires_at_idx").on(table.expiresAt),
   ],
 );
 
@@ -316,10 +363,21 @@ function bytesToHex(bytes: Uint8Array): string {
 // Types
 // ---------------------------------------------------------------------------
 
+export type ResourceConnectField = string | [string, ...string[]];
+
+export interface ResourcePlugParticipation {
+  uniqueIdentifier: string;
+}
+
+export interface ResourceMappingRegistration {
+  connectField: ResourceConnectField;
+  plugs?: Record<string, ResourcePlugParticipation>;
+}
+
 export interface ResourceRegistration {
   name: string;
-  connectField: string;
   description?: string;
+  mapping: ResourceMappingRegistration;
 }
 
 export type FlowType = "inflow" | "outflow" | "relay" | "webhook";
@@ -349,35 +407,85 @@ export interface FlowRunResult {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface BoundPlug {
+  get<T>(
+    path: string,
+    options?: {
+      params?: Record<string, unknown>;
+      headers?: Record<string, string>;
+    },
+  ): Promise<T>;
+  post<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  put<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  patch<T>(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<T>;
+  delete<T>(
+    path: string,
+    options?: { headers?: Record<string, string> },
+  ): Promise<T>;
+}
+
+export interface BindablePlug {
+  get<T>(
+    path: string,
+    options?: {
+      params?: Record<string, unknown>;
+      headers?: Record<string, string>;
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<T>;
+  post<T>(
+    path: string,
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<T>;
+  put<T>(
+    path: string,
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<T>;
+  patch<T>(
+    path: string,
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<T>;
+  delete<T>(
+    path: string,
+    options?: {
+      headers?: Record<string, string>;
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<T>;
+}
+
 export interface FlowRunContext {
-  plug: {
-    get<T>(
-      path: string,
-      options?: {
-        params?: Record<string, unknown>;
-        headers?: Record<string, string>;
-      },
-    ): Promise<T>;
-    post<T>(
-      path: string,
-      options?: { body?: unknown; headers?: Record<string, string> },
-    ): Promise<T>;
-    put<T>(
-      path: string,
-      options?: { body?: unknown; headers?: Record<string, string> },
-    ): Promise<T>;
-    patch<T>(
-      path: string,
-      options?: { body?: unknown; headers?: Record<string, string> },
-    ): Promise<T>;
-    delete<T>(
-      path: string,
-      options?: { headers?: Record<string, string> },
-    ): Promise<T>;
-  };
+  plug: BoundPlug;
   flow: {
     id: string;
     name: string;
+    plugName: string;
     type: FlowType;
     resource?: string | null;
     to?: string | null;
@@ -386,12 +494,14 @@ export interface FlowRunContext {
   body?: unknown;
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
+  cache(cacheName: string): CacheInstance;
 }
 
 export interface FlowWorkflowContext {
   flow: {
     id: string;
     name: string;
+    plugName: string;
     type: FlowType;
     resource?: string | null;
     to?: string | null;
@@ -399,7 +509,78 @@ export interface FlowWorkflowContext {
   runType: string;
   body?: unknown;
   vars: Record<string, string>;
+  plugVarsByName?: Record<string, Record<string, string>>;
   khotanRunId: string;
+  khotanInstanceId: string;
+}
+
+function bindPlugWithVars(
+  plug: BindablePlug,
+  vars: Record<string, string>,
+  setVars?: (updates: Record<string, string>) => Promise<void>,
+): BoundPlug {
+  const opts = (extra?: {
+    body?: unknown;
+    headers?: Record<string, string>;
+    params?: Record<string, unknown>;
+  }) => ({
+    ...extra,
+    vars,
+    ...(setVars ? { _setVars: setVars } : {}),
+  });
+
+  return {
+    get<T>(
+      path: string,
+      extra?: {
+        params?: Record<string, unknown>;
+        headers?: Record<string, string>;
+      },
+    ) {
+      return plug.get<T>(path, opts(extra));
+    },
+    post<T>(
+      path: string,
+      extra?: { body?: unknown; headers?: Record<string, string> },
+    ) {
+      return plug.post<T>(path, opts(extra));
+    },
+    put<T>(
+      path: string,
+      extra?: { body?: unknown; headers?: Record<string, string> },
+    ) {
+      return plug.put<T>(path, opts(extra));
+    },
+    patch<T>(
+      path: string,
+      extra?: { body?: unknown; headers?: Record<string, string> },
+    ) {
+      return plug.patch<T>(path, opts(extra));
+    },
+    delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
+      return plug.delete<T>(path, opts(extra));
+    },
+  };
+}
+
+export function bindWorkflowPlug(
+  plug: BindablePlug,
+  ctx: FlowWorkflowContext,
+  plugName = ctx.flow.plugName,
+): BoundPlug {
+  const vars =
+    plugName === ctx.flow.plugName
+      ? ctx.vars
+      : (ctx.plugVarsByName?.[plugName] ?? {});
+
+  if (plugName !== ctx.flow.plugName) {
+    ctx.plugVarsByName ??= {};
+    ctx.plugVarsByName[plugName] = vars;
+  }
+
+  return bindPlugWithVars(plug, vars, async (updates) => {
+    Object.assign(vars, updates);
+  });
 }
 
 export interface KhotanRunUpdate {
@@ -505,12 +686,7 @@ export interface CatchRegistration {
   type: "catch";
   name: string;
   events?: string[];
-  workflow: (ctx: {
-    event: Record<string, unknown>;
-    eventType: string;
-    headers: Record<string, string>;
-    khotanRunId: string;
-  }) => Promise<void>;
+  workflow: (ctx: CatchWorkflowContext) => Promise<void>;
 }
 
 export interface PassRegistration {
@@ -518,16 +694,100 @@ export interface PassRegistration {
   name: string;
   to: string;
   events?: string[];
-  workflow: (ctx: {
-    event: Record<string, unknown>;
-    eventType: string;
-    headers: Record<string, string>;
-    destVars: Record<string, string>;
-    khotanRunId: string;
-  }) => Promise<void>;
+  workflow: (ctx: PassWorkflowContext) => Promise<void>;
 }
 
 export type WebhookRegistration = CatchRegistration | PassRegistration;
+
+export interface CacheScope {
+  plug?: string;
+  resource?: string;
+  flow?: string;
+}
+
+export interface CacheRegistration {
+  name: string;
+  scope?: CacheScope;
+  ttl?: string | number;
+}
+
+export interface CacheEntryRecord {
+  id: string;
+  cacheId: string;
+  key: string;
+  value: unknown;
+  expiresAt: Date | null;
+  createdAt?: Date | undefined;
+  updatedAt?: Date | undefined;
+}
+
+export interface CacheInstance {
+  get<T = unknown>(key: string): Promise<T | null>;
+  set<T = unknown>(key: string, value: T): Promise<T>;
+  delete(key: string): Promise<void>;
+}
+
+export interface CatchWorkflowContext {
+  event: Record<string, unknown>;
+  eventType: string;
+  headers: Record<string, string>;
+  khotanRunId: string;
+  khotanInstanceId: string;
+}
+
+export interface PassWorkflowContext {
+  event: Record<string, unknown>;
+  eventType: string;
+  headers: Record<string, string>;
+  destVars: Record<string, string>;
+  khotanRunId: string;
+  khotanInstanceId: string;
+}
+
+interface KhotanWorkflowContextRef {
+  khotanInstanceId: string;
+}
+
+interface KhotanWorkflowRuntimeHelpers {
+  cache(cacheName: string): CacheInstance;
+  listMappings: KhotanInstance["listMappings"];
+  lookupMapping: KhotanInstance["lookupMapping"];
+  upsertMapping: KhotanInstance["upsertMapping"];
+  updateMapping: KhotanInstance["updateMapping"];
+  deleteMapping: KhotanInstance["deleteMapping"];
+}
+
+const khotanRuntimeRegistry = new Map<string, KhotanWorkflowRuntimeHelpers>();
+
+function getWorkflowRuntimeHelpers(
+  ctx: KhotanWorkflowContextRef,
+): KhotanWorkflowRuntimeHelpers {
+  const helpers = khotanRuntimeRegistry.get(ctx.khotanInstanceId);
+  if (!helpers) {
+    throw new Error(
+      `Khotan runtime helpers for instance "${ctx.khotanInstanceId}" are not registered`,
+    );
+  }
+  return helpers;
+}
+
+export function khotanCache(
+  ctx: KhotanWorkflowContextRef,
+  cacheName: string,
+): CacheInstance {
+  return getWorkflowRuntimeHelpers(ctx).cache(cacheName);
+}
+
+export function khotanMappings(ctx: KhotanWorkflowContextRef) {
+  const helpers = getWorkflowRuntimeHelpers(ctx);
+  return {
+    list: helpers.listMappings,
+    lookup: helpers.lookupMapping,
+    upsert: helpers.upsertMapping,
+    update: helpers.updateMapping,
+    delete: helpers.deleteMapping,
+  };
+}
 
 export interface VarField {
   readonly key: string;
@@ -645,9 +905,23 @@ export interface KhotanAdapter {
 
   upsertResource(resource: {
     name: string;
-    connectField: string;
+    connectField: ResourceConnectField;
     description?: string | null;
   }): Promise<{ id: string }>;
+  upsertCache(cache: {
+    name: string;
+    scope?: CacheScope | null;
+    ttlSeconds?: number | null;
+  }): Promise<{ id: string }>;
+  getCacheByName(name: string): Promise<Record<string, unknown> | null>;
+  getCacheEntry(cacheId: string, key: string): Promise<Record<string, unknown> | null>;
+  upsertCacheEntry(entry: {
+    cacheId: string;
+    key: string;
+    value: unknown;
+    expiresAt?: Date | null;
+  }): Promise<{ id: string; created: boolean }>;
+  deleteCacheEntry(cacheId: string, key: string): Promise<void>;
   listResources(): Promise<Record<string, unknown>[]>;
   getResource(id: string): Promise<Record<string, unknown> | null>;
   getResourceFlows(resourceId: string): Promise<Record<string, unknown>[]>;
@@ -660,13 +934,29 @@ export interface KhotanAdapter {
     metadata?: Record<string, unknown> | null;
   }): Promise<{ id: string; created: boolean }>;
   getMapping(id: string): Promise<Record<string, unknown> | null>;
-  listMappings(resourceId: string): Promise<Record<string, unknown>[]>;
-  deleteMapping(id: string): Promise<void>;
-  lookupMapping(params: {
+  listMappings(params: {
     resourceId: string;
-    plugName: string;
-    ref: string;
-  }): Promise<Record<string, unknown> | null>;
+    limit: number;
+    offset: number;
+    search?: string;
+  }): Promise<{
+    items: Record<string, unknown>[];
+    hasMore: boolean;
+    total: number;
+  }>;
+  deleteMapping(id: string): Promise<void>;
+  lookupMapping(
+    params:
+      | {
+          resourceId: string;
+          connectValue: string;
+        }
+      | {
+          resourceId: string;
+          plugName: string;
+          ref: string;
+        },
+  ): Promise<Record<string, unknown> | null>;
 
   updateFlowResourceId(flowId: string, resourceId: string): Promise<void>;
   togglePlugEnabled(plugId: string, enabled: boolean): Promise<void>;
@@ -766,6 +1056,7 @@ export interface KhotanConfig {
   adapter: KhotanAdapter;
   plugs: PlugRegistration[];
   resources?: ResourceRegistration[];
+  caches?: CacheRegistration[];
   secret?: string;
 }
 
@@ -795,6 +1086,51 @@ export interface KhotanInstance {
   init(): Promise<void>;
   flow(flowNameOrId: string, options?: FlowSelectorOptions): FlowInstance;
   wire(plugName: string): WireInstance;
+  cache(cacheName: string): CacheInstance;
+  listMappings(params: {
+    resourceId: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }): Promise<{
+    items: Record<string, unknown>[];
+    page: {
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      prevOffset: number;
+      nextOffset: number;
+      total: number;
+    };
+  }>;
+  lookupMapping(
+    params:
+      | {
+          resourceId: string;
+          connectValue: string | string[];
+        }
+      | {
+          resourceId: string;
+          plugName: string;
+          ref: string;
+        },
+  ): Promise<Record<string, unknown> | null>;
+  upsertMapping(mapping: {
+    resourceId: string;
+    connectValue: string | string[];
+    refs: Record<string, string>;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<Record<string, unknown>>;
+  updateMapping(
+    id: string,
+    mapping: {
+      resourceId: string;
+      connectValue: string | string[];
+      refs: Record<string, string>;
+      metadata?: Record<string, unknown> | null;
+    },
+  ): Promise<Record<string, unknown>>;
+  deleteMapping(id: string): Promise<void>;
   getVars(plugName: string): Promise<Record<string, string>>;
   setVars(plugName: string, vars: Record<string, string>): Promise<void>;
   clearVars(plugName: string): Promise<void>;
@@ -1041,19 +1377,114 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .insert(khotanResources)
         .values({
           name: resource.name,
-          connectField: resource.connectField,
+          connectField: serializeConnectField(resource.connectField),
           description: resource.description ?? null,
         })
         .onConflictDoUpdate({
           target: khotanResources.name,
           set: {
-            connectField: resource.connectField,
+            connectField: serializeConnectField(resource.connectField),
             description: resource.description ?? null,
             updatedAt: new Date(),
           },
         })
         .returning({ id: khotanResources.id });
       return { id: rows[0]!.id };
+    },
+
+    async upsertCache(cache) {
+      const rows = await db
+        .insert(khotanCaches)
+        .values({
+          name: cache.name,
+          scope: cache.scope ?? null,
+          ttlSeconds: cache.ttlSeconds ?? null,
+        })
+        .onConflictDoUpdate({
+          target: khotanCaches.name,
+          set: {
+            scope: cache.scope ?? null,
+            ttlSeconds: cache.ttlSeconds ?? null,
+            updatedAt: new Date(),
+          },
+        })
+        .returning({ id: khotanCaches.id });
+      return { id: rows[0]!.id };
+    },
+
+    async getCacheByName(name) {
+      const rows = await db
+        .select()
+        .from(khotanCaches)
+        .where(eq(khotanCaches.name, name))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async getCacheEntry(cacheId, key) {
+      const rows = await db
+        .select({
+          id: khotanCacheEntries.id,
+          cacheId: khotanCacheEntries.cacheId,
+          key: khotanCacheEntries.key,
+          value: khotanCacheEntries.value,
+          expiresAt: khotanCacheEntries.expiresAt,
+          createdAt: khotanCacheEntries.createdAt,
+          updatedAt: khotanCacheEntries.updatedAt,
+        })
+        .from(khotanCacheEntries)
+        .where(
+          and(
+            eq(khotanCacheEntries.cacheId, cacheId),
+            eq(khotanCacheEntries.key, key),
+          ),
+        )
+        .limit(1);
+      return rows[0] ?? null;
+    },
+
+    async upsertCacheEntry(entry) {
+      const existing = await db
+        .select({ id: khotanCacheEntries.id })
+        .from(khotanCacheEntries)
+        .where(
+          and(
+            eq(khotanCacheEntries.cacheId, entry.cacheId),
+            eq(khotanCacheEntries.key, entry.key),
+          ),
+        )
+        .limit(1);
+
+      const rows = await db
+        .insert(khotanCacheEntries)
+        .values({
+          cacheId: entry.cacheId,
+          key: entry.key,
+          value: entry.value,
+          expiresAt: entry.expiresAt ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [khotanCacheEntries.cacheId, khotanCacheEntries.key],
+          set: {
+            value: entry.value,
+            expiresAt: entry.expiresAt ?? null,
+            updatedAt: new Date(),
+          },
+        })
+        .returning({ id: khotanCacheEntries.id });
+
+      return { id: rows[0]!.id, created: existing.length === 0 };
+    },
+
+    async deleteCacheEntry(cacheId, key) {
+      await db
+        .delete(khotanCacheEntries)
+        .where(
+          and(
+            eq(khotanCacheEntries.cacheId, cacheId),
+            eq(khotanCacheEntries.key, key),
+          ),
+        );
     },
 
     async listResources() {
@@ -1069,11 +1500,11 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
 
       const mappingCounts = db
         .select({
-          resourceId: khotanMappings.resourceId,
-          mappingCount: count(khotanMappings.id).as("mapping_count"),
+          resourceId: khotanMappingsTable.resourceId,
+          mappingCount: count(khotanMappingsTable.id).as("mapping_count"),
         })
-        .from(khotanMappings)
-        .groupBy(khotanMappings.resourceId)
+        .from(khotanMappingsTable)
+        .groupBy(khotanMappingsTable.resourceId)
         .as("mapping_counts");
 
       const rows = await db
@@ -1094,7 +1525,10 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           eq(khotanResources.id, mappingCounts.resourceId),
         );
 
-      return rows;
+      return rows.map((row) => ({
+        ...row,
+        connectField: deserializeConnectField(row.connectField),
+      }));
     },
 
     async getResource(id) {
@@ -1103,7 +1537,11 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .from(khotanResources)
         .where(eq(khotanResources.id, id))
         .limit(1);
-      return rows[0] ?? null;
+      if (!rows[0]) return null;
+      return {
+        ...rows[0],
+        connectField: deserializeConnectField(rows[0].connectField),
+      };
     },
 
     async getResourceFlows(resourceId) {
@@ -1116,7 +1554,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
     async upsertMapping(mapping) {
       if (mapping.id) {
         const rows = await db
-          .update(khotanMappings)
+          .update(khotanMappingsTable)
           .set({
             resourceId: mapping.resourceId,
             connectValue: mapping.connectValue,
@@ -1124,21 +1562,21 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           })
-          .where(eq(khotanMappings.id, mapping.id))
-          .returning({ id: khotanMappings.id });
+          .where(eq(khotanMappingsTable.id, mapping.id))
+          .returning({ id: khotanMappingsTable.id });
         return { id: rows[0]!.id, created: false };
       }
 
       const existing = await db
-        .select({ id: khotanMappings.id })
-        .from(khotanMappings)
+        .select({ id: khotanMappingsTable.id })
+        .from(khotanMappingsTable)
         .where(
-          sql`${khotanMappings.resourceId} = ${mapping.resourceId} and ${khotanMappings.connectValue} = ${mapping.connectValue}`,
+          sql`${khotanMappingsTable.resourceId} = ${mapping.resourceId} and ${khotanMappingsTable.connectValue} = ${mapping.connectValue}`,
         )
         .limit(1);
 
       const rows = await db
-        .insert(khotanMappings)
+        .insert(khotanMappingsTable)
         .values({
           resourceId: mapping.resourceId,
           connectValue: mapping.connectValue,
@@ -1146,43 +1584,77 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           metadata: mapping.metadata ?? null,
         })
         .onConflictDoUpdate({
-          target: [khotanMappings.resourceId, khotanMappings.connectValue],
+          target: [khotanMappingsTable.resourceId, khotanMappingsTable.connectValue],
           set: {
-            refs: sql`${khotanMappings.refs} || ${JSON.stringify(mapping.refs)}::jsonb`,
+            refs: sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`,
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           },
         })
-        .returning({ id: khotanMappings.id });
+        .returning({ id: khotanMappingsTable.id });
       return { id: rows[0]!.id, created: existing.length === 0 };
     },
 
     async getMapping(id) {
       const rows = await db
         .select()
-        .from(khotanMappings)
-        .where(eq(khotanMappings.id, id))
+        .from(khotanMappingsTable)
+        .where(eq(khotanMappingsTable.id, id))
         .limit(1);
       return rows[0] ?? null;
     },
 
-    async listMappings(resourceId) {
-      return db
+    async listMappings({ resourceId, limit, offset, search }) {
+      const normalizedSearch = search?.trim();
+      const searchPattern = normalizedSearch
+        ? `%${normalizedSearch.replace(/[%_]/g, "\\$&")}%`
+        : null;
+
+      const filters = searchPattern
+        ? sql`${khotanMappingsTable.resourceId} = ${resourceId} and (${khotanMappingsTable.connectValue} ilike ${searchPattern} escape '\\' or ${khotanMappingsTable.refs}::text ilike ${searchPattern} escape '\\' or ${khotanMappingsTable.metadata}::text ilike ${searchPattern} escape '\\')`
+        : sql`${khotanMappingsTable.resourceId} = ${resourceId}`;
+
+      const totalRows = await db
+        .select({ total: count(khotanMappingsTable.id) })
+        .from(khotanMappingsTable)
+        .where(filters);
+
+      const rows = await db
         .select()
-        .from(khotanMappings)
-        .where(eq(khotanMappings.resourceId, resourceId));
+        .from(khotanMappingsTable)
+        .where(filters)
+        .orderBy(khotanMappingsTable.connectValue, khotanMappingsTable.id)
+        .limit(limit + 1)
+        .offset(offset);
+
+      return {
+        items: rows.slice(0, limit),
+        hasMore: rows.length > limit,
+        total: totalRows[0]?.total ?? 0,
+      };
     },
 
     async deleteMapping(id) {
-      await db.delete(khotanMappings).where(eq(khotanMappings.id, id));
+      await db.delete(khotanMappingsTable).where(eq(khotanMappingsTable.id, id));
     },
 
-    async lookupMapping({ resourceId, plugName, ref }) {
+    async lookupMapping(params) {
+      if ("connectValue" in params) {
+        const rows = await db
+          .select()
+          .from(khotanMappingsTable)
+          .where(
+            sql`${khotanMappingsTable.resourceId} = ${params.resourceId} and ${khotanMappingsTable.connectValue} = ${params.connectValue}`,
+          )
+          .limit(1);
+        return rows[0] ?? null;
+      }
+
       const rows = await db
         .select()
-        .from(khotanMappings)
+        .from(khotanMappingsTable)
         .where(
-          sql`${khotanMappings.resourceId} = ${resourceId} and ${khotanMappings.refs}->>${plugName} = ${ref}`,
+          sql`${khotanMappingsTable.resourceId} = ${params.resourceId} and ${khotanMappingsTable.refs}->>${params.plugName} = ${params.ref}`,
         )
         .limit(1);
       return rows[0] ?? null;
@@ -1746,6 +2218,187 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
+type CronFieldSpec = {
+  min: number;
+  max: number;
+  aliases?: Record<string, number>;
+};
+
+const CRON_MONTH_ALIASES: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+};
+
+const CRON_DAY_ALIASES: Record<string, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
+function parseCronValue(token: string, spec: CronFieldSpec): number {
+  const normalized = token.trim().toLowerCase();
+  if (normalized === "") {
+    throw new Error("Cron token cannot be empty");
+  }
+
+  if (spec.aliases?.[normalized] !== undefined) {
+    return spec.aliases[normalized]!;
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid cron token: "${token}"`);
+  }
+
+  if (spec.aliases === CRON_DAY_ALIASES && parsed === 7) {
+    return 0;
+  }
+
+  if (parsed < spec.min || parsed > spec.max) {
+    throw new Error(
+      `Cron value "${token}" is out of range ${spec.min}-${spec.max}`,
+    );
+  }
+
+  return parsed;
+}
+
+function cronFieldIsWildcard(field: string): boolean {
+  return field.trim() === "*";
+}
+
+function matchesCronField(
+  field: string,
+  value: number,
+  spec: CronFieldSpec,
+): boolean {
+  return field
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some((part) => {
+      if (part === "*") return true;
+
+      const [baseRaw, stepRaw] = part.split("/");
+      const base = baseRaw?.trim() ?? "";
+      const step = stepRaw ? Number.parseInt(stepRaw.trim(), 10) : 1;
+
+      if (!Number.isFinite(step) || step <= 0) {
+        throw new Error(`Invalid cron step: "${part}"`);
+      }
+
+      let start: number;
+      let end: number;
+
+      if (base === "*" || base === "") {
+        start = spec.min;
+        end = spec.max;
+      } else if (base.includes("-")) {
+        const [startRaw, endRaw] = base.split("-");
+        start = parseCronValue(startRaw ?? "", spec);
+        end = parseCronValue(endRaw ?? "", spec);
+        if (end < start) {
+          throw new Error(`Invalid cron range: "${part}"`);
+        }
+      } else {
+        start = parseCronValue(base, spec);
+        end = stepRaw ? spec.max : start;
+      }
+
+      if (value < start || value > end) return false;
+      return (value - start) % step === 0;
+    });
+}
+
+function matchesCronSchedule(schedule: string, now: Date): boolean {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    throw new Error(`Cron schedule must have 5 fields: "${schedule}"`);
+  }
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  const minuteMatch = matchesCronField(minute!, now.getUTCMinutes(), {
+    min: 0,
+    max: 59,
+  });
+  const hourMatch = matchesCronField(hour!, now.getUTCHours(), {
+    min: 0,
+    max: 23,
+  });
+  const monthMatch = matchesCronField(month!, now.getUTCMonth() + 1, {
+    min: 1,
+    max: 12,
+    aliases: CRON_MONTH_ALIASES,
+  });
+  const dayOfMonthMatch = matchesCronField(dayOfMonth!, now.getUTCDate(), {
+    min: 1,
+    max: 31,
+  });
+  const dayOfWeekMatch = matchesCronField(dayOfWeek!, now.getUTCDay(), {
+    min: 0,
+    max: 6,
+    aliases: CRON_DAY_ALIASES,
+  });
+
+  const dayOfMonthWildcard = cronFieldIsWildcard(dayOfMonth!);
+  const dayOfWeekWildcard = cronFieldIsWildcard(dayOfWeek!);
+  const dayMatches =
+    dayOfMonthWildcard && dayOfWeekWildcard
+      ? true
+      : dayOfMonthWildcard
+        ? dayOfWeekMatch
+        : dayOfWeekWildcard
+          ? dayOfMonthMatch
+          : dayOfMonthMatch || dayOfWeekMatch;
+
+  return minuteMatch && hourMatch && monthMatch && dayMatches;
+}
+
+function startOfUtcMinute(date: Date): Date {
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      date.getUTCHours(),
+      date.getUTCMinutes(),
+      0,
+      0,
+    ),
+  );
+}
+
+function coerceDate(value: unknown): Date | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+  return null;
+}
+
+function isCronRequestAuthorized(request: Request): boolean {
+  const secret = process.env["CRON_SECRET"]?.trim();
+  if (!secret) return true;
+  return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 function isWorkflowCancelledError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as Record<string, unknown>;
@@ -1953,17 +2606,262 @@ function serializeEndpoints(
   return result;
 }
 
-export function khotan(config: KhotanConfig): KhotanInstance {
-  const { adapter, plugs, resources = [] } = config;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  // Validate: no duplicate resource names
-  const resourceNames = new Set<string>();
-  for (const resource of resources) {
-    if (resourceNames.has(resource.name)) {
-      throw new Error(`Duplicate resource name: "${resource.name}"`);
-    }
-    resourceNames.add(resource.name);
+function serializeConnectField(connectField: ResourceConnectField): string {
+  return Array.isArray(connectField) ? JSON.stringify(connectField) : connectField;
+}
+
+function deserializeConnectField(connectField: unknown): ResourceConnectField {
+  if (Array.isArray(connectField)) {
+    return connectField as [string, ...string[]];
   }
+
+  if (typeof connectField !== "string") {
+    throw new Error("Resource connectField must be a string or string array");
+  }
+
+  const trimmed = connectField.trim();
+  if (!trimmed.startsWith("[")) {
+    return connectField;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((value) => typeof value === "string" && value.length > 0)
+    ) {
+      return parsed as [string, ...string[]];
+    }
+  } catch {
+    // Keep the raw string for backward compatibility with older rows.
+  }
+
+  return connectField;
+}
+
+function validateConnectField(
+  resourceName: string,
+  connectField: ResourceConnectField,
+): void {
+  if (typeof connectField === "string") {
+    if (!connectField.trim()) {
+      throw new Error(
+        `Resource "${resourceName}" must declare a non-empty connectField`,
+      );
+    }
+    return;
+  }
+
+  if (!Array.isArray(connectField) || connectField.length === 0) {
+    throw new Error(
+      `Resource "${resourceName}" must declare connectField as a string or non-empty ordered string array`,
+    );
+  }
+
+  for (const field of connectField) {
+    if (typeof field !== "string" || !field.trim()) {
+      throw new Error(
+        `Resource "${resourceName}" has an invalid composite connectField entry`,
+      );
+    }
+  }
+}
+
+function validateResourcePlugs(
+  resource: ResourceRegistration,
+  plugNames: Set<string>,
+): void {
+  if (resource.mapping.plugs === undefined) {
+    return;
+  }
+
+  if (!isPlainObject(resource.mapping.plugs)) {
+    throw new Error(
+      `Resource "${resource.name}" must declare mapping.plugs as an object keyed by plug name`,
+    );
+  }
+
+  for (const [plugName, declaration] of Object.entries(resource.mapping.plugs)) {
+    if (!plugNames.has(plugName)) {
+      throw new Error(
+        `Resource "${resource.name}" references unknown plug: "${plugName}"`,
+      );
+    }
+    if (!isPlainObject(declaration)) {
+      throw new Error(
+        `Resource "${resource.name}" has an invalid plug declaration for "${plugName}"`,
+      );
+    }
+
+    const keys = Object.keys(declaration);
+    if (
+      keys.length !== 1 ||
+      typeof declaration["uniqueIdentifier"] !== "string" ||
+      !declaration["uniqueIdentifier"].trim()
+    ) {
+      throw new Error(
+        `Resource "${resource.name}" must declare exactly one uniqueIdentifier for plug "${plugName}"`,
+      );
+    }
+  }
+}
+
+function normalizeCacheScope(
+  cacheName: string,
+  scope: CacheRegistration["scope"],
+): CacheScope | undefined {
+  if (scope === undefined) {
+    return undefined;
+  }
+
+  if (!isPlainObject(scope)) {
+    throw new Error(`Cache "${cacheName}" must declare scope as an object`);
+  }
+
+  const normalized: CacheScope = {};
+  for (const key of ["plug", "resource", "flow"] as const) {
+    const value = scope[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`Cache "${cacheName}" has an invalid scope.${key} value`);
+    }
+    normalized[key] = value.trim();
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function parseCacheTtlSeconds(
+  cacheName: string,
+  ttl: CacheRegistration["ttl"],
+): number | null {
+  if (ttl === undefined) {
+    return null;
+  }
+
+  if (typeof ttl === "number") {
+    if (!Number.isFinite(ttl) || ttl <= 0) {
+      throw new Error(`Cache "${cacheName}" must declare a positive ttl`);
+    }
+    return Math.ceil(ttl);
+  }
+
+  if (typeof ttl !== "string") {
+    throw new Error(`Cache "${cacheName}" must declare ttl as a string or number`);
+  }
+
+  const normalized = ttl.trim().toLowerCase();
+  const match = /^(\d+)\s*(ms|s|m|h|d)$/.exec(normalized);
+  if (!match) {
+    throw new Error(
+      `Cache "${cacheName}" has an invalid ttl "${ttl}". Use values like "30s", "15m", or "6h"`,
+    );
+  }
+
+  const amount = Number.parseInt(match[1]!, 10);
+  const unit = match[2]!;
+  const milliseconds =
+    unit === "ms"
+      ? amount
+      : unit === "s"
+        ? amount * 1_000
+        : unit === "m"
+          ? amount * 60_000
+          : unit === "h"
+            ? amount * 3_600_000
+            : amount * 86_400_000;
+
+  return Math.max(1, Math.ceil(milliseconds / 1_000));
+}
+
+function validateCacheKey(key: string): void {
+  if (typeof key !== "string" || !key.trim()) {
+    throw new Error("Cache key must be a non-empty string");
+  }
+}
+
+function coerceCacheEntryRecord(
+  row: Record<string, unknown>,
+): CacheEntryRecord | null {
+  if (
+    typeof row["id"] !== "string" ||
+    typeof row["cacheId"] !== "string" ||
+    typeof row["key"] !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: row["id"],
+    cacheId: row["cacheId"],
+    key: row["key"],
+    value: row["value"],
+    expiresAt: coerceDate(row["expiresAt"]),
+    createdAt: coerceDate(row["createdAt"]) ?? undefined,
+    updatedAt: coerceDate(row["updatedAt"]) ?? undefined,
+  };
+}
+
+function isCacheEntryExpired(entry: CacheEntryRecord, now = new Date()): boolean {
+  return entry.expiresAt !== null && entry.expiresAt.getTime() <= now.getTime();
+}
+
+function canonicalizeConnectValue(
+  resource: ResourceRegistration,
+  connectValue: unknown,
+): string {
+  const { connectField } = resource.mapping;
+
+  if (Array.isArray(connectField)) {
+    if (typeof connectValue === "string") {
+      return connectValue;
+    }
+    if (!Array.isArray(connectValue)) {
+      throw new Error(
+        `Resource "${resource.name}" expects composite connectValue input matching connectField order`,
+      );
+    }
+    if (connectValue.length !== connectField.length) {
+      throw new Error(
+        `Resource "${resource.name}" expects ${String(connectField.length)} connectValue parts in declared order`,
+      );
+    }
+
+    const parts = connectValue.map((part) => {
+      if (typeof part === "string") return part;
+      if (typeof part === "number" || typeof part === "boolean") {
+        return String(part);
+      }
+      throw new Error(
+        `Resource "${resource.name}" connectValue parts must be strings, numbers, or booleans`,
+      );
+    });
+
+    return JSON.stringify(parts);
+  }
+
+  if (typeof connectValue === "string") {
+    return connectValue;
+  }
+  if (typeof connectValue === "number" || typeof connectValue === "boolean") {
+    return String(connectValue);
+  }
+
+  throw new Error(
+    `Resource "${resource.name}" expects connectValue to be a string, number, or boolean`,
+  );
+}
+
+export function khotan(config: KhotanConfig): KhotanInstance {
+  const { adapter, plugs, resources = [], caches = [] } = config;
+  const instanceId = crypto.randomUUID();
 
   // Validate: no duplicate plug names
   const plugNames = new Set<string>();
@@ -1972,17 +2870,74 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       throw new Error(`Duplicate plug name: "${plug.name}"`);
     }
     plugNames.add(plug.name);
+  }
 
-    // Validate: flow resource references must match a registered resource
-    if (plug.flows) {
-      for (const flow of plug.flows) {
-        if (flow.resource && !resourceNames.has(flow.resource)) {
-          throw new Error(
-            `Flow "${flow.name}" references unknown resource: "${flow.resource}"`,
-          );
-        }
+  // Validate: no duplicate resource names and resource declarations are sane
+  const resourceNames = new Set<string>();
+  const resourceConfigByName = new Map<string, ResourceRegistration>();
+  for (const resource of resources) {
+    if (resourceNames.has(resource.name)) {
+      throw new Error(`Duplicate resource name: "${resource.name}"`);
+    }
+    validateConnectField(resource.name, resource.mapping.connectField);
+    validateResourcePlugs(resource, plugNames);
+    resourceNames.add(resource.name);
+    resourceConfigByName.set(resource.name, resource);
+  }
+
+  // Validate: flow resource references must match a registered resource
+  const registeredFlowNames = new Set<string>();
+  for (const plug of plugs) {
+    if (!plug.flows) continue;
+    for (const flow of plug.flows) {
+      registeredFlowNames.add(flow.name);
+      if (flow.resource && !resourceNames.has(flow.resource)) {
+        throw new Error(
+          `Flow "${flow.name}" references unknown resource: "${flow.resource}"`,
+        );
       }
     }
+  }
+
+  const cacheStateByName = new Map<
+    string,
+    { id: string; config: CacheRegistration; ttlSeconds: number | null }
+  >();
+
+  for (const cache of caches) {
+    if (cacheStateByName.has(cache.name)) {
+      throw new Error(`Duplicate cache name: "${cache.name}"`);
+    }
+    if (typeof cache.name !== "string" || !cache.name.trim()) {
+      throw new Error("Cache registrations must declare a non-empty name");
+    }
+
+    const normalizedScope = normalizeCacheScope(cache.name, cache.scope);
+    if (normalizedScope?.plug && !plugNames.has(normalizedScope.plug)) {
+      throw new Error(
+        `Cache "${cache.name}" references unknown plug: "${normalizedScope.plug}"`,
+      );
+    }
+    if (normalizedScope?.resource && !resourceNames.has(normalizedScope.resource)) {
+      throw new Error(
+        `Cache "${cache.name}" references unknown resource: "${normalizedScope.resource}"`,
+      );
+    }
+    if (normalizedScope?.flow && !registeredFlowNames.has(normalizedScope.flow)) {
+      throw new Error(
+        `Cache "${cache.name}" references unknown flow: "${normalizedScope.flow}"`,
+      );
+    }
+
+    cacheStateByName.set(cache.name, {
+      id: "",
+      config: {
+        ...cache,
+        name: cache.name.trim(),
+        ...(normalizedScope ? { scope: normalizedScope } : {}),
+      },
+      ttlSeconds: parseCacheTtlSeconds(cache.name, cache.ttl),
+    });
   }
 
   const registeredFlowKeys = new Set(
@@ -2039,19 +2994,35 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   let initialized = false;
   let initPromise: Promise<void> | null = null;
+  const resourceIdByName = new Map<string, string>();
+  const resourceConfigById = new Map<string, ResourceRegistration>();
 
   async function doInit(): Promise<void> {
     if (initialized) return;
 
     // Upsert resources first, collect name→id map
-    const resourceIdMap = new Map<string, string>();
+    resourceIdByName.clear();
+    resourceConfigById.clear();
     for (const resource of resources) {
       const { id } = await adapter.upsertResource({
         name: resource.name,
-        connectField: resource.connectField,
+        connectField: resource.mapping.connectField,
         description: resource.description ?? null,
       });
-      resourceIdMap.set(resource.name, id);
+      resourceIdByName.set(resource.name, id);
+      resourceConfigById.set(id, resource);
+    }
+
+    for (const [cacheName, cacheState] of cacheStateByName) {
+      const { id } = await adapter.upsertCache({
+        name: cacheName,
+        scope: cacheState.config.scope ?? null,
+        ttlSeconds: cacheState.ttlSeconds,
+      });
+      cacheStateByName.set(cacheName, {
+        ...cacheState,
+        id,
+      });
     }
 
     for (const plug of plugs) {
@@ -2073,7 +3044,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           });
 
           if (flow.resource) {
-            const resourceId = resourceIdMap.get(flow.resource)!;
+            const resourceId = resourceIdByName.get(flow.resource)!;
             await adapter.updateFlowResourceId(flowId, resourceId);
           }
         }
@@ -2118,6 +3089,264 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return initPromise;
   }
 
+  async function getRegisteredResourceById(
+    resourceId: string,
+  ): Promise<ResourceRegistration | null> {
+    await init();
+    return resourceConfigById.get(resourceId) ?? null;
+  }
+
+  async function resolveCacheState(cacheName: string) {
+    await init();
+    const cacheState = cacheStateByName.get(cacheName);
+    if (!cacheState || !cacheState.id) {
+      throw new Error(`Cache "${cacheName}" is not registered`);
+    }
+    return cacheState;
+  }
+
+  function createCacheInstance(cacheName: string): CacheInstance {
+    return {
+      async get<T = unknown>(key: string): Promise<T | null> {
+        const entry = await readCacheEntry(cacheName, key);
+        return entry ? (entry.value as T) : null;
+      },
+      async set<T = unknown>(key: string, value: T): Promise<T> {
+        validateCacheKey(key);
+        const cacheState = await resolveCacheState(cacheName);
+        const expiresAt =
+          cacheState.ttlSeconds !== null
+            ? new Date(Date.now() + cacheState.ttlSeconds * 1_000)
+            : null;
+        await adapter.upsertCacheEntry({
+          cacheId: cacheState.id,
+          key,
+          value,
+          expiresAt,
+        });
+        return value;
+      },
+      async delete(key: string): Promise<void> {
+        validateCacheKey(key);
+        const cacheState = await resolveCacheState(cacheName);
+        await adapter.deleteCacheEntry(cacheState.id, key);
+      },
+    };
+  }
+
+  async function readCacheEntry(
+    cacheName: string,
+    key: string,
+  ): Promise<CacheEntryRecord | null> {
+    validateCacheKey(key);
+    const cacheState = await resolveCacheState(cacheName);
+    const row = await adapter.getCacheEntry(cacheState.id, key);
+    if (!row) {
+      return null;
+    }
+    const entry = coerceCacheEntryRecord(row);
+    if (!entry || isCacheEntryExpired(entry)) {
+      return null;
+    }
+    return entry;
+  }
+
+  function decorateResourceRecord(
+    resource: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const { connectField: storedConnectField, ...rest } = resource;
+    const configResource =
+      typeof resource["name"] === "string"
+        ? resourceConfigByName.get(resource["name"])
+        : undefined;
+
+    return {
+      ...rest,
+      mapping: {
+        connectField:
+          configResource?.mapping.connectField ??
+          deserializeConnectField(storedConnectField),
+        ...(configResource?.mapping.plugs
+          ? { plugs: configResource.mapping.plugs }
+          : {}),
+      },
+    };
+  }
+
+  function buildMappingPage(params: {
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+    total: number;
+    items: Record<string, unknown>[];
+  }) {
+    return {
+      items: params.items,
+      page: {
+        limit: params.limit,
+        offset: params.offset,
+        hasMore: params.hasMore,
+        prevOffset: Math.max(params.offset - params.limit, 0),
+        nextOffset: params.offset + params.limit,
+        total: params.total,
+      },
+    };
+  }
+
+  async function validateMappingPayload(params: {
+    resourceId: string;
+    refs: Record<string, string>;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<ResourceRegistration> {
+    if (!isPlainObject(params.refs)) {
+      throw new Error("Mapping refs must be an object keyed by plug name");
+    }
+
+    for (const [plugName, ref] of Object.entries(params.refs)) {
+      if (typeof ref !== "string") {
+        throw new Error(`Mapping ref "${plugName}" must be a string`);
+      }
+    }
+
+    if (params.metadata !== undefined && params.metadata !== null) {
+      if (!isPlainObject(params.metadata)) {
+        throw new Error("Mapping metadata must be an object when provided");
+      }
+    }
+
+    const resource = await getRegisteredResourceById(params.resourceId);
+    if (!resource) {
+      throw new Error(`Resource "${params.resourceId}" is not registered`);
+    }
+
+    if (resource.mapping.plugs) {
+      const invalidPlugs = Object.keys(params.refs).filter(
+        (plugName) => !resource.mapping.plugs?.[plugName],
+      );
+      if (invalidPlugs.length > 0) {
+        throw new Error(
+          `Resource "${resource.name}" only allows refs for declared plugs. Invalid refs: ${invalidPlugs.join(", ")}`,
+        );
+      }
+    }
+
+    return resource;
+  }
+
+  async function listMappings(params: {
+    resourceId: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }) {
+    const resource = await getRegisteredResourceById(params.resourceId);
+    if (!resource) {
+      throw new Error(`Resource "${params.resourceId}" is not registered`);
+    }
+
+    const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
+    const offset = Math.max(params.offset ?? 0, 0);
+    const page = await adapter.listMappings({
+      resourceId: params.resourceId,
+      limit,
+      offset,
+      ...(params.search?.trim()
+        ? { search: params.search.trim() }
+        : {}),
+    });
+
+    return buildMappingPage({
+      limit,
+      offset,
+      hasMore: page.hasMore,
+      total: page.total,
+      items: page.items,
+    });
+  }
+
+  async function lookupMapping(
+    params:
+      | { resourceId: string; connectValue: string | string[] }
+      | { resourceId: string; plugName: string; ref: string },
+  ): Promise<Record<string, unknown> | null> {
+    const resource = await getRegisteredResourceById(params.resourceId);
+    if (!resource) {
+      throw new Error(`Resource "${params.resourceId}" is not registered`);
+    }
+
+    if ("connectValue" in params) {
+      return adapter.lookupMapping({
+        resourceId: params.resourceId,
+        connectValue: canonicalizeConnectValue(resource, params.connectValue),
+      });
+    }
+
+    if (resource.mapping.plugs && !resource.mapping.plugs[params.plugName]) {
+      throw new Error(
+        `Resource "${resource.name}" does not declare plug "${params.plugName}"`,
+      );
+    }
+
+    return adapter.lookupMapping(params);
+  }
+
+  async function upsertMapping(mapping: {
+    resourceId: string;
+    connectValue: string | string[];
+    refs: Record<string, string>;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<Record<string, unknown>> {
+    const resource = await validateMappingPayload(mapping);
+    const result = await adapter.upsertMapping({
+      resourceId: mapping.resourceId,
+      connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
+      refs: mapping.refs,
+      metadata: mapping.metadata ?? null,
+    });
+    const saved = await adapter.getMapping(result.id);
+    if (!saved) {
+      throw new Error("Mapping was saved but could not be reloaded");
+    }
+    return saved;
+  }
+
+  async function updateMapping(
+    id: string,
+    mapping: {
+      resourceId: string;
+      connectValue: string | string[];
+      refs: Record<string, string>;
+      metadata?: Record<string, unknown> | null;
+    },
+  ): Promise<Record<string, unknown>> {
+    const existing = await adapter.getMapping(id);
+    if (!existing) {
+      throw new Error(`Mapping "${id}" not found`);
+    }
+
+    const resource = await validateMappingPayload(mapping);
+    await adapter.upsertMapping({
+      id,
+      resourceId: mapping.resourceId,
+      connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
+      refs: mapping.refs,
+      metadata: mapping.metadata ?? null,
+    });
+    const saved = await adapter.getMapping(id);
+    if (!saved) {
+      throw new Error(`Mapping "${id}" disappeared after update`);
+    }
+    return saved;
+  }
+
+  async function deleteMapping(id: string): Promise<void> {
+    const existing = await adapter.getMapping(id);
+    if (!existing) {
+      throw new Error(`Mapping "${id}" not found`);
+    }
+    await adapter.deleteMapping(id);
+  }
+
   function wire(plugName: string): WireInstance {
     const plugReg = plugs.find((p) => p.name === plugName);
     if (!plugReg) {
@@ -2132,48 +3361,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       vars: Record<string, string>,
       _setVars?: (updates: Record<string, string>) => Promise<void>,
     ) {
-      const plug = plugReg!.plug;
-      const opts = (extra?: {
-        body?: unknown;
-        headers?: Record<string, string>;
-        params?: Record<string, unknown>;
-      }) => ({
-        ...extra,
-        vars,
-        ...(_setVars && { _setVars }),
-      });
-      return {
-        get<T>(
-          path: string,
-          extra?: {
-            params?: Record<string, unknown>;
-            headers?: Record<string, string>;
-          },
-        ) {
-          return plug.get<T>(path, opts(extra));
-        },
-        post<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plug.post<T>(path, opts(extra));
-        },
-        put<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plug.put<T>(path, opts(extra));
-        },
-        patch<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plug.patch<T>(path, opts(extra));
-        },
-        delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
-          return plug.delete<T>(path, opts(extra));
-        },
-      };
+      return bindPlugWithVars(plugReg!.plug, vars, _setVars);
     }
 
     async function getWireVars(
@@ -2432,51 +3620,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       const setFlowVars = async (updates: Record<string, string>) => {
         await setVars(plugName, { ...vars, ...updates });
       };
-      const opts = (extra?: {
-        body?: unknown;
-        headers?: Record<string, string>;
-        params?: Record<string, unknown>;
-      }) => ({
-        ...extra,
+      const boundPlug = bindPlugWithVars(
+        plugReg.plug,
         vars,
-        ...(secret ? { _setVars: setFlowVars } : {}),
-      });
-      const boundPlug = {
-        get<T>(
-          path: string,
-          extra?: {
-            params?: Record<string, unknown>;
-            headers?: Record<string, string>;
-          },
-        ) {
-          return plugReg.plug.get<T>(path, opts(extra));
-        },
-        post<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plugReg.plug.post<T>(path, opts(extra));
-        },
-        put<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plugReg.plug.put<T>(path, opts(extra));
-        },
-        patch<T>(
-          path: string,
-          extra?: { body?: unknown; headers?: Record<string, string> },
-        ) {
-          return plugReg.plug.patch<T>(path, opts(extra));
-        },
-        delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
-          return plugReg.plug.delete<T>(path, opts(extra));
-        },
+        secret ? setFlowVars : undefined,
+      );
+      const plugVarsByName: Record<string, Record<string, string>> = {
+        [plugName]: vars,
       };
+      if (flowReg.to && plugNames.has(flowReg.to)) {
+        plugVarsByName[flowReg.to] = secret
+          ? await getVars(flowReg.to).catch(() => ({}))
+          : {};
+      }
 
       const flowContext = {
         id: flowId,
         name: flowReg.name,
+        plugName,
         type: flowReg.type,
         resource: flowReg.resource ?? null,
         to: flowReg.to ?? null,
@@ -2490,7 +3651,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             runType,
             body: requestBody["body"],
             vars,
+            plugVarsByName,
             khotanRunId: runId,
+            khotanInstanceId: instanceId,
           },
         ]);
         const workflowRunId = getWorkflowRunId(result);
@@ -2520,6 +3683,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         body: requestBody["body"],
         vars,
         setVars: setFlowVars,
+        cache: createCacheInstance,
       });
       const runResult = toFlowRunResult(result);
 
@@ -2541,6 +3705,145 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         { status: 500 },
       );
     }
+  }
+
+  async function wasFlowTriggeredInMinuteWindow(
+    flowId: string,
+    slotStart: Date,
+    slotEnd: Date,
+  ): Promise<boolean> {
+    const runs = await adapter.listRuns(flowId);
+    return runs.some((run) => {
+      const startedAt = coerceDate(run["startedAt"]);
+      if (!startedAt) return false;
+      const startedAtMs = startedAt.getTime();
+      return (
+        startedAtMs >= slotStart.getTime() && startedAtMs < slotEnd.getTime()
+      );
+    });
+  }
+
+  async function dispatchScheduledFlows(options: {
+    now?: Date;
+    runType?: string;
+  } = {}) {
+    await init();
+
+    const now = options.now ?? new Date();
+    const slotStart = startOfUtcMinute(now);
+    const slotEnd = new Date(slotStart.getTime() + 60_000);
+    const runType = options.runType ?? "full";
+    const registeredFlows = (await adapter.listFlows()).filter((flow) =>
+      isRegisteredFlowRecord(flow),
+    );
+
+    const scheduledFlows = registeredFlows.filter(
+      (flow) => typeof flow["schedule"] === "string" && flow["schedule"].trim(),
+    );
+
+    const triggered: Array<Record<string, unknown>> = [];
+    const skipped: Array<Record<string, unknown>> = [];
+
+    for (const flow of scheduledFlows) {
+      const flowId = typeof flow["id"] === "string" ? flow["id"] : null;
+      const flowName = typeof flow["name"] === "string" ? flow["name"] : null;
+      const plugName =
+        typeof flow["plugName"] === "string" ? flow["plugName"] : null;
+      const schedule =
+        typeof flow["schedule"] === "string" ? flow["schedule"].trim() : "";
+
+      if (!flowId || !flowName || !plugName || !schedule) continue;
+
+      if (flow["enabled"] === false) {
+        skipped.push({
+          flowId,
+          flowName,
+          plugName,
+          schedule,
+          reason: "disabled",
+        });
+        continue;
+      }
+
+      let isDue = false;
+      try {
+        isDue = matchesCronSchedule(schedule, now);
+      } catch (error) {
+        skipped.push({
+          flowId,
+          flowName,
+          plugName,
+          schedule,
+          reason: "invalid_schedule",
+          detail: getErrorMessage(error),
+        });
+        continue;
+      }
+
+      if (!isDue) {
+        skipped.push({
+          flowId,
+          flowName,
+          plugName,
+          schedule,
+          reason: "not_due",
+        });
+        continue;
+      }
+
+      if (await wasFlowTriggeredInMinuteWindow(flowId, slotStart, slotEnd)) {
+        skipped.push({
+          flowId,
+          flowName,
+          plugName,
+          schedule,
+          reason: "already_triggered",
+        });
+        continue;
+      }
+
+      const response = await triggerFlowRun(flowId, { runType });
+      const payload = (await response.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+
+      if (!response.ok) {
+        skipped.push({
+          flowId,
+          flowName,
+          plugName,
+          schedule,
+          reason: "trigger_failed",
+          status: response.status,
+          detail:
+            typeof payload["error"] === "string"
+              ? payload["error"]
+              : response.statusText,
+        });
+        continue;
+      }
+
+      triggered.push({
+        flowId,
+        flowName,
+        plugName,
+        schedule,
+        runId: payload["id"] ?? null,
+        workflowRunId: payload["workflowRunId"] ?? null,
+        status:
+          typeof payload["status"] === "string" ? payload["status"] : "running",
+      });
+    }
+
+    return {
+      ok: true,
+      tickAt: slotStart.toISOString(),
+      runType,
+      evaluated: scheduledFlows.length,
+      triggered,
+      skipped,
+    };
   }
 
   async function resolveFlowId(
@@ -2663,12 +3966,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     const plugsIdx = segments.indexOf("plugs");
     const flowsIdx = segments.indexOf("flows");
     const resourcesIdx = segments.indexOf("resources");
+    const cachesIdx = segments.indexOf("caches");
     const mappingsIdx = segments.indexOf("mappings");
     const runsIdx = segments.indexOf("runs");
     const wiresIdx = segments.indexOf("wires");
     const webhookHandlersIdx = segments.indexOf("webhook-handlers");
     const webhookEventsIdx = segments.indexOf("webhook-events");
     const variablesIdx = segments.indexOf("variables");
+    const cronIdx = segments.indexOf("cron");
 
     const debugIdx = segments.indexOf("debug");
 
@@ -2683,8 +3988,44 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
       0,
     );
+    const search = url.searchParams.get("search")?.trim() || undefined;
+    const wantsMappingPage =
+      url.searchParams.has("limit") ||
+      url.searchParams.has("offset") ||
+      url.searchParams.has("search");
 
     if (request.method === "GET") {
+      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
+        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
+        const key = decodeURIComponent(segments[cachesIdx + 2]!);
+
+        try {
+          const entry = await readCacheEntry(cacheName, key);
+          if (!entry) {
+            return Response.json({ error: "Cache entry not found" }, { status: 404 });
+          }
+
+          return Response.json({
+            cache: cacheName,
+            key: entry.key,
+            value: entry.value,
+            expiresAt: entry.expiresAt,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid cache request";
+          return Response.json({ error: message }, { status: 400 });
+        }
+      }
+
+      if (cronIdx !== -1 && cronIdx === segments.length - 1) {
+        if (!isCronRequestAuthorized(request)) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const result = await dispatchScheduledFlows();
+        return Response.json(result);
+      }
+
       // GET .../debug — check if debug mode is active
       if (debugIdx !== -1 && debugIdx === segments.length - 1) {
         const debugActive = process?.env?.["KHOTAN_DEBUG"];
@@ -2973,7 +4314,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const filtered = data.filter(
           (r) => typeof r["name"] === "string" && resourceNames.has(r["name"]),
         );
-        return Response.json(filtered);
+        return Response.json(filtered.map(decorateResourceRecord));
       }
 
       // GET .../resources/:id/mappings
@@ -2983,8 +4324,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         segments[resourcesIdx + 2] === "mappings"
       ) {
         const resourceId = segments[resourcesIdx + 1]!;
-        const data = await adapter.listMappings(resourceId);
-        return Response.json(data);
+        const resource = await getRegisteredResourceById(resourceId);
+        if (!resource) {
+          return Response.json(
+            { error: "Resource not found" },
+            { status: 404 },
+          );
+        }
+
+        const page = await listMappings({
+          resourceId,
+          limit,
+          offset,
+          ...(search ? { search } : {}),
+        });
+
+        if (!wantsMappingPage) {
+          return Response.json(page.items);
+        }
+
+        return Response.json(page);
       }
 
       // GET .../resources/:id
@@ -3002,7 +4361,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           );
         }
         const flows = await adapter.getResourceFlows(resourceId);
-        return Response.json({ ...resource, flows });
+        return Response.json({ ...decorateResourceRecord(resource), flows });
       }
 
       // GET .../mappings/:id
@@ -3017,6 +4376,52 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     if (request.method === "POST") {
+      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
+        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
+        const key = decodeURIComponent(segments[cachesIdx + 2]!);
+        const body = (await request.json().catch(() => ({}))) as {
+          value?: unknown;
+        };
+
+        if (!("value" in body)) {
+          return Response.json({ error: "Cache writes require a value" }, { status: 400 });
+        }
+
+        try {
+          const cacheHandle = createCacheInstance(cacheName);
+          await cacheHandle.set(key, body.value);
+          const entry = await readCacheEntry(cacheName, key);
+          return Response.json({
+            cache: cacheName,
+            key,
+            value: body.value,
+            expiresAt: entry?.expiresAt ?? null,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid cache payload";
+          return Response.json({ error: message }, { status: 400 });
+        }
+      }
+
+      if (cronIdx !== -1 && cronIdx === segments.length - 1) {
+        if (!isCronRequestAuthorized(request)) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        let body: Record<string, unknown> = {};
+        try {
+          body = (await request.json()) as Record<string, unknown>;
+        } catch {
+          body = {};
+        }
+
+        const runType =
+          typeof body["runType"] === "string" ? body["runType"] : "full";
+        const result = await dispatchScheduledFlows({ runType });
+        return Response.json(result);
+      }
+
       // POST .../webhook/:plugName — receive inbound webhooks
       const webhookIdx = segments.indexOf("webhook");
       if (webhookIdx !== -1 && webhookIdx === segments.length - 2) {
@@ -3158,7 +4563,13 @@ export function khotan(config: KhotanConfig): KhotanInstance {
               }
               try {
                 const result = await startWorkflow(c.workflow, [
-                  { event, eventType, headers, khotanRunId },
+                  {
+                    event,
+                    eventType,
+                    headers,
+                    khotanRunId,
+                    khotanInstanceId: instanceId,
+                  },
                 ]);
                 const workflowRunId =
                   result && typeof result === "object"
@@ -3238,7 +4649,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
               }
               try {
                 const result = await startWorkflow(p.workflow, [
-                  { event, eventType, headers, destVars, khotanRunId },
+                  {
+                    event,
+                    eventType,
+                    headers,
+                    destVars,
+                    khotanRunId,
+                    khotanInstanceId: instanceId,
+                  },
                 ]);
                 const workflowRunId =
                   result && typeof result === "object"
@@ -3542,12 +4960,65 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         mappingsIdx === segments.length - 2 &&
         segments[mappingsIdx + 1] === "lookup"
       ) {
-        const body = (await request.json()) as {
-          resourceId: string;
-          plugName: string;
-          ref: string;
-        };
-        const mapping = await adapter.lookupMapping(body);
+        const body = (await request.json()) as
+          | {
+              resourceId: string;
+              connectValue: string | string[];
+            }
+          | {
+              resourceId: string;
+              plugName: string;
+              ref: string;
+            };
+        if (
+          !body ||
+          typeof body !== "object" ||
+          typeof body["resourceId"] !== "string"
+        ) {
+          return Response.json(
+            {
+              error:
+                "Lookup requires resourceId plus either connectValue or plugName with ref",
+            },
+            { status: 400 },
+          );
+        }
+
+        const hasConnectValue = "connectValue" in body;
+        const hasPlugRef =
+          "plugName" in body &&
+          typeof body.plugName === "string" &&
+          "ref" in body &&
+          typeof body.ref === "string";
+
+        if (!hasConnectValue && !hasPlugRef) {
+          return Response.json(
+            {
+              error:
+                "Lookup requires either connectValue or plugName with ref",
+            },
+            { status: 400 },
+          );
+        }
+
+        let mapping: Record<string, unknown> | null;
+        try {
+          mapping = hasConnectValue
+            ? await lookupMapping({
+                resourceId: body.resourceId,
+                connectValue: body.connectValue,
+              })
+            : await lookupMapping({
+                resourceId: body.resourceId,
+                plugName: body.plugName,
+                ref: body.ref,
+              });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid lookup request";
+          return Response.json({ error: message }, { status: 400 });
+        }
+
         if (!mapping) {
           return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
@@ -3558,15 +5029,22 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       if (mappingsIdx !== -1 && mappingsIdx === segments.length - 1) {
         const body = (await request.json()) as {
           resourceId: string;
-          connectValue: string;
+          connectValue: string | string[];
           refs: Record<string, string>;
           metadata?: Record<string, unknown> | null;
         };
-        const result = await adapter.upsertMapping(body);
-        return Response.json(
-          { id: result.id },
-          { status: result.created ? 201 : 200 },
-        );
+        try {
+          const existing = await lookupMapping({
+            resourceId: body.resourceId,
+            connectValue: body.connectValue,
+          });
+          const saved = await upsertMapping(body);
+          return Response.json(saved, { status: existing ? 200 : 201 });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid mapping payload";
+          return Response.json({ error: message }, { status: 400 });
+        }
       }
     }
 
@@ -3620,16 +5098,39 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const mappingId = segments[mappingsIdx + 1]!;
         const body = (await request.json()) as {
           resourceId: string;
-          connectValue: string;
+          connectValue: string | string[];
           refs: Record<string, string>;
           metadata?: Record<string, unknown> | null;
         };
-        const result = await adapter.upsertMapping({ ...body, id: mappingId });
-        return Response.json(result);
+        try {
+          const saved = await updateMapping(mappingId, body);
+          return Response.json(saved);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid mapping payload";
+          return Response.json(
+            { error: message },
+            { status: message.includes("not found") ? 404 : 400 },
+          );
+        }
       }
     }
 
     if (request.method === "DELETE") {
+      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
+        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
+        const key = decodeURIComponent(segments[cachesIdx + 2]!);
+
+        try {
+          await createCacheInstance(cacheName).delete(key);
+          return new Response(null, { status: 204 });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Invalid cache request";
+          return Response.json({ error: message }, { status: 400 });
+        }
+      }
+
       // DELETE .../variables/:plugName
       if (variablesIdx !== -1 && variablesIdx === segments.length - 2) {
         const plugName = segments[variablesIdx + 1]!;
@@ -3667,6 +5168,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       // DELETE .../mappings/:id
       if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
         const mappingId = segments[mappingsIdx + 1]!;
+        const existing = await adapter.getMapping(mappingId);
+        if (!existing) {
+          return Response.json({ error: "Mapping not found" }, { status: 404 });
+        }
         await adapter.deleteMapping(mappingId);
         return new Response(null, { status: 204 });
       }
@@ -3801,11 +5306,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return plugReg.plug;
   }
 
+  khotanRuntimeRegistry.set(instanceId, {
+    cache: createCacheInstance,
+    listMappings,
+    lookupMapping,
+    upsertMapping,
+    updateMapping,
+    deleteMapping,
+  });
+
   return {
     handler,
     init,
     flow,
     wire,
+    cache: createCacheInstance,
+    listMappings,
+    lookupMapping,
+    upsertMapping,
+    updateMapping,
+    deleteMapping,
     getVars,
     setVars,
     clearVars,

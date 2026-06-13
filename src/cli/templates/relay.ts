@@ -5,7 +5,8 @@
 // This file defines the relay() builder and types. Create per-service flow
 // files (e.g. shopify-to-hubspot.ts) using this builder to read from the source
 // plug and forward to a destination system with durable, retryable Vercel
-// Workflow steps.
+// Workflow steps. Relay workflows can also use khotanCache(ctx, "name") for durable
+// snapshots, checkpoints, and dedupe state between runs.
 // ============================================================================
 
 import type {
@@ -50,7 +51,7 @@ export function relay(config: RelayConfig): FlowRegistration {
 // Usage Example (create a file like flows/shopify-to-hubspot.ts)
 // ---------------------------------------------------------------------------
 //
-// import { relay, type RelayContext } from "./relay";
+// import { bindWorkflowPlug, khotanCache, relay, type RelayContext } from "khotan-data/factory";
 // import { shopifyPlug } from "../plugs/shopify";
 // import { hubspotPlug } from "../plugs/hubspot";
 //
@@ -65,21 +66,29 @@ export function relay(config: RelayConfig): FlowRegistration {
 //       khotanRunId: ctx.khotanRunId,
 //       runType: ctx.runType,
 //     });
+//     const shopify = bindWorkflowPlug(shopifyPlug, ctx);
+//     const hubspot = bindWorkflowPlug(hubspotPlug, ctx, "hubspot");
 //
-//     const response = await shopifyPlug.get<{ data?: Array<Record<string, unknown>> }>("/products", {
-//       vars: ctx.vars,
-//     });
+//     const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+//     const previous = await snapshotCache.get<Array<Record<string, unknown>>>("latest");
+//
+//     const response = await shopify.get<{ data?: Array<Record<string, unknown>> }>("/products");
 //     const records = Array.isArray(response.data) ? response.data : [];
+//     await snapshotCache.set("latest", records);
 //
 //     for (const record of records) {
-//       await hubspotPlug.post("/products", { body: record });
+//       await hubspot.post("/products", { body: record });
 //     }
 //
 //     return {
 //       extracted: records.length,
 //       transformed: records.length,
 //       created: records.length,
-//       metadata: { relay: ctx.flow.name, to: ctx.flow.to },
+//       metadata: {
+//         relay: ctx.flow.name,
+//         to: ctx.flow.to,
+//         previousCount: previous?.length ?? 0,
+//       },
 //     };
 //   }
 //

@@ -6,6 +6,7 @@ import { migrateCommand } from "./commands/migrate.js";
 import { plugCommand } from "./commands/probe.js";
 import { wireCommand } from "./commands/wire.js";
 import { flowsCommand } from "./commands/flows.js";
+import { mappingsCommand } from "./commands/mappings.js";
 
 const program = new Command();
 
@@ -21,5 +22,6 @@ program.addCommand(migrateCommand);
 program.addCommand(plugCommand);
 program.addCommand(wireCommand);
 program.addCommand(flowsCommand);
+program.addCommand(mappingsCommand);
 
 program.parse();

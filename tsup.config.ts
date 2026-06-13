@@ -54,6 +54,14 @@ export default defineConfig([
         path.resolve(templatesDir, "schema.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "cache.ts"),
+        path.resolve(templatesDir, "cache.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "cache.example.ts"),
+        path.resolve(templatesDir, "cache.example.ts"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "wire.ts"),
         path.resolve(templatesDir, "wire.ts"),
       );
@@ -64,6 +72,10 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "logs.tsx"),
         path.resolve(templatesDir, "logs.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "mapping-browser.tsx"),
+        path.resolve(templatesDir, "mapping-browser.tsx"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "runs-table.tsx"),
@@ -116,6 +128,10 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "graph-page.tsx"),
         path.resolve(templatesDir, "graph-page.tsx"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "mappings-page.tsx"),
+        path.resolve(templatesDir, "mappings-page.tsx"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "catch.ts"),

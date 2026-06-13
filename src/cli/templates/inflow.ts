@@ -5,7 +5,8 @@
 // This file defines the inflow() builder and types. Create per-service flow
 // files (e.g. shopify-products.ts) using this builder to pull records from an
 // external service, transform them, and load them into your app with durable,
-// retryable Vercel Workflow steps.
+// retryable Vercel Workflow steps. Inflow workflows can also use
+// khotanCache(ctx, "name") for checkpoints and last-seen markers across runs.
 // ============================================================================
 
 import type {
@@ -47,11 +48,10 @@ export function inflow(config: InflowConfig): FlowRegistration {
 // Usage Example (create a file like flows/shopify-products.ts)
 // ---------------------------------------------------------------------------
 //
-// import { inflow, type InflowContext } from "./inflow";
+// import { bindWorkflowPlug, inflow, type InflowContext, sendUpdate } from "khotan-data/factory";
 // import { db } from "@/db";
 // import { products } from "@/db/schema";
 // import { shopifyPlug } from "../plugs/shopify";
-// import { sendUpdate } from "khotan-data/factory";
 //
 // async function shopifyProductsWorkflow(ctx: InflowContext) {
 //   "use workflow";
@@ -64,10 +64,9 @@ export function inflow(config: InflowConfig): FlowRegistration {
 //       runType: ctx.runType,
 //     });
 //     await sendUpdate({ message: "Starting Shopify products inflow" });
+//     const shopify = bindWorkflowPlug(shopifyPlug, ctx);
 //
-//     const response = await shopifyPlug.get<{ data?: Array<{ id: string; sku?: string }> }>("/products", {
-//       vars: ctx.vars,
-//     });
+//     const response = await shopify.get<{ data?: Array<{ id: string; sku?: string }> }>("/products");
 //     const records = Array.isArray(response.data) ? response.data : [];
 //     await sendUpdate({ message: `Fetched ${records.length} products`, extracted: records.length });
 //

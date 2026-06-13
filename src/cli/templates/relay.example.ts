@@ -6,6 +6,7 @@
 // exported flow in {outputDir}/khotan.ts.
 // ============================================================================
 
+import { khotanCache } from "khotan-data/factory";
 import { relay, type RelayContext } from "./relay";
 
 async function shopifyToHubspotWorkflow(ctx: RelayContext) {
@@ -29,6 +30,11 @@ async function shopifyToHubspotWorkflow(ctx: RelayContext) {
       data?: Array<Record<string, unknown>>;
     };
     const records = Array.isArray(payload.data) ? payload.data : [];
+    const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+    const previousRecords =
+      (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
+
+    await snapshotCache.set("latest", records, { ttl: "6h" });
 
     for (const record of records) {
       await fetch("https://destination.example.com/products", {
@@ -45,7 +51,11 @@ async function shopifyToHubspotWorkflow(ctx: RelayContext) {
       extracted: records.length,
       transformed: records.length,
       created: records.length,
-      metadata: { relay: ctx.flow.name, to: ctx.flow.to },
+      metadata: {
+        relay: ctx.flow.name,
+        to: ctx.flow.to,
+        previousCount: previousRecords.length,
+      },
     };
   }
 

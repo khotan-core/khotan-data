@@ -5,6 +5,8 @@
 // This file defines the outflow() builder and types. Create per-service flow
 // files (e.g. crm-audiences.ts) using this builder to read app data and push it
 // to an external service with durable, retryable Vercel Workflow steps.
+// Outflow workflows can also use khotanCache(ctx, "name") for checkpoints, cursor
+// state, or dedupe markers between runs.
 // ============================================================================
 
 import type {
@@ -46,7 +48,7 @@ export function outflow(config: OutflowConfig): FlowRegistration {
 // Usage Example (create a file like flows/hubspot-products.ts)
 // ---------------------------------------------------------------------------
 //
-// import { outflow, type OutflowContext } from "./outflow";
+// import { bindWorkflowPlug, outflow, type OutflowContext } from "khotan-data/factory";
 // import { db } from "@/db";
 // import { products } from "@/db/schema";
 // import { hubspotPlug } from "../plugs/hubspot";
@@ -61,14 +63,12 @@ export function outflow(config: OutflowConfig): FlowRegistration {
 //       khotanRunId: ctx.khotanRunId,
 //       runType: ctx.runType,
 //     });
+//     const hubspot = bindWorkflowPlug(hubspotPlug, ctx);
 //
 //     const records = await db.select().from(products);
 //
 //     for (const record of records) {
-//       await hubspotPlug.post("/products", {
-//         vars: ctx.vars,
-//         body: record,
-//       });
+//       await hubspot.post("/products", { body: record });
 //     }
 //
 //     return {
