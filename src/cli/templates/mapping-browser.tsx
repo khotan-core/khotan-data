@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { khotanFetch, ApiErrorState } from "./api-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,7 +61,9 @@ function readErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
-function toPrettyJson(value: Record<string, unknown> | null | undefined): string {
+function toPrettyJson(
+  value: Record<string, unknown> | null | undefined,
+): string {
   return value ? JSON.stringify(value, null, 2) : "";
 }
 
@@ -92,7 +95,10 @@ function parseConnectValueInput(
   }
 
   const parsed = JSON.parse(trimmed) as unknown;
-  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((value) => typeof value !== "string")
+  ) {
     throw new Error(
       "Composite connect values must be provided as a JSON string array in declared field order.",
     );
@@ -119,7 +125,7 @@ export function KhotanMappingBrowser({
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formMode, setFormMode] = useState<FormMode | null>(null);
@@ -142,11 +148,7 @@ export function KhotanMappingBrowser({
     setResourcesLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/khotan/resources");
-      if (!res.ok) {
-        throw new Error("Failed to fetch resources from /api/khotan/resources");
-      }
-      const data = (await res.json()) as ResourceRecord[];
+      const data = await khotanFetch<ResourceRecord[]>("/api/khotan/resources");
       setResources(data);
 
       setSelectedResourceId((current) => {
@@ -156,13 +158,17 @@ export function KhotanMappingBrowser({
         return current || data[0]!.id;
       });
     } catch (error) {
-      setError(readErrorMessage(error));
+      setError(error);
     } finally {
       setResourcesLoading(false);
     }
   }
 
-  async function fetchMappings(resourceId: string, nextOffset: number, term: string) {
+  async function fetchMappings(
+    resourceId: string,
+    nextOffset: number,
+    term: string,
+  ) {
     setMappingsLoading(true);
     setError(null);
     try {
@@ -175,15 +181,11 @@ export function KhotanMappingBrowser({
       if (term.trim()) {
         url.searchParams.set("search", term.trim());
       }
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        throw new Error("Failed to fetch mappings for the selected resource");
-      }
-      const data = (await res.json()) as MappingPage;
+      const data = await khotanFetch<MappingPage>(url.toString());
       setMappings(data.items);
       setPage(data.page);
     } catch (error) {
-      setError(readErrorMessage(error));
+      setError(error);
       setMappings([]);
       setPage(null);
     } finally {
@@ -238,7 +240,10 @@ export function KhotanMappingBrowser({
 
     if (declaredPlugNames.length > 0) {
       const nextDeclaredRefs = Object.fromEntries(
-        declaredPlugNames.map((plugName) => [plugName, mapping.refs[plugName] ?? ""]),
+        declaredPlugNames.map((plugName) => [
+          plugName,
+          mapping.refs[plugName] ?? "",
+        ]),
       );
       setDeclaredRefs(nextDeclaredRefs);
       setDynamicRefs([]);
@@ -355,7 +360,9 @@ export function KhotanMappingBrowser({
       }
 
       const nextOffset =
-        mappings.length === 1 && offset > 0 ? Math.max(offset - pageSize, 0) : offset;
+        mappings.length === 1 && offset > 0
+          ? Math.max(offset - pageSize, 0)
+          : offset;
       setOffset(nextOffset);
       await fetchMappings(mapping.resourceId, nextOffset, search);
     } catch (error) {
@@ -460,33 +467,30 @@ export function KhotanMappingBrowser({
           </div>
 
           {resourcesLoading ? (
-            <div className="text-muted-foreground text-sm">Loading resources...</div>
+            <div className="text-muted-foreground text-sm">
+              Loading resources...
+            </div>
           ) : null}
 
           {!resourcesLoading && resources.length === 0 ? (
             <div className="text-muted-foreground text-sm">
-              No resources are registered yet. Mappings require registered resources
-              in your `khotan()` config.
+              No resources are registered yet. Mappings require registered
+              resources in your `khotan()` config.
             </div>
           ) : null}
 
           {error ? (
-            <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-4">
-              <p className="text-sm text-destructive">{error}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (selectedResourceId) {
-                    void fetchMappings(selectedResourceId, offset, search);
-                  } else {
-                    void fetchResources();
-                  }
-                }}
-              >
-                Retry
-              </Button>
-            </div>
+            <ApiErrorState
+              error={error}
+              onRetry={() => {
+                if (selectedResourceId) {
+                  void fetchMappings(selectedResourceId, offset, search);
+                } else {
+                  void fetchResources();
+                }
+              }}
+              compact
+            />
           ) : null}
         </CardContent>
       </Card>
@@ -537,8 +541,8 @@ export function KhotanMappingBrowser({
                         id={`ref-${plugName}`}
                         value={declaredRefs[plugName] ?? ""}
                         placeholder={
-                          selectedResource?.mapping.plugs?.[plugName]?.uniqueIdentifier ??
-                          "External ID"
+                          selectedResource?.mapping.plugs?.[plugName]
+                            ?.uniqueIdentifier ?? "External ID"
                         }
                         onChange={(event) =>
                           setDeclaredRefs((current) => ({
@@ -590,7 +594,9 @@ export function KhotanMappingBrowser({
                           setDynamicRefs((current) =>
                             current.length === 1
                               ? [{ plugName: "", ref: "" }]
-                              : current.filter((_, itemIndex) => itemIndex !== index),
+                              : current.filter(
+                                  (_, itemIndex) => itemIndex !== index,
+                                ),
                           )
                         }
                       >
@@ -643,7 +649,11 @@ export function KhotanMappingBrowser({
                     ? "Create Mapping"
                     : "Save Changes"}
               </Button>
-              <Button variant="outline" onClick={resetForm} disabled={submitting}>
+              <Button
+                variant="outline"
+                onClick={resetForm}
+                disabled={submitting}
+              >
                 Cancel
               </Button>
             </div>
@@ -662,7 +672,9 @@ export function KhotanMappingBrowser({
         </CardHeader>
         <CardContent>
           {mappingsLoading ? (
-            <div className="text-muted-foreground text-sm">Loading mappings...</div>
+            <div className="text-muted-foreground text-sm">
+              Loading mappings...
+            </div>
           ) : null}
 
           {!mappingsLoading &&
@@ -729,8 +741,8 @@ export function KhotanMappingBrowser({
               {page ? (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-muted-foreground text-sm">
-                    Showing {page.offset + 1}-
-                    {page.offset + mappings.length} of {page.total}
+                    Showing {page.offset + 1}-{page.offset + mappings.length} of{" "}
+                    {page.total}
                   </p>
                   <div className="flex gap-2">
                     <Button

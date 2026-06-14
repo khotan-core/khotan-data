@@ -1183,7 +1183,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       const result = run("add hub --force", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 3 files");
+      expect(result.output).toContain("Created 4 files");
 
       expect(
         fs.existsSync(
@@ -1522,7 +1522,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       const result = run("add graph --force", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 2 files");
+      expect(result.output).toContain("Created 3 files");
 
       const componentPath = path.join(
         tmpDir,
@@ -1998,7 +1998,7 @@ describe("CLI", { timeout: 30_000 }, () => {
 
       const result = run("add mapping-browser --force", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 1 files");
+      expect(result.output).toContain("Created 2 files");
 
       const componentPath = path.join(
         tmpDir,

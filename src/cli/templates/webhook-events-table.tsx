@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { khotanFetch, ApiErrorState } from "./api-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,7 +76,7 @@ export function KhotanWebhookEventsTable({
   const [data, setData] = useState<PageResponse<WebhookEventItem> | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -85,19 +86,15 @@ export function KhotanWebhookEventsTable({
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(
+        const json = await khotanFetch<PageResponse<WebhookEventItem>>(
           `/api/khotan/webhook-events?limit=${String(pageSize)}&offset=${String(offset)}`,
         );
-        if (!res.ok) {
-          throw new Error("Failed to load webhook events");
-        }
-        const json = (await res.json()) as PageResponse<WebhookEventItem>;
         if (!cancelled) {
           setData(json);
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Unknown error");
+          setError(err);
         }
       } finally {
         if (!cancelled) {
@@ -131,110 +128,116 @@ export function KhotanWebhookEventsTable({
       </CardHeader>
       <CardContent className="space-y-4">
         {error ? (
-          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            {error}
-          </div>
+          <ApiErrorState
+            error={error}
+            onRetry={() => setRefreshKey((v) => v + 1)}
+            compact
+          />
         ) : null}
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Received</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead>Handler</TableHead>
-              <TableHead>Plug</TableHead>
-              <TableHead>Run</TableHead>
-              <TableHead>Payload</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
+        {error ? null : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-sm text-muted-foreground"
-                >
-                  Loading webhook events...
-                </TableCell>
+                <TableHead>Received</TableHead>
+                <TableHead>Event</TableHead>
+                <TableHead>Handler</TableHead>
+                <TableHead>Plug</TableHead>
+                <TableHead>Run</TableHead>
+                <TableHead>Payload</TableHead>
               </TableRow>
-            ) : data?.items.length ? (
-              data.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatDateTime(item.receivedAt)}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {item.eventType}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatHandler(item)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {item.plugName ?? "-"}
-                  </TableCell>
-                  <TableCell className="space-y-1 text-xs">
-                    <div className="font-mono text-muted-foreground">
-                      {item.khotanRunId}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {item.runStatus ? (
-                        <Badge variant={statusVariant[item.runStatus]}>
-                          {item.runStatus}
-                        </Badge>
-                      ) : null}
-                      <span className="font-mono text-muted-foreground">
-                        {item.workflowRunId ?? "-"}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="max-w-80">
-                    <details>
-                      <summary className="cursor-pointer text-sm text-primary">
-                        View payload
-                      </summary>
-                      <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs">
-                        {JSON.stringify(item.payload, null, 2)}
-                      </pre>
-                    </details>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="text-sm text-muted-foreground"
+                  >
+                    Loading webhook events...
                   </TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-sm text-muted-foreground"
-                >
-                  No webhook events recorded yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+              ) : data?.items.length ? (
+                data.items.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatDateTime(item.receivedAt)}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {item.eventType}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatHandler(item)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {item.plugName ?? "-"}
+                    </TableCell>
+                    <TableCell className="space-y-1 text-xs">
+                      <div className="font-mono text-muted-foreground">
+                        {item.khotanRunId}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {item.runStatus ? (
+                          <Badge variant={statusVariant[item.runStatus]}>
+                            {item.runStatus}
+                          </Badge>
+                        ) : null}
+                        <span className="font-mono text-muted-foreground">
+                          {item.workflowRunId ?? "-"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-80">
+                      <details>
+                        <summary className="cursor-pointer text-sm text-primary">
+                          View payload
+                        </summary>
+                        <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs">
+                          {JSON.stringify(item.payload, null, 2)}
+                        </pre>
+                      </details>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="text-sm text-muted-foreground"
+                  >
+                    No webhook events recorded yet.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        )}
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            Page {Math.floor(offset / pageSize) + 1}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={offset === 0 || loading}
-              onClick={() => setOffset(Math.max(offset - pageSize, 0))}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!data?.page.hasMore || loading}
-              onClick={() => setOffset(offset + pageSize)}
-            >
-              Next
-            </Button>
+        {error ? null : (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Page {Math.floor(offset / pageSize) + 1}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={offset === 0 || loading}
+                onClick={() => setOffset(Math.max(offset - pageSize, 0))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!data?.page.hasMore || loading}
+                onClick={() => setOffset(offset + pageSize)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );

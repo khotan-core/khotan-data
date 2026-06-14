@@ -90,9 +90,44 @@ The schema command auto-detects your Drizzle schema directory, updates `drizzle.
 |----------|----------|---------|
 | `DATABASE_URL` | Yes | Postgres connection (used by Drizzle) |
 | `KHOTAN_SECRET` | For variables | AES-256-GCM key for encrypting plug vars |
-| `KHOTAN_DEBUG` | For debugging | Enables `/debug/*` routes and the `plug` CLI (`probe` alias) |
+| `KHOTAN_DEBUG` | For debugging | Enables `/debug/*` routes and the `plug` CLI (`probe` alias). Automatically disabled when `NODE_ENV=production` |
 | `KHOTAN_WEBHOOK_URL` | For webhooks | Public URL for wire callbacks |
-| `CRON_SECRET` | For production cron | Protects the built-in `/api/khotan/cron` dispatcher route |
+| `CRON_SECRET` | For production cron | Protects the built-in `/api/khotan/cron` dispatcher route. The route fails closed in production when this is unset |
+
+## Securing the Management API
+
+The management API (`/api/khotan/*`) and the Hub dashboard expose plug
+credentials and operational controls. **They are public unless you gate them.**
+
+Pass an `authorize` hook to `khotan({ ... })`. It receives the raw `Request` and
+returns `true` to allow the request or `false` to reject it with `401`. It
+composes directly with session libraries like better-auth:
+
+```typescript
+import { khotan, drizzleAdapter } from "khotan-data/factory";
+import { auth } from "@/lib/auth";
+import { db } from "@/db";
+
+const khotanData = khotan({
+  adapter: drizzleAdapter(db),
+  authorize: async (request) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    return Boolean(session?.user); // or: session?.user?.role === "admin"
+  },
+  plugs: [/* ... */],
+});
+```
+
+Notes:
+- `authorize` is **not** a replacement for `KHOTAN_SECRET` — that key only
+  encrypts credentials at rest, it does not authenticate requests.
+- Inbound webhooks (`POST /webhook/:plug`, verified per-plug via `onVerify`),
+  the cron dispatcher (`CRON_SECRET`), and debug routes (`KHOTAN_DEBUG`,
+  non-production only) are exempt from `authorize` automatically.
+- Also protect the Hub dashboard page (e.g. `/config`) with your app's
+  middleware — `authorize` only guards the API, not your React pages.
+- Without `authorize`, khotan logs a startup warning. Always configure it
+  before deploying.
 
 ## Next.js Config
 

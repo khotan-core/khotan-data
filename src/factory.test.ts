@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   __setWorkflowGetRunForTests,
   __setWorkflowGetWritableForTests,
@@ -6,6 +6,7 @@ import {
   bindWorkflowPlug,
   khotanCache,
   khotan,
+  deriveCliToken,
   toNextJsHandler,
   type KhotanAdapter,
   type PlugRegistration,
@@ -3609,6 +3610,243 @@ describe("debug route", () => {
         delete process.env["KHOTAN_DEBUG"];
       }
     }
+  });
+});
+
+describe("authorize hook", () => {
+  let adapter: KhotanAdapter;
+
+  function makePlug(name = "stripe") {
+    return {
+      name,
+      plug: {
+        baseUrl: "https://api.stripe.com",
+        authType: "bearer" as const,
+        get: vi.fn(async () => ({ ok: true })),
+        post: vi.fn(),
+        put: vi.fn(),
+        patch: vi.fn(),
+        delete: vi.fn(),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    adapter = createMockAdapter();
+  });
+
+  it("rejects management routes with 401 when authorize returns false", async () => {
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(401);
+    expect(authorize).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows management routes when authorize returns true", async () => {
+    const authorize = vi.fn(async () => true);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(200);
+    expect(authorize).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks credential writes (POST /variables) when unauthorized", async () => {
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(
+      makeRequest("/api/khotan/variables/stripe", "POST", { apiKey: "x" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("treats a thrown authorize as rejection", async () => {
+    const authorize = vi.fn(async () => {
+      throw new Error("session lookup failed");
+    });
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(401);
+  });
+
+  it("exempts inbound webhooks from authorize", async () => {
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(
+      makeRequest("/api/khotan/webhook/stripe", "POST", { type: "ping" }),
+    );
+    // Not 401 — webhook routes carry their own (onVerify) protection.
+    expect(res.status).not.toBe(401);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("exempts the cron dispatcher from authorize", async () => {
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(makeRequest("/api/khotan/cron"));
+    expect(res.status).not.toBe(401);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("passes the raw Request to authorize (composes with session libs)", async () => {
+    let seenHeader: string | null = null;
+    const authorize = vi.fn(async (request: Request) => {
+      seenHeader = request.headers.get("cookie");
+      return seenHeader === "session=valid";
+    });
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const req = new Request("http://localhost/api/khotan/plugs", {
+      headers: { cookie: "session=valid" },
+    });
+    const res = await instance.handler(req);
+    expect(res.status).toBe(200);
+    expect(seenHeader).toBe("session=valid");
+  });
+
+  it("leaves the API open when no authorize hook is configured", async () => {
+    const instance = khotan({ adapter, plugs: [makePlug()] });
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("CLI auth token (dev-only HMAC bypass)", () => {
+  const SECRET = "test-khotan-secret-value";
+  let adapter: KhotanAdapter;
+  let originalNodeEnv: string | undefined;
+
+  function makePlug(name = "stripe") {
+    return {
+      name,
+      plug: {
+        baseUrl: "https://api.stripe.com",
+        authType: "bearer" as const,
+        get: vi.fn(async () => ({ ok: true })),
+        post: vi.fn(),
+        put: vi.fn(),
+        patch: vi.fn(),
+        delete: vi.fn(),
+      },
+    };
+  }
+
+  async function cliHeader(
+    secret = SECRET,
+    ts: number = Date.now(),
+  ): Promise<string> {
+    const sig = await deriveCliToken(secret, String(ts));
+    return `KhotanCLI ${ts}.${sig}`;
+  }
+
+  function tokenRequest(authorization: string): Request {
+    return new Request("http://localhost/api/khotan/plugs", {
+      headers: { Authorization: authorization },
+    });
+  }
+
+  beforeEach(() => {
+    adapter = createMockAdapter();
+    originalNodeEnv = process.env["NODE_ENV"];
+  });
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env["NODE_ENV"];
+    else process.env["NODE_ENV"] = originalNodeEnv;
+  });
+
+  it("allows a valid CLI token even when authorize rejects (and skips authorize)", async () => {
+    process.env["NODE_ENV"] = "development";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({
+      adapter,
+      plugs: [makePlug()],
+      authorize,
+      secret: SECRET,
+    });
+
+    const res = await instance.handler(tokenRequest(await cliHeader()));
+    expect(res.status).toBe(200);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("rejects the CLI token in production (bypass never applies on deploy)", async () => {
+    process.env["NODE_ENV"] = "production";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({
+      adapter,
+      plugs: [makePlug()],
+      authorize,
+      secret: SECRET,
+    });
+
+    const res = await instance.handler(tokenRequest(await cliHeader()));
+    expect(res.status).toBe(401);
+    // Falls through to the real authorize hook in production.
+    expect(authorize).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a stale CLI token (outside the freshness window)", async () => {
+    process.env["NODE_ENV"] = "development";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({
+      adapter,
+      plugs: [makePlug()],
+      authorize,
+      secret: SECRET,
+    });
+
+    const stale = Date.now() - 120_000;
+    const res = await instance.handler(tokenRequest(await cliHeader(SECRET, stale)));
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a tampered CLI token signature", async () => {
+    process.env["NODE_ENV"] = "development";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({
+      adapter,
+      plugs: [makePlug()],
+      authorize,
+      secret: SECRET,
+    });
+
+    const ts = Date.now();
+    const res = await instance.handler(
+      tokenRequest(`KhotanCLI ${ts}.deadbeefdeadbeef`),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a token signed with the wrong secret", async () => {
+    process.env["NODE_ENV"] = "development";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({
+      adapter,
+      plugs: [makePlug()],
+      authorize,
+      secret: SECRET,
+    });
+
+    const res = await instance.handler(
+      tokenRequest(await cliHeader("a-different-secret")),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("ignores the CLI token when no secret is configured", async () => {
+    process.env["NODE_ENV"] = "development";
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(tokenRequest(await cliHeader()));
+    expect(res.status).toBe(401);
   });
 });
 

@@ -53,6 +53,11 @@ import { shopifyProductsSnapshotCache } from "@/lib/khotan/caches/shopify-produc
 
 const khotanData = khotan({
   adapter: drizzleAdapter(db),
+  // Gate the management API behind your auth layer (see "Security" below).
+  authorize: async (request) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    return Boolean(session?.user);
+  },
   resources: [
     { name: "products", mapping: { connectField: "sku" } },
   ],
@@ -78,6 +83,30 @@ await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
   runType: "delta",
 });
 ```
+
+## Security
+
+The management API (`/api/khotan/*`) exposes plug credentials and operational
+controls. It is **public unless you gate it**. Pass an `authorize` hook — it
+receives the raw `Request` and returns `true`/`false`, so it composes directly
+with session libraries like better-auth:
+
+```typescript
+authorize: async (request) => {
+  const session = await auth.api.getSession({ headers: request.headers });
+  return session?.user?.role === "admin";
+},
+```
+
+- `KHOTAN_SECRET` encrypts plug credentials **at rest** (AES-256-GCM). It is not
+  an auth credential — it never gates requests. Set it to a high-entropy value.
+- Inbound webhooks (verified via per-plug `onVerify`), the cron dispatcher
+  (`CRON_SECRET`), and debug routes (`KHOTAN_DEBUG`, non-production only) are
+  exempt from `authorize` automatically.
+- `KHOTAN_DEBUG` is force-disabled when `NODE_ENV=production`. The cron route
+  fails closed in production when `CRON_SECRET` is unset.
+- Protect the Hub dashboard page (e.g. `/config`) with your app's middleware —
+  `authorize` only guards the API.
 
 ## Caches
 

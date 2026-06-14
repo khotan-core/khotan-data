@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { khotanFetch, ApiErrorState } from "@/components/khotan/api-state";
 
 // ============================================================================
 // Debug Index — Lists all registered plugs for debugging
@@ -23,19 +24,27 @@ export default function DebugIndexPage() {
   const [plugs, setPlugs] = useState<Plug[]>([]);
   const [loading, setLoading] = useState(true);
   const [debugEnabled, setDebugEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const enabled = await fetch("/api/khotan/debug").then((r) => r.ok);
+      setDebugEnabled(enabled);
+      if (enabled) {
+        setPlugs(await khotanFetch<Plug[]>("/api/khotan/plugs"));
+      }
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/khotan/debug").then((r) => r.ok),
-      fetch("/api/khotan/plugs").then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(([enabled, data]) => {
-        setDebugEnabled(enabled);
-        setPlugs(data as Plug[]);
-      })
-      .catch(() => setDebugEnabled(false))
-      .finally(() => setLoading(false));
-  }, []);
+    void load();
+  }, [load]);
 
   if (loading) {
     return (
@@ -71,31 +80,42 @@ export default function DebugIndexPage() {
         </a>
       </div>
       <h1 className="text-2xl font-bold tracking-tight mb-6">Debug</h1>
-      <p className="text-muted-foreground mb-6">
-        Select a plug to test requests through its real code path.
-      </p>
-      <div className="grid gap-3">
-        {plugs.map((plug) => (
-          <Link
-            key={plug.id}
-            href={`/debug/${plug.name}`}
-            className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:border-foreground/30 hover:bg-muted/50"
-          >
-            <div>
-              <p className="font-medium">{plug.name}</p>
-              <p className="text-xs text-muted-foreground truncate">
-                {plug.baseUrl}
+      {error ? (
+        <ApiErrorState error={error} onRetry={() => void load()} />
+      ) : (
+        <>
+          <p className="text-muted-foreground mb-6">
+            Select a plug to test requests through its real code path.
+          </p>
+          <div className="grid gap-3">
+            {plugs.map((plug) => (
+              <Link
+                key={plug.id}
+                href={`/debug/${plug.name}`}
+                className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:border-foreground/30 hover:bg-muted/50"
+              >
+                <div>
+                  <p className="font-medium">{plug.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {plug.baseUrl}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {plug.authType}
+                  </span>
+                  <span className="text-muted-foreground">→</span>
+                </div>
+              </Link>
+            ))}
+            {plugs.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No plugs registered yet.
               </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                {plug.authType}
-              </span>
-              <span className="text-muted-foreground">→</span>
-            </div>
-          </Link>
-        ))}
-      </div>
+            )}
+          </div>
+        </>
+      )}
     </main>
   );
 }

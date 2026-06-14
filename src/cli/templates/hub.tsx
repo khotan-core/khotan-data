@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { WirePanel } from "./wire";
 import { VarPanel } from "./var-panel";
+import { khotanFetch, ApiErrorState } from "./api-state";
 
 // ============================================================================
 // Khotan Hub — Dashboard for configured plugs and flows
@@ -108,7 +109,7 @@ export function KhotanHub({
   const [flows, setFlows] = useState<Flow[]>([]);
   const [webhookHandlers, setWebhookHandlers] = useState<WebhookHandler[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [selectedPlugId, setSelectedPlugId] = useState<string | null>(null);
   const [debugEnabled, setDebugEnabled] = useState(false);
 
@@ -122,17 +123,14 @@ export function KhotanHub({
     setLoading(true);
     setError(null);
     try {
-      const [plugsRes, flowsRes] = await Promise.all([
-        fetch("/api/khotan/plugs"),
-        fetch("/api/khotan/flows"),
+      const [plugsData, flowsData] = await Promise.all([
+        khotanFetch<Plug[]>("/api/khotan/plugs"),
+        khotanFetch<Flow[]>("/api/khotan/flows"),
       ]);
-      if (!plugsRes.ok || !flowsRes.ok) {
-        throw new Error("Failed to fetch khotan data");
-      }
-      setPlugs(await plugsRes.json());
-      setFlows(await flowsRes.json());
+      setPlugs(plugsData);
+      setFlows(flowsData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -201,19 +199,7 @@ export function KhotanHub({
   }
 
   if (error) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-center">
-          <p className="text-destructive mb-4">{error}</p>
-          <button
-            onClick={fetchData}
-            className="text-sm underline hover:no-underline"
-          >
-            Retry
-          </button>
-        </CardContent>
-      </Card>
-    );
+    return <ApiErrorState error={error} onRetry={fetchData} />;
   }
 
   if (plugs.length === 0) {

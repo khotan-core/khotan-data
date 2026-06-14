@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { khotanFetch, isKhotanApiError, ApiErrorState } from "./api-state";
 
 // ============================================================================
 // Plug Debugger — Lightweight Postman for your plugs
@@ -331,6 +332,7 @@ export function PlugDebugger({
 }: PlugDebuggerProps) {
   const [meta, setMeta] = useState<PlugMeta | null>(null);
   const [loading, setLoading] = useState(true);
+  const [metaError, setMetaError] = useState<unknown>(null);
 
   const [method, setMethod] = useState<string>("GET");
   const [path, setPath] = useState("");
@@ -353,15 +355,17 @@ export function PlugDebugger({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const fetchMeta = useCallback(async () => {
+    setLoading(true);
+    setMetaError(null);
     try {
-      const res = await fetch(`${basePath}/debug/${plugName}`);
-      if (!res.ok) {
-        setMeta(null);
-        return;
-      }
-      setMeta(await res.json());
-    } catch {
+      setMeta(await khotanFetch<PlugMeta>(`${basePath}/debug/${plugName}`));
+    } catch (err) {
       setMeta(null);
+      // A 404 means debug is off or the plug isn't registered — handled by the
+      // dedicated "not available" message below. Surface everything else.
+      if (!(isKhotanApiError(err) && err.status === 404)) {
+        setMetaError(err);
+      }
     } finally {
       setLoading(false);
     }
@@ -399,6 +403,10 @@ export function PlugDebugger({
         <div className="h-64 animate-pulse rounded bg-muted" />
       </div>
     );
+  }
+
+  if (metaError) {
+    return <ApiErrorState error={metaError} onRetry={() => void fetchMeta()} />;
   }
 
   if (!meta) {

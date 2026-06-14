@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { inferShape, diffSchemas, type SerializedSchema } from "../compare.js";
 import { varsCommand } from "./plug-vars.js";
+import { cliFetch, unauthorizedHint } from "../cli-auth.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,7 +69,7 @@ function tryParseJson(value: unknown): unknown {
 async function checkConnectivity(baseUrl: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}/debug`);
+    res = await cliFetch(`${baseUrl}/debug`);
   } catch {
     fail(
       "connect_failed",
@@ -129,7 +130,8 @@ export const plugCommand = new Command("plug")
       if (opts.list) {
         await checkConnectivity(baseUrl);
         try {
-          const res = await fetch(`${baseUrl}/plugs`);
+          const res = await cliFetch(`${baseUrl}/plugs`);
+          if (res.status === 401) fail("unauthorized", unauthorizedHint());
           const data = (await res.json()) as
             | {
                 name: string;
@@ -172,7 +174,7 @@ export const plugCommand = new Command("plug")
       // --info mode
       if (opts.info) {
         try {
-          const res = await fetch(`${baseUrl}/debug/${plugName}`);
+          const res = await cliFetch(`${baseUrl}/debug/${plugName}`);
           if (res.status === 404) {
             fail(
               "plug_not_found",
@@ -194,7 +196,7 @@ export const plugCommand = new Command("plug")
 
       if (opts.endpoint) {
         try {
-          const res = await fetch(`${baseUrl}/debug/${plugName}`);
+          const res = await cliFetch(`${baseUrl}/debug/${plugName}`);
           if (res.status === 404) {
             fail(
               "plug_not_found",
@@ -268,7 +270,7 @@ export const plugCommand = new Command("plug")
 
       let debugRes: Response;
       try {
-        debugRes = await fetch(`${baseUrl}/debug/${plugName}`, {
+        debugRes = await cliFetch(`${baseUrl}/debug/${plugName}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(debugPayload),
@@ -332,7 +334,7 @@ export const plugCommand = new Command("plug")
           // Fetch endpoint metadata if we don't have it yet
           if (!allEndpoints) {
             try {
-              const metaRes = await fetch(`${baseUrl}/debug/${plugName}`);
+              const metaRes = await cliFetch(`${baseUrl}/debug/${plugName}`);
               const metaData = (await metaRes.json()) as {
                 endpoints?: Record<string, Record<string, unknown>>;
               };

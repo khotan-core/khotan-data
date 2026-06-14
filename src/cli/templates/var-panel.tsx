@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { khotanFetch, ApiErrorState } from "./api-state";
 
 // ============================================================================
 // Var Panel — UI for managing plug variables
@@ -44,6 +45,7 @@ export function VarPanel({
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -52,21 +54,23 @@ export function VarPanel({
   );
 
   const fetchVariables = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch(`${basePath}/variables/${plugName}`);
-      if (!res.ok) {
-        setFields([]);
-        setConfigured(false);
-        return;
-      }
-      const data = await res.json();
+      const data = await khotanFetch<{
+        fields?: VarField[];
+        values?: Record<string, string>;
+        configured?: boolean;
+      }>(`${basePath}/variables/${plugName}`);
       setFields((data.fields ?? []).filter((f: VarField) => !f.hidden));
       setValues(data.values ?? {});
       setConfigured(data.configured ?? false);
-      setFormValues(data.configured ? data.values : {});
+      setFormValues(data.configured ? (data.values ?? {}) : {});
       setError(null);
-    } catch {
-      setError("Failed to load variables");
+    } catch (err) {
+      setFields([]);
+      setConfigured(false);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -139,6 +143,25 @@ export function VarPanel({
         </CardHeader>
         <CardContent>
           <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium capitalize">
+            {displayName} Variables
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ApiErrorState
+            error={loadError}
+            onRetry={() => void fetchVariables()}
+            compact
+          />
         </CardContent>
       </Card>
     );

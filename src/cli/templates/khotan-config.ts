@@ -13,6 +13,23 @@ import { db } from "@/db";
 const khotanData = khotan({
   adapter: drizzleAdapter(db),
 
+  // ── Security ──────────────────────────────────────────────────────────────
+  // The management API (/api/khotan/*) and the Hub dashboard expose plug
+  // credentials and operational controls. Gate every management route behind
+  // your auth layer with `authorize`. It receives the raw Request, so it works
+  // directly with session libraries like better-auth:
+  //
+  //   import { auth } from "@/lib/auth";
+  //
+  //   authorize: async (request) => {
+  //     const session = await auth.api.getSession({ headers: request.headers });
+  //     return Boolean(session?.user); // or: session?.user?.role === "admin"
+  //   },
+  //
+  // Inbound webhooks, the cron dispatcher (CRON_SECRET), and debug routes are
+  // exempt automatically. Without `authorize`, the API is PUBLIC.
+  // authorize: async (request) => { /* return true to allow */ return false; },
+
   // Resources define logical entity types for cross-referencing across plugs.
   // The mapping block declares the shared identity contract for that resource.
   resources: [

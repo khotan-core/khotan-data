@@ -107,6 +107,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "outputDir",
       },
       {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
+      {
         templatePath: path.resolve(__dirname, "templates", "wire-panel.tsx"),
         outputFile: "wire.tsx",
         outputBase: "components",
@@ -158,6 +163,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     },
     files: [
       {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
+      {
         templatePath: path.resolve(__dirname, "templates", "hub.tsx"),
         outputFile: "hub.tsx",
         outputBase: "components",
@@ -182,6 +192,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       shadcnComponents: ["card", "table", "badge", "button"],
     },
     files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
       {
         templatePath: path.resolve(__dirname, "templates", "logs.tsx"),
         outputFile: "logs.tsx",
@@ -213,6 +228,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     },
     files: [
       {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
+      {
         templatePath: path.resolve(
           __dirname,
           "templates",
@@ -232,6 +252,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       shadcnComponents: ["card", "badge", "button", "input", "label"],
     },
     files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
       {
         templatePath: path.resolve(__dirname, "templates", "plug-debugger.tsx"),
         outputFile: "plug-debugger.tsx",
@@ -492,6 +517,11 @@ const BLOCKS: Record<string, ComponentEntry> = {
       shadcnComponents: ["card", "badge"],
     },
     files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
+        outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
       {
         templatePath: path.resolve(
           __dirname,

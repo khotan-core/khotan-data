@@ -360,6 +360,88 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 // ---------------------------------------------------------------------------
+// CLI authentication — dev-only HMAC bearer derived from KHOTAN_SECRET
+// ---------------------------------------------------------------------------
+
+/** Authorization scheme used by the khotan CLI. Distinct from `Bearer` so it
+ * never collides with a consumer's own token auth in their `authorize` hook. */
+const CLI_TOKEN_SCHEME = "KhotanCLI";
+
+/** Max clock skew between the CLI signing the token and the server verifying
+ * it. Keeps a logged token from being replayable beyond a short window. */
+const CLI_TOKEN_WINDOW_MS = 60_000;
+
+/**
+ * Derives the CLI auth token: HMAC-SHA256 over the timestamp, keyed by the
+ * KHOTAN_SECRET. One-way, so the raw secret (the encryption key) never travels
+ * over the wire — even a token captured from a dev log can't be reversed into
+ * the secret. Exported so the CLI can compute the same value.
+ */
+export async function deriveCliToken(
+  secret: string,
+  timestamp: string,
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`khotan-cli:${timestamp}`),
+  );
+  return bytesToHex(new Uint8Array(sig));
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Verifies the dev-only CLI auth token on a request. The khotan CLI is a local
+ * tool that hits the dev server over loopback; instead of sending the raw
+ * KHOTAN_SECRET, it sends a timestamped HMAC derived from it
+ * (`Authorization: KhotanCLI <timestamp>.<hmac>`).
+ *
+ * Returns true only when ALL of the following hold:
+ * - `NODE_ENV` is not `"production"` (the bypass never applies on a deployed app),
+ * - a `KHOTAN_SECRET` is configured,
+ * - the timestamp is within {@link CLI_TOKEN_WINDOW_MS} of now (anti-replay), and
+ * - the HMAC matches (constant-time comparison).
+ */
+async function isCliRequestAuthorized(
+  request: Request,
+  secret: string | undefined,
+): Promise<boolean> {
+  if (process.env["NODE_ENV"] === "production") return false;
+  if (!secret) return false;
+
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith(`${CLI_TOKEN_SCHEME} `)) return false;
+
+  const token = header.slice(CLI_TOKEN_SCHEME.length + 1).trim();
+  const dotIdx = token.indexOf(".");
+  if (dotIdx === -1) return false;
+
+  const timestamp = token.slice(0, dotIdx);
+  const provided = token.slice(dotIdx + 1);
+  const ts = Number.parseInt(timestamp, 10);
+  if (!Number.isFinite(ts)) return false;
+  if (Math.abs(Date.now() - ts) > CLI_TOKEN_WINDOW_MS) return false;
+
+  const expected = await deriveCliToken(secret, timestamp);
+  return timingSafeEqualHex(provided, expected);
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -1052,12 +1134,45 @@ export interface KhotanAdapter {
   ): Promise<void>;
 }
 
+/**
+ * Authorize an incoming request to the khotan management API.
+ *
+ * Return `true` to allow the request, `false` to reject it with `401`.
+ * The function receives the raw `Request`, so it composes directly with
+ * session libraries such as better-auth:
+ *
+ * ```ts
+ * authorize: async (request) => {
+ *   const session = await auth.api.getSession({ headers: request.headers });
+ *   return session?.user?.role === "admin";
+ * }
+ * ```
+ *
+ * Throwing is treated the same as returning `false`.
+ *
+ * The following routes are intentionally exempt and are NOT passed to
+ * `authorize` (they have their own protection):
+ * - Inbound webhooks (`POST .../webhook/:plug`) — verified per-plug via `onVerify`.
+ * - The cron dispatcher (`.../cron`) — protected by `CRON_SECRET`.
+ * - Debug routes (`.../debug...`) — gated by `KHOTAN_DEBUG` and disabled in production.
+ */
+export type KhotanAuthorize = (
+  request: Request,
+) => boolean | Promise<boolean>;
+
 export interface KhotanConfig {
   adapter: KhotanAdapter;
   plugs: PlugRegistration[];
   resources?: ResourceRegistration[];
   caches?: CacheRegistration[];
   secret?: string;
+  /**
+   * Gate every management route (plugs, variables, flows, runs, wires,
+   * mappings, caches, resources, webhook handlers/events) behind a custom
+   * authorization check. Strongly recommended for any deployed app — without
+   * it the management API is publicly accessible. See {@link KhotanAuthorize}.
+   */
+  authorize?: KhotanAuthorize;
 }
 
 export type KhotanHandler = (request: Request) => Promise<Response>;
@@ -2395,8 +2510,24 @@ function coerceDate(value: unknown): Date | null {
 
 function isCronRequestAuthorized(request: Request): boolean {
   const secret = process.env["CRON_SECRET"]?.trim();
-  if (!secret) return true;
+  if (!secret) {
+    // Fail closed in production: an unset CRON_SECRET must not leave the
+    // dispatcher open on a deployed app. Allowed in dev for local testing.
+    return process.env["NODE_ENV"] !== "production";
+  }
   return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+/**
+ * Debug routes (and the `plug`/`probe` CLI) are only available when
+ * `KHOTAN_DEBUG` is set AND the app is not running in production. This keeps
+ * the credentialed debug proxy from ever being reachable on a deployed app.
+ */
+function isDebugEnabled(): boolean {
+  return (
+    Boolean(process?.env?.["KHOTAN_DEBUG"]) &&
+    process?.env?.["NODE_ENV"] !== "production"
+  );
 }
 
 function isWorkflowCancelledError(error: unknown): boolean {
@@ -2860,8 +2991,25 @@ function canonicalizeConnectValue(
 }
 
 export function khotan(config: KhotanConfig): KhotanInstance {
-  const { adapter, plugs, resources = [], caches = [] } = config;
+  const { adapter, plugs, resources = [], caches = [], authorize } = config;
   const instanceId = crypto.randomUUID();
+
+  // Security posture warnings — surfaced once at construction time.
+  if (!authorize) {
+    console.warn(
+      "[khotan] No `authorize` hook configured: the management API " +
+        "(/api/khotan/*) is publicly accessible. Pass `authorize` to gate it " +
+        "behind your auth layer (e.g. better-auth). This is required for any " +
+        "deployed environment.",
+    );
+  }
+  if (!(config.secret ?? process.env["KHOTAN_SECRET"])) {
+    console.warn(
+      "[khotan] No `secret`/`KHOTAN_SECRET` configured: plug credentials and " +
+        "wire metadata will not be encrypted at rest. Set KHOTAN_SECRET to a " +
+        "high-entropy value.",
+    );
+  }
 
   // Validate: no duplicate plug names
   const plugNames = new Set<string>();
@@ -3974,8 +4122,33 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     const webhookEventsIdx = segments.indexOf("webhook-events");
     const variablesIdx = segments.indexOf("variables");
     const cronIdx = segments.indexOf("cron");
+    const webhookIdx = segments.indexOf("webhook");
 
     const debugIdx = segments.indexOf("debug");
+
+    // Authorization gate. Inbound webhooks, the cron dispatcher, and debug
+    // routes carry their own protection and are exempt; everything else is a
+    // management route that must pass the consumer-supplied `authorize` hook.
+    const isInboundWebhook =
+      webhookIdx !== -1 && webhookIdx === segments.length - 2;
+    const isCronRoute = cronIdx !== -1 && cronIdx === segments.length - 1;
+    const isDebugRoute = debugIdx !== -1;
+
+    if (authorize && !isInboundWebhook && !isCronRoute && !isDebugRoute) {
+      // The local CLI authenticates with a dev-only HMAC token derived from
+      // KHOTAN_SECRET, so it can reach management routes without a user session.
+      let allowed = await isCliRequestAuthorized(request, secret);
+      if (!allowed) {
+        try {
+          allowed = await authorize(request);
+        } catch {
+          allowed = false;
+        }
+      }
+      if (!allowed) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
 
     const limit = Math.min(
       Math.max(
@@ -4028,8 +4201,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       // GET .../debug — check if debug mode is active
       if (debugIdx !== -1 && debugIdx === segments.length - 1) {
-        const debugActive = process?.env?.["KHOTAN_DEBUG"];
-        if (!debugActive) {
+        if (!isDebugEnabled()) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
         return Response.json({ enabled: true });
@@ -4037,8 +4209,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       // GET .../debug/:plugName — plug metadata for the debugger UI
       if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        const debugActive = process?.env?.["KHOTAN_DEBUG"];
-        if (!debugActive) {
+        if (!isDebugEnabled()) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
         const plugName = segments[debugIdx + 1]!;
@@ -4423,7 +4594,6 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       }
 
       // POST .../webhook/:plugName — receive inbound webhooks
-      const webhookIdx = segments.indexOf("webhook");
       if (webhookIdx !== -1 && webhookIdx === segments.length - 2) {
         const plugName = segments[webhookIdx + 1]!;
         const plugReg = plugs.find((p) => p.name === plugName);
@@ -4694,8 +4864,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
       // POST .../debug/:plugName — dev-only proxy through plug
       if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        const debugActive = process?.env?.["KHOTAN_DEBUG"];
-        if (!debugActive) {
+        if (!isDebugEnabled()) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
         const plugName = segments[debugIdx + 1]!;

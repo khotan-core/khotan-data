@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { khotanFetch, ApiErrorState } from "./api-state";
 
 // ============================================================================
 // Wire Panel — UI for managing webhook subscriptions
@@ -45,21 +46,23 @@ export function WirePanel({
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const fetchWire = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch(`${basePath}/wires/${plugName}`);
-      if (!res.ok) {
-        setConfigured(false);
-        setWire(null);
-        return;
-      }
-      const data = await res.json();
+      const data = await khotanFetch<{
+        configured?: boolean;
+        wire?: WireRecord | null;
+      }>(`${basePath}/wires/${plugName}`);
       setConfigured(data.configured ?? false);
       setWire(data.wire ?? null);
       setError(null);
-    } catch {
+    } catch (err) {
       setConfigured(false);
+      setWire(null);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -131,6 +134,25 @@ export function WirePanel({
         </CardHeader>
         <CardContent>
           <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium capitalize">
+            {displayName} Wire
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ApiErrorState
+            error={loadError}
+            onRetry={() => void fetchWire()}
+            compact
+          />
         </CardContent>
       </Card>
     );

@@ -18,6 +18,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { khotanFetch, ApiErrorState } from "./api-state";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -1056,8 +1057,9 @@ function TopologyCanvasInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<TopologyNodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1068,30 +1070,22 @@ function TopologyCanvasInner() {
           setError(null);
         }
 
-        const [plugsRes, flowsRes, runsRes] = await Promise.all([
-          fetch("/api/khotan/plugs"),
-          fetch("/api/khotan/flows"),
-          fetch("/api/khotan/runs?limit=100"),
+        const [plugs, flows, runsRaw] = await Promise.all([
+          khotanFetch<PlugRecord[]>("/api/khotan/plugs"),
+          khotanFetch<FlowRecord[]>("/api/khotan/flows"),
+          khotanFetch<unknown>("/api/khotan/runs?limit=100"),
         ]);
 
-        if (!plugsRes.ok || !flowsRes.ok || !runsRes.ok) {
-          throw new Error("Failed to load topology data from /api/khotan");
-        }
-
-        const plugs = (await plugsRes.json()) as PlugRecord[];
-        const flows = (await flowsRes.json()) as FlowRecord[];
-        const runs = normalizeRuns(await runsRes.json());
+        const runs = normalizeRuns(runsRaw);
 
         const webhookGroups = await Promise.all(
           plugs.map(async (plug) => {
             try {
-              const res = await fetch(
+              const handlers = await khotanFetch<
+                Array<Omit<WebhookHandlerRecord, "plugName">>
+              >(
                 `/api/khotan/webhook-handlers/${encodeURIComponent(plug.name)}`,
               );
-              if (!res.ok) return [] as WebhookHandlerRecord[];
-              const handlers = (await res.json()) as Array<
-                Omit<WebhookHandlerRecord, "plugName">
-              >;
               return handlers.map((handler) => ({
                 ...handler,
                 plugName: plug.name,
@@ -1113,11 +1107,7 @@ function TopologyCanvasInner() {
         setLastUpdatedAt(new Date().toISOString());
       } catch (loadError) {
         if (!cancelled) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Unknown topology load failure",
-          );
+          setError(loadError);
         }
       } finally {
         if (!cancelled) {
@@ -1135,7 +1125,7 @@ function TopologyCanvasInner() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, []);
+  }, [refreshKey]);
 
   const model = useMemo(() => {
     return snapshot ? buildTopologyModel(snapshot) : null;
@@ -1180,19 +1170,18 @@ function TopologyCanvasInner() {
 
   if (error) {
     return (
-      <Card className="border-red-200 bg-white/80 shadow-xl backdrop-blur">
+      <Card className="border-white/70 bg-white/80 shadow-xl backdrop-blur">
         <CardHeader>
           <CardTitle>Topology Canvas</CardTitle>
           <CardDescription>
             Could not load the graph from the local Khotan API.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <p className="text-red-600">{error}</p>
-          <p className="text-slate-500">
-            Make sure the catch-all Khotan route is mounted and your dev server
-            is running.
-          </p>
+        <CardContent>
+          <ApiErrorState
+            error={error}
+            onRetry={() => setRefreshKey((v) => v + 1)}
+          />
         </CardContent>
       </Card>
     );

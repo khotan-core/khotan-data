@@ -66,6 +66,10 @@ export default defineConfig([
         path.resolve(templatesDir, "wire.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "api-state.tsx"),
+        path.resolve(templatesDir, "api-state.tsx"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "hub.tsx"),
         path.resolve(templatesDir, "hub.tsx"),
       );

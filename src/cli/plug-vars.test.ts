@@ -160,3 +160,75 @@ describe("plug vars command", () => {
     });
   });
 });
+
+describe("plug vars CLI auth (security)", () => {
+  const originalSecret = process.env["KHOTAN_SECRET"];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalSecret === undefined) delete process.env["KHOTAN_SECRET"];
+    else process.env["KHOTAN_SECRET"] = originalSecret;
+  });
+
+  it("attaches a KhotanCLI HMAC auth header on every request when KHOTAN_SECRET is set", async () => {
+    process.env["KHOTAN_SECRET"] = "cli-secret-value";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({ configured: false, fields: [], values: {} }),
+      );
+
+    const { thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+    ]);
+
+    expect(thrown).toBeNull();
+    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    for (const call of fetchSpy.mock.calls) {
+      const init = call[1] as RequestInit | undefined;
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      // Never the raw secret — only a timestamped one-way HMAC.
+      expect(headers["Authorization"]).toMatch(/^KhotanCLI \d+\.[0-9a-f]{64}$/);
+      expect(JSON.stringify(headers)).not.toContain("cli-secret-value");
+    }
+  });
+
+  it("sends no auth header when no secret is available", async () => {
+    delete process.env["KHOTAN_SECRET"];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({ configured: false, fields: [], values: {} }),
+      );
+
+    const { thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+    ]);
+
+    expect(thrown).toBeNull();
+    // Connectivity GET is made with a single arg — no init, no headers.
+    expect(fetchSpy.mock.calls[0]?.length).toBe(1);
+  });
+
+  it("reports a clear unauthorized error when the API returns 401", async () => {
+    process.env["KHOTAN_SECRET"] = "cli-secret-value";
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ error: "Unauthorized" }, 401),
+    );
+
+    const { parsed, thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+    ]);
+
+    expect(String(thrown)).toContain("EXIT:1");
+    expect(parsed[0]).toMatchObject({ ok: false, error: "unauthorized" });
+  });
+});

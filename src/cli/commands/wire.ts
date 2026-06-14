@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
+import { cliFetch, unauthorizedHint } from "../cli-auth.js";
 
 function output(obj: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
@@ -63,13 +64,14 @@ function resolveWebhookOrigin(originFlag: string | undefined): string {
 async function checkConnectivity(baseUrl: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}/plugs`);
+    res = await cliFetch(`${baseUrl}/plugs`);
   } catch {
     fail(
       "connect_failed",
       `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
     );
   }
+  if (res.status === 401) fail("unauthorized", unauthorizedHint());
   if (!res.ok) {
     fail(
       "api_unavailable",
@@ -128,11 +130,11 @@ export const wireCommand = new Command("wire")
       await checkConnectivity(baseUrl);
 
       if (opts.list) {
-        const plugsRes = await fetch(`${baseUrl}/plugs`);
+        const plugsRes = await cliFetch(`${baseUrl}/plugs`);
         const plugs = (await plugsRes.json()) as { name: string }[];
         const wires = await Promise.all(
           plugs.map(async (plug) => {
-            const res = await fetch(`${baseUrl}/wires/${plug.name}`);
+            const res = await cliFetch(`${baseUrl}/wires/${plug.name}`);
             const data = (await res.json()) as {
               wire?: WireRecord | null;
               configured?: boolean;
@@ -159,7 +161,7 @@ export const wireCommand = new Command("wire")
       const resolvedAction = opts.info ? "info" : (action ?? "info");
 
       if (resolvedAction === "info") {
-        const res = await fetch(`${baseUrl}/wires/${plugName}`);
+        const res = await cliFetch(`${baseUrl}/wires/${plugName}`);
         if (res.status === 404) {
           fail("plug_not_found", `Plug "${plugName}" not found.`);
         }
@@ -180,7 +182,7 @@ export const wireCommand = new Command("wire")
         const callbackUrl =
           opts.callbackUrl ??
           `${resolveWebhookOrigin(opts.webhookOrigin)}/api/khotan/webhook/${plugName}`;
-        const res = await fetch(`${baseUrl}/wires/${plugName}`, {
+        const res = await cliFetch(`${baseUrl}/wires/${plugName}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ callbackUrl }),
@@ -208,7 +210,7 @@ export const wireCommand = new Command("wire")
       if (resolvedAction === "disconnect") {
         let wireId = opts.wireId;
         if (!wireId) {
-          const currentRes = await fetch(`${baseUrl}/wires/${plugName}`);
+          const currentRes = await cliFetch(`${baseUrl}/wires/${plugName}`);
           const current = (await currentRes.json()) as {
             wire?: WireRecord | null;
           };
@@ -220,7 +222,7 @@ export const wireCommand = new Command("wire")
             `No active wire found for "${plugName}". Use --wire-id to override.`,
           );
         }
-        const res = await fetch(`${baseUrl}/wires/${plugName}`, {
+        const res = await cliFetch(`${baseUrl}/wires/${plugName}`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ wireId }),

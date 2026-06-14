@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
+import { cliFetch, unauthorizedHint } from "../cli-auth.js";
 
 function output(obj: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
@@ -49,10 +50,11 @@ function resolveBaseUrl(opts: { port?: string; basePath: string }): string {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await cliFetch(url, init);
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
 
   if (!res.ok) {
+    if (res.status === 401) fail("unauthorized", unauthorizedHint());
     fail(
       "request_failed",
       data.error ?? `Request to ${url} failed with status ${res.status}`,
@@ -63,18 +65,20 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function checkConnectivity(baseUrl: string): Promise<void> {
+  let res: Response;
   try {
-    const res = await fetch(`${baseUrl}/flows`);
-    if (!res.ok) {
-      fail(
-        "api_unavailable",
-        `Could not reach Khotan flows API at ${baseUrl}. Check your base path and dev server.`,
-      );
-    }
+    res = await cliFetch(`${baseUrl}/flows`);
   } catch {
     fail(
       "connect_failed",
       `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
+    );
+  }
+  if (res.status === 401) fail("unauthorized", unauthorizedHint());
+  if (!res.ok) {
+    fail(
+      "api_unavailable",
+      `Could not reach Khotan flows API at ${baseUrl}. Check your base path and dev server.`,
     );
   }
 }
@@ -334,11 +338,15 @@ withApiOptions(
 ).action(async (mappingId: string, opts: ApiOptions) => {
   const baseUrl = resolveBaseUrl(opts);
   await checkConnectivity(baseUrl);
-  const res = await fetch(`${baseUrl}/mappings/${encodeURIComponent(mappingId)}`, {
-    method: "DELETE",
-  });
+  const res = await cliFetch(
+    `${baseUrl}/mappings/${encodeURIComponent(mappingId)}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!res.ok) {
+    if (res.status === 401) fail("unauthorized", unauthorizedHint());
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     fail(
       "request_failed",

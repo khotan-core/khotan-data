@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
+import { cliFetch, unauthorizedHint } from "../cli-auth.js";
 
 function output(obj: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
@@ -48,13 +49,14 @@ function resolvePort(portFlag: string | undefined): number {
 async function checkConnectivity(baseUrl: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}/plugs`);
+    res = await cliFetch(`${baseUrl}/plugs`);
   } catch {
     fail(
       "connect_failed",
       `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
     );
   }
+  if (res.status === 401) fail("unauthorized", unauthorizedHint());
   if (!res.ok) {
     fail(
       "api_unavailable",
@@ -103,11 +105,11 @@ export const varsCommand = new Command("vars")
       await checkConnectivity(baseUrl);
 
       if (opts.list) {
-        const plugsRes = await fetch(`${baseUrl}/plugs`);
+        const plugsRes = await cliFetch(`${baseUrl}/plugs`);
         const plugs = (await plugsRes.json()) as { name: string }[];
         const variables = await Promise.all(
           plugs.map(async (plug) => {
-            const res = await fetch(`${baseUrl}/variables/${plug.name}`);
+            const res = await cliFetch(`${baseUrl}/variables/${plug.name}`);
             if (res.status === 404) {
               return {
                 plugName: plug.name,
@@ -139,7 +141,7 @@ export const varsCommand = new Command("vars")
       const resolvedAction = action ?? "show";
 
       if (resolvedAction === "show") {
-        const res = await fetch(`${baseUrl}/variables/${plugName}`);
+        const res = await cliFetch(`${baseUrl}/variables/${plugName}`);
         if (res.status === 404) {
           fail("plug_not_found", `Plug "${plugName}" not found.`);
         }
@@ -169,7 +171,7 @@ export const varsCommand = new Command("vars")
           fail("invalid_json", "Could not parse --json as JSON.");
         }
 
-        const res = await fetch(`${baseUrl}/variables/${plugName}`, {
+        const res = await cliFetch(`${baseUrl}/variables/${plugName}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -186,7 +188,7 @@ export const varsCommand = new Command("vars")
       }
 
       if (resolvedAction === "clear") {
-        const res = await fetch(`${baseUrl}/variables/${plugName}`, {
+        const res = await cliFetch(`${baseUrl}/variables/${plugName}`, {
           method: "DELETE",
         });
         if (!res.ok && res.status !== 204) {
