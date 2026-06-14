@@ -4,43 +4,51 @@
 //
 // Copy this file, rename it for your source/destination pair, and register the
 // exported pass handler in {outputDir}/khotan.ts.
+//
+// IMPORTANT — Workflow step structure:
+// Declare "use step" functions at module top level and pass them only
+// serializable values (the `ctx` object is plain data and is safe to pass).
+// Do NOT nest step functions inside the "use workflow" function — the Workflow
+// compiler cannot hoist closures that capture workflow scope, and they fail at
+// runtime in the sandbox. Keep the workflow body limited to orchestration.
 // ============================================================================
 
 import { pass, type PassContext } from "./pass";
 
+// Step: full Node.js access, retried independently. Receives serializable ctx.
+async function forwardEvent(ctx: PassContext) {
+  "use step";
+  console.log("Forwarding webhook event", {
+    eventType: ctx.eventType,
+    khotanRunId: ctx.khotanRunId,
+  });
+
+  await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.destVars["botToken"] ?? ""}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      channel: ctx.destVars["channelId"],
+      text: `Received ${ctx.eventType}`,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `Received ${ctx.eventType} from Stripe`,
+          },
+        },
+      ],
+    }),
+  });
+}
+
+// Workflow: orchestration only. Calls top-level steps with serializable args.
 async function stripeToSlackWorkflow(ctx: PassContext) {
   "use workflow";
-
-  async function forwardEvent() {
-    "use step";
-    console.log("Forwarding webhook event", {
-      eventType: ctx.eventType,
-      khotanRunId: ctx.khotanRunId,
-    });
-
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.destVars["botToken"] ?? ""}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        channel: ctx.destVars["channelId"],
-        text: `Received ${ctx.eventType}`,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `Received ${ctx.eventType} from Stripe`,
-            },
-          },
-        ],
-      }),
-    });
-  }
-
-  await forwardEvent();
+  await forwardEvent(ctx);
 }
 
 export const stripeToSlack = pass({

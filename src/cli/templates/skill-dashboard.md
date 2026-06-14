@@ -20,7 +20,7 @@ The Hub scaffolds three components to `src/components/khotan/`:
 
 | File | Purpose |
 |------|---------|
-| `hub.tsx` | Main `<KhotanHub />` — plug cards, flow table, enable/disable toggles |
+| `hub.tsx` | Main `<KhotanHub />` — plug cards, flow table, enable/disable toggles, per-flow "Run now" trigger |
 | `var-panel.tsx` | Variables panel for configuring plug vars |
 | `wire-panel.tsx` | Webhook subscription management (connect/disconnect) |
 
@@ -44,6 +44,7 @@ Or use `npx khotan add config-page-1` to scaffold a `/config` page automatically
 
 - Lists all registered plugs with status badges (connected/error/idle)
 - Click a plug to see its flows with enable/disable toggles
+- "Run now" button on each flow row triggers a tracked run via `POST /api/khotan/flows/:id/runs` (uses the browser session, so it passes your `authorize` hook)
 - VarPanel: configure plug variables (stored encrypted via `KHOTAN_SECRET`)
 - WirePanel: manage webhook subscriptions (requires wires configured on plug)
 - Debug button on each plug card (visible when `KHOTAN_DEBUG=1`)

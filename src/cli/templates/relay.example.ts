@@ -4,62 +4,70 @@
 //
 // Copy this file, rename it for your source/destination pair, and register the
 // exported flow in {outputDir}/khotan.ts.
+//
+// IMPORTANT — Workflow step structure:
+// Declare "use step" functions at module top level and pass them only
+// serializable values (the `ctx` object is plain data and is safe to pass).
+// Do NOT nest step functions inside the "use workflow" function — the Workflow
+// compiler cannot hoist closures that capture workflow scope, and they fail at
+// runtime in the sandbox. Keep the workflow body limited to orchestration.
 // ============================================================================
 
 import { khotanCache } from "khotan-data/factory";
 import { relay, type RelayContext } from "./relay";
 
-async function shopifyToHubspotWorkflow(ctx: RelayContext) {
-  "use workflow";
+// Step: full Node.js access, retried independently. Receives serializable ctx.
+async function forwardProducts(ctx: RelayContext) {
+  "use step";
+  console.log("Starting relay", {
+    flow: ctx.flow.name,
+    to: ctx.flow.to,
+    khotanRunId: ctx.khotanRunId,
+    runType: ctx.runType,
+  });
 
-  async function forwardProducts() {
-    "use step";
-    console.log("Starting relay", {
-      flow: ctx.flow.name,
-      to: ctx.flow.to,
-      khotanRunId: ctx.khotanRunId,
-      runType: ctx.runType,
-    });
+  const sourceResponse = await fetch("https://source.example.com/products", {
+    headers: {
+      Authorization: `Bearer ${ctx.vars["sourceToken"] ?? ""}`,
+    },
+  });
+  const payload = (await sourceResponse.json()) as {
+    data?: Array<Record<string, unknown>>;
+  };
+  const records = Array.isArray(payload.data) ? payload.data : [];
+  const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+  const previousRecords =
+    (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
 
-    const sourceResponse = await fetch("https://source.example.com/products", {
+  await snapshotCache.set("latest", records, { ttl: "6h" });
+
+  for (const record of records) {
+    await fetch("https://destination.example.com/products", {
+      method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.vars["sourceToken"] ?? ""}`,
+        Authorization: `Bearer ${ctx.vars["destinationToken"] ?? ""}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify(record),
     });
-    const payload = (await sourceResponse.json()) as {
-      data?: Array<Record<string, unknown>>;
-    };
-    const records = Array.isArray(payload.data) ? payload.data : [];
-    const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
-    const previousRecords =
-      (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
-
-    await snapshotCache.set("latest", records, { ttl: "6h" });
-
-    for (const record of records) {
-      await fetch("https://destination.example.com/products", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.vars["destinationToken"] ?? ""}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(record),
-      });
-    }
-
-    return {
-      extracted: records.length,
-      transformed: records.length,
-      created: records.length,
-      metadata: {
-        relay: ctx.flow.name,
-        to: ctx.flow.to,
-        previousCount: previousRecords.length,
-      },
-    };
   }
 
-  return forwardProducts();
+  return {
+    extracted: records.length,
+    transformed: records.length,
+    created: records.length,
+    metadata: {
+      relay: ctx.flow.name,
+      to: ctx.flow.to,
+      previousCount: previousRecords.length,
+    },
+  };
+}
+
+// Workflow: orchestration only. Calls top-level steps with serializable args.
+async function shopifyToHubspotWorkflow(ctx: RelayContext) {
+  "use workflow";
+  return forwardProducts(ctx);
 }
 
 export const shopifyToHubspotRelay = relay({

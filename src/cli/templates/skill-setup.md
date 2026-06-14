@@ -120,7 +120,11 @@ const khotanData = khotan({
 
 Notes:
 - `authorize` is **not** a replacement for `KHOTAN_SECRET` — that key only
-  encrypts credentials at rest, it does not authenticate requests.
+  encrypts credentials at rest, it does not authenticate requests. Conversely,
+  `KHOTAN_SECRET` is **not** an HTTP credential: do not send it as a Bearer
+  token. Management routes are gated solely by `authorize` (plus the dev-only
+  CLI HMAC token). A rejected request returns `401` with `code:
+  authorize_rejected` and a `hint` explaining how to authenticate.
 - Inbound webhooks (`POST /webhook/:plug`, verified per-plug via `onVerify`),
   the cron dispatcher (`CRON_SECRET`), and debug routes (`KHOTAN_DEBUG`,
   non-production only) are exempt from `authorize` automatically.
@@ -138,6 +142,76 @@ const nextConfig = {
   serverExternalPackages: ["khotan-data"],
 };
 ```
+
+## Workflow Runtime & Middleware/Proxy
+
+Inflows, outflows, relays, catch, and pass run on **Vercel Workflow**, which
+communicates over `/.well-known/workflow/*`. If your app has a `middleware.ts`
+(or `proxy.ts`) whose `matcher` captures these paths, durable runs **silently
+fail** — steps never get invoked and runs hang.
+
+`npx khotan init` detects a middleware/proxy file and warns when it may
+intercept these paths. Exclude them from the matcher:
+
+```typescript
+// middleware.ts
+export const config = {
+  matcher: ["/((?!_next|.well-known/workflow).*)"],
+};
+```
+
+If you do auth or rewrites manually (not via `matcher`), short-circuit early:
+
+```typescript
+export function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/.well-known/workflow")) {
+    return NextResponse.next();
+  }
+  // ...your logic
+}
+```
+
+Vercel Workflow also requires AI Gateway OIDC — run `vercel link` and
+`vercel env pull` so `VERCEL_OIDC_TOKEN` is available locally.
+
+## Triggering Flows
+
+Start a flow through khotan (never call the workflow function directly) so run
+tracking and Workflow IDs are recorded. The API is `khotanData.flow(name).start()`:
+
+```typescript
+import khotanData from "@/lib/khotan/khotan";
+
+await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
+  runType: "delta", // or "full"
+});
+```
+
+`plugName` is only needed to disambiguate when the same flow name is registered
+under multiple plugs. There is no `khotanData.api.*` or `flow().run()` surface —
+`flow(name).start(options)` is the single entry point for manual and scheduled
+runs alike. The cron dispatcher (`/api/khotan/cron`) calls this same path.
+
+### Triggering over HTTP (scripts / external services)
+
+There is **no** `POST /flows/:name/run` route. The HTTP trigger is:
+
+```
+POST /api/khotan/flows/{flowId}/runs    body: { "runType": "delta" }
+```
+
+This is a **management route**, so it goes through your `authorize` hook. Common
+gotcha: `KHOTAN_SECRET` is an encryption key, **not** an HTTP credential — sending
+`Authorization: Bearer <KHOTAN_SECRET>` returns `401` with `code: authorize_rejected`.
+To trigger from outside the app, authenticate with a credential your `authorize`
+hook accepts (a session cookie, or your own token you validate inside `authorize`).
+
+Prefer triggering server-side with `khotanData.flow(name).start()` whenever you
+can — it needs no HTTP round-trip or auth.
+
+The `npx khotan flows trigger <name>` CLI works in **dev** without any of this: it
+signs a short-lived HMAC token from `KHOTAN_SECRET` (the `KhotanCLI` auth scheme,
+disabled when `NODE_ENV=production`). The raw secret never leaves your machine.
 
 ## Verify Setup
 
@@ -194,3 +268,5 @@ This keeps sync logic grounded in real API payloads before you write pagination,
 - **"Cannot find module khotan-data"**: Add to `serverExternalPackages` in next.config.ts
 - **Migration fails**: Ensure `DATABASE_URL` is set and Postgres is reachable
 - **Init won't overwrite**: By design — delete the file manually if you need to re-scaffold
+- **Flow/workflow runs hang or never start**: Check your `middleware.ts`/`proxy.ts` matcher excludes `/.well-known/workflow/*` (see "Workflow Runtime & Middleware/Proxy")
+- **Step "is not a function" / fails to resolve at runtime**: Declare `"use step"` functions at module top level and pass `ctx` as an argument — never nest them inside the `"use workflow"` function (closures over workflow scope cannot be hoisted)

@@ -1,6 +1,6 @@
 {
   "name": "khotan-data",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgres integration.",
   "type": "module",
   "main": "./dist/index.cjs",

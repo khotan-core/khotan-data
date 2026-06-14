@@ -110,19 +110,28 @@ npx khotan add catch --yes
 
 Process webhook events durably via Vercel Workflow:
 
+Declare `"use step"` functions at module top level and pass `ctx` (serializable
+data) as an argument. Nesting steps inside the `"use workflow"` function fails at
+runtime — closures over workflow scope cannot be hoisted.
+
 ```typescript
-import { catchEvent } from "./webhooks/catch";
+import { catchEvent, type CatchContext } from "./webhooks/catch";
+import { db } from "@/db";
+import { invoices } from "@/db/schema";
 
-const processInvoice = catchEvent(async (ctx) => {
-  "use workflow";
+// Step: top-level, full Node.js access, retried on failure.
+async function persistInvoice(ctx: CatchContext) {
+  "use step";
+  await db.insert(invoices).values(ctx.event);
+}
 
-  async function persist() {
-    "use step";
-    // Write to database — retried on failure
-    await db.insert(invoices).values(ctx.event);
-  }
-
-  await persist();
+const processInvoice = catchEvent({
+  name: "stripe-invoices",
+  events: ["invoice.paid"],
+  workflow: async (ctx) => {
+    "use workflow";
+    await persistInvoice(ctx);
+  },
 });
 ```
 
@@ -140,22 +149,35 @@ npx khotan add pass --yes
 
 Forward webhook events to another service:
 
+The context exposes `ctx.event`, `ctx.eventType`, and `ctx.destVars` (the
+decrypted credentials for the destination plug). There is no `ctx.destPlug` —
+construct the destination plug from `destVars` inside a top-level step.
+
 ```typescript
-import { pass } from "./webhooks/pass";
+import { pass, type PassContext } from "./webhooks/pass";
+import { plug } from "@/lib/khotan/plugs/plug";
+
+// Step: top-level. Build the destination plug from ctx.destVars.
+async function forwardToSlackStep(ctx: PassContext) {
+  "use step";
+  const slack = plug({
+    name: "slack",
+    baseUrl: "https://slack.com/api",
+    authType: "bearer",
+    auth: { bearer: { token: ctx.destVars["botToken"] ?? "" } },
+  });
+  await slack.post("/chat.postMessage", {
+    body: { channel: ctx.destVars["channelId"], text: `New event: ${ctx.eventType}` },
+  });
+}
 
 const forwardToSlack = pass({
-  to: "slack",  // Destination plug name (must be registered)
+  name: "stripe-to-slack",
+  to: "slack", // Destination plug name (must be registered)
+  events: ["invoice.paid"],
   workflow: async (ctx) => {
     "use workflow";
-    // ctx.event — the incoming webhook payload
-    // ctx.destVars — destination plug variables
-    async function forward() {
-      "use step";
-      await ctx.destPlug.post("/messages", {
-        body: { text: `New event: ${ctx.event.type}` },
-      });
-    }
-    await forward();
+    await forwardToSlackStep(ctx);
   },
 });
 ```

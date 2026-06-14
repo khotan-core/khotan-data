@@ -4,29 +4,37 @@
 //
 // Copy this file, rename it for your webhook source/event, and register the
 // exported catch handler in {outputDir}/khotan.ts.
+//
+// IMPORTANT — Workflow step structure:
+// Declare "use step" functions at module top level and pass them only
+// serializable values (the `ctx` object is plain data and is safe to pass).
+// Do NOT nest step functions inside the "use workflow" function — the Workflow
+// compiler cannot hoist closures that capture workflow scope, and they fail at
+// runtime in the sandbox. Keep the workflow body limited to orchestration.
 // ============================================================================
 
 import { catchEvent, type CatchContext } from "./catch";
 
+// Step: full Node.js access, retried independently. Receives serializable ctx.
+async function persistEvent(ctx: CatchContext) {
+  "use step";
+  console.log("Handling webhook event", {
+    eventType: ctx.eventType,
+    khotanRunId: ctx.khotanRunId,
+  });
+
+  // Khotan already records webhook deliveries. Add app-specific side effects
+  // here, such as updating a local table or enqueueing downstream work.
+  console.log("Webhook payload", {
+    event: ctx.event,
+    headers: ctx.headers,
+  });
+}
+
+// Workflow: orchestration only. Calls top-level steps with serializable args.
 async function stripeInvoiceCatchWorkflow(ctx: CatchContext) {
   "use workflow";
-
-  async function persistEvent() {
-    "use step";
-    console.log("Handling webhook event", {
-      eventType: ctx.eventType,
-      khotanRunId: ctx.khotanRunId,
-    });
-
-    // Khotan already records webhook deliveries. Add app-specific side effects
-    // here, such as updating a local table or enqueueing downstream work.
-    console.log("Webhook payload", {
-      event: ctx.event,
-      headers: ctx.headers,
-    });
-  }
-
-  await persistEvent();
+  await persistEvent(ctx);
 }
 
 export const stripeInvoiceCatch = catchEvent({

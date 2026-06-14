@@ -85,36 +85,41 @@ export function pass(config: PassConfig): PassRegistration {
 // import { pass, type PassContext } from "./pass";
 // import { plug } from "../plugs/plug";
 //
+// Declare "use step" functions at MODULE TOP LEVEL and pass them serializable
+// values only (`ctx` is plain data). Do NOT nest steps inside the "use workflow"
+// function — closures over workflow scope cannot be hoisted and fail at runtime.
+//
+// // Step: top-level, full Node.js access, retried independently.
+// async function forwardEvent(ctx: PassContext) {
+//   "use step";
+//   const cache = khotanCache(ctx, "pollinate-forwarded-events");
+//   const eventId = String(ctx.event["id"] ?? "");
+//   if (eventId && (await cache.get<boolean>(eventId))) return;
+//
+//   // Construct destination plug from destVars
+//   const slackPlug = plug({
+//     name: "slack",
+//     baseUrl: "https://hooks.slack.com",
+//     authType: "bearer",
+//     auth: { bearer: { token: ctx.destVars["token"] ?? "" } },
+//   });
+//
+//   await slackPlug.post("/services/webhook", {
+//     body: {
+//       text: `Received ${ctx.eventType} event from pollinate`,
+//       event: ctx.event,
+//     },
+//   });
+//
+//   if (eventId) {
+//     await cache.set(eventId, true);
+//   }
+// }
+//
+// // Workflow: orchestration only.
 // async function pollinateToSlackWorkflow(ctx: PassContext) {
 //   "use workflow";
-//
-//   async function forwardEvent() {
-//     "use step";
-//     const cache = khotanCache(ctx, "pollinate-forwarded-events");
-//     const eventId = String(ctx.event["id"] ?? "");
-//     if (eventId && (await cache.get<boolean>(eventId))) return;
-//
-//     // Construct destination plug from destVars
-//     const slackPlug = plug({
-//       name: "slack",
-//       baseUrl: "https://hooks.slack.com",
-//       authType: "bearer",
-//       auth: { bearer: { token: ctx.destVars["token"] ?? "" } },
-//     });
-//
-//     await slackPlug.post("/services/webhook", {
-//       body: {
-//         text: `Received ${ctx.eventType} event from pollinate`,
-//         event: ctx.event,
-//       },
-//     });
-//
-//     if (eventId) {
-//       await cache.set(eventId, true);
-//     }
-//   }
-//
-//   await forwardEvent();
+//   await forwardEvent(ctx);
 // }
 //
 // export const pollinateToSlack = pass({

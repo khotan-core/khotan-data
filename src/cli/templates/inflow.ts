@@ -48,46 +48,52 @@ export function inflow(config: InflowConfig): FlowRegistration {
 // Usage Example (create a file like flows/shopify-products.ts)
 // ---------------------------------------------------------------------------
 //
+// Declare "use step" functions at MODULE TOP LEVEL and pass them serializable
+// values only. The `ctx` object is plain data and is safe to pass. Do NOT nest
+// step functions inside the "use workflow" function — the Workflow compiler
+// cannot hoist closures that capture workflow scope, so they fail at runtime.
+//
 // import { bindWorkflowPlug, inflow, type InflowContext, sendUpdate } from "khotan-data/factory";
 // import { db } from "@/db";
 // import { products } from "@/db/schema";
 // import { shopifyPlug } from "../plugs/shopify";
 //
-// async function shopifyProductsWorkflow(ctx: InflowContext) {
-//   "use workflow";
+// // Step: top-level, full Node.js access, retried independently.
+// async function extractAndLoad(ctx: InflowContext) {
+//   "use step";
+//   console.log("Starting inflow", {
+//     flow: ctx.flow.name,
+//     khotanRunId: ctx.khotanRunId,
+//     runType: ctx.runType,
+//   });
+//   await sendUpdate({ message: "Starting Shopify products inflow" });
+//   const shopify = bindWorkflowPlug(shopifyPlug, ctx);
 //
-//   async function extractAndLoad() {
-//     "use step";
-//     console.log("Starting inflow", {
-//       flow: ctx.flow.name,
-//       khotanRunId: ctx.khotanRunId,
-//       runType: ctx.runType,
-//     });
-//     await sendUpdate({ message: "Starting Shopify products inflow" });
-//     const shopify = bindWorkflowPlug(shopifyPlug, ctx);
+//   const response = await shopify.get<{ data?: Array<{ id: string; sku?: string }> }>("/products");
+//   const records = Array.isArray(response.data) ? response.data : [];
+//   await sendUpdate({ message: `Fetched ${records.length} products`, extracted: records.length });
 //
-//     const response = await shopify.get<{ data?: Array<{ id: string; sku?: string }> }>("/products");
-//     const records = Array.isArray(response.data) ? response.data : [];
-//     await sendUpdate({ message: `Fetched ${records.length} products`, extracted: records.length });
-//
-//     if (records.length > 0) {
-//       await db.insert(products).values(
-//         records.map((record) => ({
-//           externalId: record.id,
-//           sku: record.sku ?? record.id,
-//         })),
-//       );
-//     }
-//
-//     return {
-//       extracted: records.length,
-//       transformed: records.length,
-//       created: records.length,
-//       metadata: { source: ctx.flow.name },
-//     };
+//   if (records.length > 0) {
+//     await db.insert(products).values(
+//       records.map((record) => ({
+//         externalId: record.id,
+//         sku: record.sku ?? record.id,
+//       })),
+//     );
 //   }
 //
-//   return extractAndLoad();
+//   return {
+//     extracted: records.length,
+//     transformed: records.length,
+//     created: records.length,
+//     metadata: { source: ctx.flow.name },
+//   };
+// }
+//
+// // Workflow: orchestration only.
+// async function shopifyProductsWorkflow(ctx: InflowContext) {
+//   "use workflow";
+//   return extractAndLoad(ctx);
 // }
 //
 // export const shopifyProductsInflow = inflow({

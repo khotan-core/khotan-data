@@ -1148,7 +1148,15 @@ export interface KhotanAdapter {
  * }
  * ```
  *
- * Throwing is treated the same as returning `false`.
+ * Throwing is treated the same as returning `false`. A rejected request gets a
+ * `401` whose JSON body includes `code: "authorize_rejected"` and a `hint`
+ * describing the auth model (useful for programmatic callers).
+ *
+ * NOTE: `KHOTAN_SECRET` is an encryption key, NOT an HTTP credential. Sending it
+ * as a `Bearer` token does not authenticate a request — only `authorize` (and
+ * the dev-only `KhotanCLI` HMAC token used by the local CLI) can. To trigger a
+ * flow from outside the app, either call `khotanData.flow(name).start()` from
+ * server code, or send a credential your `authorize` hook accepts.
  *
  * The following routes are intentionally exempt and are NOT passed to
  * `authorize` (they have their own protection):
@@ -4146,7 +4154,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
       }
       if (!allowed) {
-        return Response.json({ error: "Unauthorized" }, { status: 401 });
+        // Actionable 401: programmatic callers (scripts, external services)
+        // commonly assume KHOTAN_SECRET is an HTTP credential. It is not — it
+        // only encrypts data at rest. Explain how to authenticate/trigger so
+        // the failure is self-describing rather than an opaque "Unauthorized".
+        return Response.json(
+          {
+            error: "Unauthorized",
+            code: "authorize_rejected",
+            hint:
+              "Management routes (/api/khotan/*) require your `authorize` hook to pass. " +
+              "KHOTAN_SECRET is an encryption key, not an HTTP credential — sending it as a " +
+              "Bearer token will not authenticate the request. To trigger a flow: call " +
+              "khotanData.flow(name).start() from server code (no HTTP/auth needed), or send a " +
+              "credential your authorize hook accepts (e.g. a session cookie or your own token). " +
+              "The khotan CLI authenticates automatically via a dev-only token derived from KHOTAN_SECRET.",
+          },
+          { status: 401 },
+        );
       }
     }
 

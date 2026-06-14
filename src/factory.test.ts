@@ -3644,6 +3644,21 @@ describe("authorize hook", () => {
     expect(authorize).toHaveBeenCalledTimes(1);
   });
 
+  it("returns an actionable 401 body (code + hint) on rejection", async () => {
+    const authorize = vi.fn(async () => false);
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize });
+
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    const body = (await res.json()) as {
+      error: string;
+      code?: string;
+      hint?: string;
+    };
+    expect(body.error).toBe("Unauthorized");
+    expect(body.code).toBe("authorize_rejected");
+    expect(body.hint).toMatch(/KHOTAN_SECRET/);
+  });
+
   it("allows management routes when authorize returns true", async () => {
     const authorize = vi.fn(async () => true);
     const instance = khotan({ adapter, plugs: [makePlug()], authorize });

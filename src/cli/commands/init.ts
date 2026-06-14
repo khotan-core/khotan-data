@@ -18,6 +18,19 @@ import { installSkills, type SkillDefinition } from "../agent-detect.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveOutputDir(projectRoot: string): string {
+  // Respect an existing config's outputDir so re-running init (or running it
+  // after a custom setup) does not scaffold a second khotan.ts at the default
+  // path. Mirrors how the `add` command resolves the output directory.
+  const configPath = path.join(projectRoot, "khotan.config.ts");
+  if (fs.existsSync(configPath)) {
+    try {
+      const content = fs.readFileSync(configPath, "utf-8");
+      const match = /outputDir:\s*["']([^"']+)["']/.exec(content);
+      if (match?.[1]) return match[1];
+    } catch {
+      // Fall through to layout-based default.
+    }
+  }
   if (fs.existsSync(path.join(projectRoot, "src", "app"))) {
     return "src/khotan";
   }
@@ -88,6 +101,58 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
   }
 
   return created;
+}
+
+// Proxy/middleware files that can intercept requests before they reach a route.
+// Vercel Workflow callbacks travel over `/.well-known/workflow/*`; if a matcher
+// captures those paths the runtime silently fails. We warn (rather than patch)
+// because matcher edits are project-specific and risky to rewrite blindly.
+const MIDDLEWARE_CANDIDATES = [
+  "middleware.ts",
+  "middleware.js",
+  "src/middleware.ts",
+  "src/middleware.js",
+  "proxy.ts",
+  "proxy.js",
+  "src/proxy.ts",
+  "src/proxy.js",
+];
+
+/**
+ * Detect a Next.js middleware/proxy file and warn when it may intercept the
+ * Vercel Workflow runtime paths (`/.well-known/workflow/*`). Returns true if a
+ * warning was emitted.
+ */
+export function warnAboutWorkflowProxy(cwd: string): boolean {
+  const found = MIDDLEWARE_CANDIDATES.map((rel) => ({
+    rel,
+    abs: path.join(cwd, rel),
+  })).find((c) => fs.existsSync(c.abs));
+
+  if (!found) return false;
+
+  let contents = "";
+  try {
+    contents = fs.readFileSync(found.abs, "utf-8");
+  } catch {
+    return false;
+  }
+
+  // If the file already excludes the workflow / .well-known paths, stay quiet.
+  if (/\.well-known|workflow/i.test(contents)) {
+    return false;
+  }
+
+  console.log(
+    `\n⚠ Detected ${found.rel}. Vercel Workflow (used by inflows, outflows,\n` +
+      `  relays, catch, and pass) communicates over /.well-known/workflow/*.\n` +
+      `  If your middleware/proxy matcher captures these paths, durable runs\n` +
+      `  will silently fail. Exclude them from your matcher, e.g.:\n\n` +
+      `    export const config = {\n` +
+      `      matcher: ["/((?!_next|.well-known/workflow).*)"],\n` +
+      `    };\n`,
+  );
+  return true;
 }
 
 async function runFullSetup(cwd: string): Promise<StepResult[]> {
@@ -212,6 +277,8 @@ async function runFullSetup(cwd: string): Promise<StepResult[]> {
   // Step 5: Install khotan-data package
   results.push(ensureKhotanDataInstalled(cwd));
 
+  warnAboutWorkflowProxy(cwd);
+
   return results;
 }
 
@@ -252,6 +319,7 @@ export async function runInit(cwd: string): Promise<boolean> {
 
   scaffoldCoreFiles(cwd, outputDir);
   ensureKhotanDataInstalled(cwd);
+  warnAboutWorkflowProxy(cwd);
 
   return fs.existsSync(configPath);
 }
@@ -346,6 +414,8 @@ export const initCommand = new Command("init")
     const coreFiles = scaffoldCoreFiles(cwd, outputDir);
 
     ensureKhotanDataInstalled(cwd);
+
+    warnAboutWorkflowProxy(cwd);
 
     // Offer to install agent skills
     let installSkills = opts.yes ?? false;

@@ -46,7 +46,14 @@ interface Flow {
   enabled: boolean;
   schedule: string | null;
   lastRunAt: string | null;
-  lastRunStatus: "completed" | "partial" | "failed" | "cancelled" | null;
+  lastRunStatus:
+    | "pending"
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "cancelled"
+    | null;
   plugName: string | null;
 }
 
@@ -99,10 +106,11 @@ const runStatusVariant: Record<string, StatusVariant> = {
 export function KhotanHub({
   webhookUrl,
   debugHref,
-  logsHref = "/logs",
+  logsHref,
 }: {
   webhookUrl?: string;
   debugHref?: (plugName: string) => string;
+  /** When set, shows an "Open Logs" button linking here. Hidden if omitted. */
   logsHref?: string;
 } = {}) {
   const [plugs, setPlugs] = useState<Plug[]>([]);
@@ -112,6 +120,11 @@ export function KhotanHub({
   const [error, setError] = useState<unknown>(null);
   const [selectedPlugId, setSelectedPlugId] = useState<string | null>(null);
   const [debugEnabled, setDebugEnabled] = useState(false);
+  const [runningFlowId, setRunningFlowId] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<{
+    type: "ok" | "error";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/khotan/debug")
@@ -145,6 +158,35 @@ export function KhotanHub({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
     });
+  }
+
+  async function runFlow(flowId: string, flowName: string) {
+    setRunningFlowId(flowId);
+    setRunNotice(null);
+    try {
+      const res = await fetch(`/api/khotan/flows/${flowId}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runType: "full" }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          hint?: string;
+        };
+        setRunNotice({
+          type: "error",
+          text: data.hint ?? data.error ?? `Failed to trigger ${flowName}.`,
+        });
+        return;
+      }
+      setRunNotice({ type: "ok", text: `Triggered ${flowName}.` });
+      await fetchData();
+    } catch {
+      setRunNotice({ type: "error", text: `Failed to trigger ${flowName}.` });
+    } finally {
+      setRunningFlowId(null);
+    }
   }
 
   async function toggleWebhookHandler(handlerId: string, enabled: boolean) {
@@ -227,23 +269,27 @@ export function KhotanHub({
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold tracking-tight">Khotan Hub</h2>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            window.location.href = logsHref;
-          }}
-        >
-          Open Logs
-        </Button>
+        {logsHref && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              window.location.href = logsHref;
+            }}
+          >
+            Open Logs
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {plugs.map((plug) => (
           <Card
             key={plug.id}
-            className={`cursor-pointer transition-colors hover:border-primary ${
-              selectedPlugId === plug.id ? "border-primary" : ""
+            className={`cursor-pointer transition-all hover:border-primary ${
+              selectedPlugId === plug.id
+                ? "border-primary ring-2 ring-primary ring-offset-2 ring-offset-background shadow-md"
+                : "border-border"
             }`}
             onClick={() =>
               setSelectedPlugId(selectedPlugId === plug.id ? null : plug.id)
@@ -287,6 +333,18 @@ export function KhotanHub({
         ))}
       </div>
 
+      {!selectedPlug && (
+        <Card className="border-dashed">
+          <CardContent className="py-10 text-center">
+            <p className="text-muted-foreground mb-1">No plug selected yet.</p>
+            <p className="text-sm text-muted-foreground">
+              Select a plug above to view its flows, webhook handlers, and
+              credentials.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {selectedPlug && (
         <div className="space-y-4">
           <Card>
@@ -294,6 +352,17 @@ export function KhotanHub({
               <CardTitle>{selectedPlug.name} — Flows</CardTitle>
             </CardHeader>
             <CardContent>
+              {runNotice && (
+                <p
+                  className={`mb-3 text-sm ${
+                    runNotice.type === "error"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {runNotice.text}
+                </p>
+              )}
               {plugFlows.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No flows configured for this plug.
@@ -307,6 +376,7 @@ export function KhotanHub({
                       <TableHead>Schedule</TableHead>
                       <TableHead>Last Run</TableHead>
                       <TableHead>Enabled</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -344,6 +414,19 @@ export function KhotanHub({
                             checked={flow.enabled}
                             onCheckedChange={(v) => toggleFlow(flow.id, v)}
                           />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs"
+                            disabled={runningFlowId !== null}
+                            onClick={() => runFlow(flow.id, flow.name)}
+                          >
+                            {runningFlowId === flow.id
+                              ? "Running…"
+                              : "Run now"}
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

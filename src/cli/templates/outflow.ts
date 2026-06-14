@@ -48,38 +48,43 @@ export function outflow(config: OutflowConfig): FlowRegistration {
 // Usage Example (create a file like flows/hubspot-products.ts)
 // ---------------------------------------------------------------------------
 //
+// Declare "use step" functions at MODULE TOP LEVEL and pass them serializable
+// values only (`ctx` is plain data). Do NOT nest steps inside the "use workflow"
+// function — closures over workflow scope cannot be hoisted and fail at runtime.
+//
 // import { bindWorkflowPlug, outflow, type OutflowContext } from "khotan-data/factory";
 // import { db } from "@/db";
 // import { products } from "@/db/schema";
 // import { hubspotPlug } from "../plugs/hubspot";
 //
-// async function hubspotProductsWorkflow(ctx: OutflowContext) {
-//   "use workflow";
+// // Step: top-level, full Node.js access, retried independently.
+// async function loadAndPush(ctx: OutflowContext) {
+//   "use step";
+//   console.log("Starting outflow", {
+//     flow: ctx.flow.name,
+//     khotanRunId: ctx.khotanRunId,
+//     runType: ctx.runType,
+//   });
+//   const hubspot = bindWorkflowPlug(hubspotPlug, ctx);
 //
-//   async function loadAndPush() {
-//     "use step";
-//     console.log("Starting outflow", {
-//       flow: ctx.flow.name,
-//       khotanRunId: ctx.khotanRunId,
-//       runType: ctx.runType,
-//     });
-//     const hubspot = bindWorkflowPlug(hubspotPlug, ctx);
+//   const records = await db.select().from(products);
 //
-//     const records = await db.select().from(products);
-//
-//     for (const record of records) {
-//       await hubspot.post("/products", { body: record });
-//     }
-//
-//     return {
-//       extracted: records.length,
-//       transformed: records.length,
-//       created: records.length,
-//       metadata: { destination: ctx.flow.name },
-//     };
+//   for (const record of records) {
+//     await hubspot.post("/products", { body: record });
 //   }
 //
-//   return loadAndPush();
+//   return {
+//     extracted: records.length,
+//     transformed: records.length,
+//     created: records.length,
+//     metadata: { destination: ctx.flow.name },
+//   };
+// }
+//
+// // Workflow: orchestration only.
+// async function hubspotProductsWorkflow(ctx: OutflowContext) {
+//   "use workflow";
+//   return loadAndPush(ctx);
 // }
 //
 // export const hubspotProductsOutflow = outflow({

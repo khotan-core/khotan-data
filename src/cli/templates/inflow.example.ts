@@ -4,53 +4,61 @@
 //
 // Copy this file, rename it for your source service/resource, and register the
 // exported flow in {outputDir}/khotan.ts.
+//
+// IMPORTANT — Workflow step structure:
+// Declare "use step" functions at module top level and pass them only
+// serializable values (the `ctx` object is plain data and is safe to pass).
+// Do NOT nest step functions inside the "use workflow" function — the Workflow
+// compiler cannot hoist closures that capture workflow scope, and they fail at
+// runtime in the sandbox. Keep the workflow body limited to orchestration.
 // ============================================================================
 
 import { inflow, type InflowContext } from "./inflow";
 import { sendUpdate } from "khotan-data/factory";
 
+// Step: full Node.js access, retried independently. Receives serializable ctx.
+async function extractAndLoad(ctx: InflowContext) {
+  "use step";
+  console.log("Starting inflow", {
+    flow: ctx.flow.name,
+    khotanRunId: ctx.khotanRunId,
+    runType: ctx.runType,
+  });
+  await sendUpdate({
+    message: "Starting product inflow",
+    metadata: { flow: ctx.flow.name, runType: ctx.runType },
+  });
+
+  const response = await fetch("https://api.example.com/products", {
+    headers: {
+      Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
+    },
+  });
+  const payload = (await response.json()) as {
+    data?: Array<Record<string, unknown>>;
+  };
+  const records = Array.isArray(payload.data) ? payload.data : [];
+
+  // Replace this with your app-specific transform and DB upsert.
+  console.log("Fetched records", records.length);
+  await sendUpdate({
+    message: `Fetched ${String(records.length)} products`,
+    extracted: records.length,
+    progress: 50,
+  });
+
+  return {
+    extracted: records.length,
+    transformed: records.length,
+    created: records.length,
+    metadata: { source: ctx.flow.name },
+  };
+}
+
+// Workflow: orchestration only. Calls top-level steps with serializable args.
 async function shopifyProductsWorkflow(ctx: InflowContext) {
   "use workflow";
-
-  async function extractAndLoad() {
-    "use step";
-    console.log("Starting inflow", {
-      flow: ctx.flow.name,
-      khotanRunId: ctx.khotanRunId,
-      runType: ctx.runType,
-    });
-    await sendUpdate({
-      message: "Starting product inflow",
-      metadata: { flow: ctx.flow.name, runType: ctx.runType },
-    });
-
-    const response = await fetch("https://api.example.com/products", {
-      headers: {
-        Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
-      },
-    });
-    const payload = (await response.json()) as {
-      data?: Array<Record<string, unknown>>;
-    };
-    const records = Array.isArray(payload.data) ? payload.data : [];
-
-    // Replace this with your app-specific transform and DB upsert.
-    console.log("Fetched records", records.length);
-    await sendUpdate({
-      message: `Fetched ${String(records.length)} products`,
-      extracted: records.length,
-      progress: 50,
-    });
-
-    return {
-      extracted: records.length,
-      transformed: records.length,
-      created: records.length,
-      metadata: { source: ctx.flow.name },
-    };
-  }
-
-  return extractAndLoad();
+  return extractAndLoad(ctx);
 }
 
 export const shopifyProductsInflow = inflow({

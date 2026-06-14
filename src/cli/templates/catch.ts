@@ -81,26 +81,31 @@ export function catchEvent(config: CatchConfig): CatchRegistration {
 // them to khotan_runs. Use your catch workflow for app-specific side effects
 // and optionally khotanCache(ctx, "name") for dedupe or cursor state.
 //
+// Declare "use step" functions at MODULE TOP LEVEL and pass them serializable
+// values only (`ctx` is plain data). Do NOT nest steps inside the "use workflow"
+// function — closures over workflow scope cannot be hoisted and fail at runtime.
+//
+// // Step: top-level, full Node.js access, retried independently.
+// async function notifyOps(ctx: CatchContext) {
+//   "use step";
+//   const cache = khotanCache(ctx, "pollinate-webhook-markers");
+//   const eventId = String(ctx.event["id"] ?? "");
+//   if (eventId && (await cache.get<boolean>(eventId))) return;
+//
+//   console.log("Handled webhook", {
+//     eventType: ctx.eventType,
+//     khotanRunId: ctx.khotanRunId,
+//   });
+//
+//   if (eventId) {
+//     await cache.set(eventId, true);
+//   }
+// }
+//
+// // Workflow: orchestration only.
 // async function pollinateCatchWorkflow(ctx: CatchContext) {
 //   "use workflow";
-//
-//   async function notifyOps() {
-//     "use step";
-//     const cache = khotanCache(ctx, "pollinate-webhook-markers");
-//     const eventId = String(ctx.event["id"] ?? "");
-//     if (eventId && (await cache.get<boolean>(eventId))) return;
-//
-//     console.log("Handled webhook", {
-//       eventType: ctx.eventType,
-//       khotanRunId: ctx.khotanRunId,
-//     });
-//
-//     if (eventId) {
-//       await cache.set(eventId, true);
-//     }
-//   }
-//
-//   await notifyOps();
+//   await notifyOps(ctx);
 // }
 //
 // export const pollinateCatch = catchEvent({

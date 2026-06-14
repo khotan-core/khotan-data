@@ -4,44 +4,52 @@
 //
 // Copy this file, rename it for your destination service/resource, and register
 // the exported flow in {outputDir}/khotan.ts.
+//
+// IMPORTANT — Workflow step structure:
+// Declare "use step" functions at module top level and pass them only
+// serializable values (the `ctx` object is plain data and is safe to pass).
+// Do NOT nest step functions inside the "use workflow" function — the Workflow
+// compiler cannot hoist closures that capture workflow scope, and they fail at
+// runtime in the sandbox. Keep the workflow body limited to orchestration.
 // ============================================================================
 
 import { outflow, type OutflowContext } from "./outflow";
 
-async function hubspotProductsWorkflow(ctx: OutflowContext) {
-  "use workflow";
+// Step: full Node.js access, retried independently. Receives serializable ctx.
+async function loadAndPush(ctx: OutflowContext) {
+  "use step";
+  console.log("Starting outflow", {
+    flow: ctx.flow.name,
+    khotanRunId: ctx.khotanRunId,
+    runType: ctx.runType,
+  });
 
-  async function loadAndPush() {
-    "use step";
-    console.log("Starting outflow", {
-      flow: ctx.flow.name,
-      khotanRunId: ctx.khotanRunId,
-      runType: ctx.runType,
+  // Replace this with your app-specific DB query.
+  const records: Array<Record<string, unknown>> = [];
+
+  for (const record of records) {
+    await fetch("https://api.example.com/products", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(record),
     });
-
-    // Replace this with your app-specific DB query.
-    const records: Array<Record<string, unknown>> = [];
-
-    for (const record of records) {
-      await fetch("https://api.example.com/products", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.vars["apiToken"] ?? ""}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(record),
-      });
-    }
-
-    return {
-      extracted: records.length,
-      transformed: records.length,
-      created: records.length,
-      metadata: { destination: ctx.flow.name },
-    };
   }
 
-  return loadAndPush();
+  return {
+    extracted: records.length,
+    transformed: records.length,
+    created: records.length,
+    metadata: { destination: ctx.flow.name },
+  };
+}
+
+// Workflow: orchestration only. Calls top-level steps with serializable args.
+async function hubspotProductsWorkflow(ctx: OutflowContext) {
+  "use workflow";
+  return loadAndPush(ctx);
 }
 
 export const hubspotProductsOutflow = outflow({

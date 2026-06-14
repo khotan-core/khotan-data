@@ -51,48 +51,53 @@ export function relay(config: RelayConfig): FlowRegistration {
 // Usage Example (create a file like flows/shopify-to-hubspot.ts)
 // ---------------------------------------------------------------------------
 //
+// Declare "use step" functions at MODULE TOP LEVEL and pass them serializable
+// values only (`ctx` is plain data). Do NOT nest steps inside the "use workflow"
+// function — closures over workflow scope cannot be hoisted and fail at runtime.
+//
 // import { bindWorkflowPlug, khotanCache, relay, type RelayContext } from "khotan-data/factory";
 // import { shopifyPlug } from "../plugs/shopify";
 // import { hubspotPlug } from "../plugs/hubspot";
 //
-// async function shopifyToHubspotWorkflow(ctx: RelayContext) {
-//   "use workflow";
+// // Step: top-level, full Node.js access, retried independently.
+// async function forwardProducts(ctx: RelayContext) {
+//   "use step";
+//   console.log("Starting relay", {
+//     flow: ctx.flow.name,
+//     to: ctx.flow.to,
+//     khotanRunId: ctx.khotanRunId,
+//     runType: ctx.runType,
+//   });
+//   const shopify = bindWorkflowPlug(shopifyPlug, ctx);
+//   const hubspot = bindWorkflowPlug(hubspotPlug, ctx, "hubspot");
 //
-//   async function forwardProducts() {
-//     "use step";
-//     console.log("Starting relay", {
-//       flow: ctx.flow.name,
-//       to: ctx.flow.to,
-//       khotanRunId: ctx.khotanRunId,
-//       runType: ctx.runType,
-//     });
-//     const shopify = bindWorkflowPlug(shopifyPlug, ctx);
-//     const hubspot = bindWorkflowPlug(hubspotPlug, ctx, "hubspot");
+//   const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+//   const previous = await snapshotCache.get<Array<Record<string, unknown>>>("latest");
 //
-//     const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
-//     const previous = await snapshotCache.get<Array<Record<string, unknown>>>("latest");
+//   const response = await shopify.get<{ data?: Array<Record<string, unknown>> }>("/products");
+//   const records = Array.isArray(response.data) ? response.data : [];
+//   await snapshotCache.set("latest", records);
 //
-//     const response = await shopify.get<{ data?: Array<Record<string, unknown>> }>("/products");
-//     const records = Array.isArray(response.data) ? response.data : [];
-//     await snapshotCache.set("latest", records);
-//
-//     for (const record of records) {
-//       await hubspot.post("/products", { body: record });
-//     }
-//
-//     return {
-//       extracted: records.length,
-//       transformed: records.length,
-//       created: records.length,
-//       metadata: {
-//         relay: ctx.flow.name,
-//         to: ctx.flow.to,
-//         previousCount: previous?.length ?? 0,
-//       },
-//     };
+//   for (const record of records) {
+//     await hubspot.post("/products", { body: record });
 //   }
 //
-//   return forwardProducts();
+//   return {
+//     extracted: records.length,
+//     transformed: records.length,
+//     created: records.length,
+//     metadata: {
+//       relay: ctx.flow.name,
+//       to: ctx.flow.to,
+//       previousCount: previous?.length ?? 0,
+//     },
+//   };
+// }
+//
+// // Workflow: orchestration only.
+// async function shopifyToHubspotWorkflow(ctx: RelayContext) {
+//   "use workflow";
+//   return forwardProducts(ctx);
 // }
 //
 // export const shopifyToHubspotRelay = relay({

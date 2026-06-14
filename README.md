@@ -99,7 +99,13 @@ authorize: async (request) => {
 ```
 
 - `KHOTAN_SECRET` encrypts plug credentials **at rest** (AES-256-GCM). It is not
-  an auth credential — it never gates requests. Set it to a high-entropy value.
+  an auth credential — it never gates requests, and **must not** be sent as a
+  `Bearer` token. Management routes are gated only by `authorize` (plus a
+  dev-only CLI HMAC token derived from the secret). A rejected request returns
+  `401` with `code: "authorize_rejected"` and a `hint`. To trigger a flow over
+  HTTP (`POST /api/khotan/flows/{flowId}/runs`), send a credential your
+  `authorize` hook accepts — or just call `khotanData.flow(name).start()` from
+  server code, which needs no auth. Set the secret to a high-entropy value.
 - Inbound webhooks (verified via per-plug `onVerify`), the cron dispatcher
   (`CRON_SECRET`), and debug routes (`KHOTAN_DEBUG`, non-production only) are
   exempt from `authorize` automatically.
@@ -128,32 +134,38 @@ export const shopifyProductsSnapshotCache = cache({
 
 Inside workflows, use `khotanCache(ctx, "name")` for snapshots, cursors, and dedupe markers:
 
+Declare `"use step"` functions at module top level and pass them serializable
+values only (`ctx` is plain data). Nesting steps inside the `"use workflow"`
+function fails at runtime — the Workflow compiler cannot hoist closures that
+capture workflow scope.
+
 ```typescript
 import { khotanCache } from "khotan-data/factory";
 
+// Step: top-level, retried independently, full Node.js access.
+async function syncProducts(ctx: InflowContext) {
+  "use step";
+  const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
+  const previous =
+    (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
+
+  const response = await shopifyPlug.get<{ data?: Array<Record<string, unknown>> }>("/products");
+  const records = Array.isArray(response.data) ? response.data : [];
+
+  await snapshotCache.set("latest", records);
+
+  return {
+    extracted: records.length,
+    transformed: records.length,
+    created: records.length,
+    metadata: { previousCount: previous.length },
+  };
+}
+
+// Workflow: orchestration only.
 async function shopifyProductsWorkflow(ctx: InflowContext) {
   "use workflow";
-
-  async function syncProducts() {
-    "use step";
-    const snapshotCache = khotanCache(ctx, "shopify-products-snapshot");
-    const previous =
-      (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
-
-    const response = await shopifyPlug.get<{ data?: Array<Record<string, unknown>> }>("/products");
-    const records = Array.isArray(response.data) ? response.data : [];
-
-    await snapshotCache.set("latest", records);
-
-    return {
-      extracted: records.length,
-      transformed: records.length,
-      created: records.length,
-      metadata: { previousCount: previous.length },
-    };
-  }
-
-  return syncProducts();
+  return syncProducts(ctx);
 }
 ```
 

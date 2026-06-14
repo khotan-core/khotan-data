@@ -64,3 +64,14 @@ const khotanData = khotan({
 });
 
 export default khotanData;
+
+// Trigger a flow run from server code (route handler, action, cron):
+//
+//   import khotanData from "@/lib/khotan/khotan";
+//   await khotanData.flow("products-inflow", { plugName: "stripe" }).start({
+//     runType: "delta", // or "full"
+//   });
+//
+// `flow(name).start(options)` is the single entry point — there is no
+// `khotanData.api.*` surface. `plugName` only disambiguates when the same flow
+// name is registered under multiple plugs.
