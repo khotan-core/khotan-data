@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { initCommand } from "./commands/init.js";
 import { addCommand } from "./commands/add.js";
 import { generateCommand } from "./commands/generate.js";
@@ -8,12 +11,17 @@ import { wireCommand } from "./commands/wire.js";
 import { flowsCommand } from "./commands/flows.js";
 import { mappingsCommand } from "./commands/mappings.js";
 
+const __cliDirname = path.dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(
+  fs.readFileSync(path.resolve(__cliDirname, "..", "package.json"), "utf-8"),
+) as { version: string };
+
 const program = new Command();
 
 program
   .name("khotan")
   .description("Scaffold data components into your project")
-  .version("0.0.1");
+  .version(pkg.version);
 
 program.addCommand(initCommand);
 program.addCommand(addCommand);

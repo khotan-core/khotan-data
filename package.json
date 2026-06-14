@@ -1,7 +1,7 @@
 {
   "name": "khotan-data",
-  "version": "0.3.0",
-  "description": "Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgres integration.",
+  "version": "0.3.1",
+  "description": "Data sync, ETL, and webhook primitives for Next.js + Drizzle + Postgres. shadcn for data plumbing.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -107,11 +107,11 @@
     "transform",
     "data-management"
   ],
-  "author": "",
+  "author": "Khotan",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/khotan-io/khotan-data"
   },
   "engines": {
     "node": ">=18"

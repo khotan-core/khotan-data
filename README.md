@@ -1,8 +1,8 @@
 # khotan-data
 
-Data primitives for TypeScript — ETL pipelines, transforms, and Drizzle Postgres integration.
+Data sync, ETL, and webhook primitives for Next.js + Drizzle + Postgres. shadcn for data plumbing.
 
-Built for **Next.js + Drizzle + Postgres** projects. Think better-auth for data management.
+Built for **Next.js + Drizzle + Postgres** projects. Think shadcn × better-auth, but for data.
 
 ## Install
 

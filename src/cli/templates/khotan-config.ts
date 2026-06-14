@@ -42,14 +42,13 @@ const khotanData = khotan({
   plugs: [
     // Example plug registration:
     //
+    // import { stripePlug } from "./plugs/stripe";
+    // import { stripeProductsInflow } from "./flows/stripe-products";
+    //
     // {
     //   name: "stripe",
-    //   baseUrl: "https://api.stripe.com",
-    //   authType: "bearer",
-    //   flows: [
-    //     { name: "products-inflow", type: "inflow", schedule: "0 * * * *", resource: "products" },
-    //     { name: "invoices-inflow", type: "inflow", schedule: "0 0 * * *" },
-    //   ],
+    //   plug: stripePlug,
+    //   flows: [stripeProductsInflow],
     // },
   ],
 

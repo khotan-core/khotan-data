@@ -4,6 +4,7 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 *.log
+*.tgz
 .env
 .env.*
 !.env.example
