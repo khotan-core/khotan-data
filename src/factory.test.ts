@@ -22,6 +22,7 @@ interface StoredFlow {
   schedule: string | null;
   resourceId: string | null;
   enabled: boolean;
+  createdAt: Date;
   lastRunAt: Date | null;
   lastRunStatus: "completed" | "partial" | "failed" | "cancelled" | null;
 }
@@ -176,6 +177,7 @@ function createMockAdapter(): KhotanAdapter {
         schedule: flow.schedule ?? null,
         resourceId: null,
         enabled: true,
+        createdAt: new Date(Date.now() - 60_000),
         lastRunAt: null,
         lastRunStatus: null,
       });
@@ -2368,7 +2370,7 @@ describe("khotan factory", () => {
       }
     });
 
-    it("GET /api/khotan/cron dedupes runs within the same minute", async () => {
+    it("GET /api/khotan/cron does not re-trigger flows already run this heartbeat", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-06-13T12:10:00Z"));
 
@@ -2410,7 +2412,7 @@ describe("khotan factory", () => {
           expect.arrayContaining([
             expect.objectContaining({
               flowId: "flow-1",
-              reason: "already_triggered",
+              reason: "not_due",
             }),
           ]),
         );
@@ -2470,6 +2472,342 @@ describe("khotan factory", () => {
         } else {
           delete process.env["CRON_SECRET"];
         }
+      }
+    });
+
+    it("GET /api/khotan/cron catches up overdue flow from late heartbeat", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T02:30:00Z"));
+
+      try {
+        const run = vi.fn(async () => ({ updated: 1 }));
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "daily-sync",
+                  type: "inflow",
+                  schedule: "0 2 * * *",
+                  run,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-12T02:00:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const res = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.triggered).toHaveLength(1);
+        expect(data.triggered[0]).toMatchObject({
+          flowName: "daily-sync",
+          plugName: "stripe",
+        });
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("GET /api/khotan/cron triggers multiple overdue flows in one heartbeat", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T02:30:00Z"));
+
+      try {
+        const inflowRun = vi.fn(async () => ({ updated: 1 }));
+        const outflowRun = vi.fn(async () => ({ updated: 1 }));
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "inflow",
+                  type: "inflow",
+                  schedule: "0 2 * * *",
+                  run: inflowRun,
+                },
+                {
+                  name: "outflow",
+                  type: "outflow",
+                  schedule: "15 2 * * *",
+                  run: outflowRun,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-12T02:00:00Z"),
+          lastRunStatus: "completed",
+        });
+        await adapter.updateFlowLastRun("flow-2", {
+          lastRunAt: new Date("2026-06-12T02:15:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const res = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.triggered).toHaveLength(2);
+        expect(data.triggered).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ flowName: "inflow" }),
+            expect.objectContaining({ flowName: "outflow" }),
+          ]),
+        );
+        expect(inflowRun).toHaveBeenCalledTimes(1);
+        expect(outflowRun).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("GET /api/khotan/cron does not re-trigger after failed run advances lastRunAt", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T02:30:00Z"));
+
+      try {
+        const run = vi.fn(async () => {
+          throw new Error("something broke");
+        });
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "daily-sync",
+                  type: "inflow",
+                  schedule: "0 2 * * *",
+                  run,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-12T02:00:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const first = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const firstData = await first.json();
+        expect(firstData.skipped).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              flowName: "daily-sync",
+              reason: "trigger_failed",
+            }),
+          ]),
+        );
+
+        const second = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const secondData = await second.json();
+        expect(secondData.triggered).toHaveLength(0);
+        expect(secondData.skipped).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              flowName: "daily-sync",
+              reason: "not_due",
+            }),
+          ]),
+        );
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("GET /api/khotan/cron triggers overdue hourly flow", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T04:00:00Z"));
+
+      try {
+        const run = vi.fn(async () => ({ updated: 1 }));
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "hourly-sync",
+                  type: "inflow",
+                  schedule: "0 * * * *",
+                  run,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-13T02:55:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const res = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const data = await res.json();
+        expect(data.triggered).toHaveLength(1);
+        expect(data.triggered[0]).toMatchObject({ flowName: "hourly-sync" });
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("GET /api/khotan/cron skips flow that ran recently within its interval", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T02:30:00Z"));
+
+      try {
+        const run = vi.fn(async () => ({ updated: 1 }));
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "daily-sync",
+                  type: "inflow",
+                  schedule: "0 2 * * *",
+                  run,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-13T02:05:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const res = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const data = await res.json();
+        expect(data.triggered).toHaveLength(0);
+        expect(data.skipped).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              flowName: "daily-sync",
+              reason: "not_due",
+            }),
+          ]),
+        );
+        expect(run).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("GET /api/khotan/cron triggers flow at exact schedule match time", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-13T02:00:00Z"));
+
+      try {
+        const run = vi.fn(async () => ({ updated: 1 }));
+        const flowInstance = khotan({
+          adapter,
+          plugs: [
+            {
+              name: "stripe",
+              plug: {
+                baseUrl: "https://api.stripe.com",
+                authType: "bearer",
+                get: vi.fn(),
+                post: vi.fn(),
+                put: vi.fn(),
+                patch: vi.fn(),
+                delete: vi.fn(),
+              },
+              flows: [
+                {
+                  name: "daily-sync",
+                  type: "inflow",
+                  schedule: "0 2 * * *",
+                  run,
+                },
+              ],
+            },
+          ],
+        });
+
+        await flowInstance.init();
+        await adapter.updateFlowLastRun("flow-1", {
+          lastRunAt: new Date("2026-06-12T02:00:00Z"),
+          lastRunStatus: "completed",
+        });
+
+        const res = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const data = await res.json();
+        expect(data.triggered).toHaveLength(1);
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
       }
     });
 

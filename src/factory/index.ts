@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// Thin entry point — re-exports everything from the decomposed factory modules
-// so that `import ... from "khotan-data/factory"` continues to work unchanged.
+// Factory barrel — re-exports all public symbols from the decomposed modules.
 // ---------------------------------------------------------------------------
 
+// Types
 export type {
   ResourceConnectField,
   ResourcePlugParticipation,
@@ -44,15 +44,24 @@ export type {
   FlowSelectorOptions,
   FlowInstance,
   KhotanInstance,
-} from "./factory/types.js";
+} from "./types.js";
 
-export { bindWorkflowPlug, khotanCache, khotanMappings } from "./factory/types.js";
-export { deriveCliToken } from "./factory/cli-auth.js";
-export { drizzleAdapter } from "./factory/drizzle-adapter.js";
+// Runtime helpers exported for workflow consumers
+export { bindWorkflowPlug, khotanCache, khotanMappings } from "./types.js";
+
+// CLI auth (deriveCliToken is used by the CLI package)
+export { deriveCliToken } from "./cli-auth.js";
+
+// Drizzle adapter
+export { drizzleAdapter } from "./drizzle-adapter.js";
+
+// Workflow test seams + sendUpdate
 export {
   __setWorkflowStartForTests,
   __setWorkflowGetRunForTests,
   __setWorkflowGetWritableForTests,
   sendUpdate,
-} from "./factory/workflow.js";
-export { khotan, toNextJsHandler } from "./factory/runtime.js";
+} from "./workflow.js";
+
+// Core factory
+export { khotan, toNextJsHandler } from "./runtime.js";
