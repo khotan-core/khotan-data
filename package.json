@@ -7,7 +7,8 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "khotan": "./dist/cli.js"
+    "khotan": "./dist/cli.js",
+    "khotan-data": "./dist/cli.js"
   },
   "exports": {
     ".": {
