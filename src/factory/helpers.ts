@@ -270,6 +270,36 @@ export function isCacheEntryExpired(entry: CacheEntryRecord, now = new Date()): 
   return entry.expiresAt !== null && entry.expiresAt.getTime() <= now.getTime();
 }
 
+/**
+ * Decrypt-or-fallback: try decryptVars, fall back to plain JSON.parse, then {}.
+ * Centralizes the pattern previously copy-pasted across getWireVars, webhook
+ * handler, and getStoredVarsByPlugId.
+ */
+export async function readEncryptedJson(
+  raw: string | null,
+  secret: string,
+  decrypt: (encrypted: string, secret: string) => Promise<string>,
+): Promise<Record<string, string>> {
+  if (!raw) return {};
+  if (!secret) {
+    try {
+      return JSON.parse(raw) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+  try {
+    const decrypted = await decrypt(raw, secret);
+    return JSON.parse(decrypted) as Record<string, string>;
+  } catch {
+    try {
+      return JSON.parse(raw) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+}
+
 export function canonicalizeConnectValue(
   resource: ResourceRegistration,
   connectValue: unknown,

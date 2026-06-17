@@ -24,6 +24,7 @@ import {
   toFlowRunResult,
   getFlowRunCounters,
   resolveTerminalRunStatus,
+  readEncryptedJson,
 } from "./helpers.js";
 import {
   importWorkflowStart,
@@ -56,6 +57,94 @@ import type {
 import { bindPlugWithVars, khotanRuntimeRegistry } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Route table types
+// ---------------------------------------------------------------------------
+
+type RouteAuth = "authorize" | "webhook" | "cron" | "debug" | "none";
+
+interface RouteDefinition {
+  method: string;
+  pattern: string;
+  auth: RouteAuth;
+  handler: (ctx: RouteContext) => Promise<Response>;
+}
+
+interface RouteContext {
+  request: Request;
+  params: Record<string, string>;
+  url: URL;
+  searchParams: URLSearchParams;
+}
+
+interface RouteMatch {
+  route: RouteDefinition;
+  params: Record<string, string>;
+}
+
+function matchRoute(
+  method: string,
+  pathSegments: string[],
+  routes: RouteDefinition[],
+): RouteMatch | null {
+  for (const route of routes) {
+    if (route.method !== method && route.method !== "*") continue;
+
+    const patternSegments = route.pattern.split("/").filter(Boolean);
+    if (patternSegments.length !== pathSegments.length) continue;
+
+    const params: Record<string, string> = {};
+    let matched = true;
+
+    for (let i = 0; i < patternSegments.length; i++) {
+      const pat = patternSegments[i]!;
+      const seg = pathSegments[i]!;
+
+      if (pat.startsWith(":")) {
+        params[pat.slice(1)] = decodeURIComponent(seg);
+      } else if (pat !== seg) {
+        matched = false;
+        break;
+      }
+    }
+
+    if (matched) {
+      return { route, params };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// waitUntil helper — uses Vercel's waitUntil when available, else fire-and-forget
+// ---------------------------------------------------------------------------
+
+type WaitUntilFn = (promise: Promise<unknown>) => void;
+
+let _resolvedWaitUntil: WaitUntilFn | null = null;
+
+function getWaitUntil(): WaitUntilFn {
+  if (_resolvedWaitUntil) return _resolvedWaitUntil;
+  _resolvedWaitUntil = (_promise: Promise<unknown>) => {
+    // fire-and-forget fallback — the promise runs but the runtime may kill it
+  };
+  return _resolvedWaitUntil;
+}
+
+const _vercelFunctionsModule = "@vercel/functions";
+const waitUntilReady: Promise<void> = (async () => {
+  try {
+    const mod = (await import(
+      /* webpackIgnore: true */ _vercelFunctionsModule
+    )) as { waitUntil?: WaitUntilFn };
+    if (typeof mod?.waitUntil === "function") {
+      _resolvedWaitUntil = mod.waitUntil;
+    }
+  } catch {
+    // Not available — fallback stays
+  }
+})();
+
+// ---------------------------------------------------------------------------
 // khotan factory
 // ---------------------------------------------------------------------------
 
@@ -63,14 +152,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   const { adapter, plugs, resources = [], caches = [], authorize } = config;
   const instanceId = crypto.randomUUID();
 
-  if (!authorize) {
+  if (authorize === undefined) {
+    if (process.env["NODE_ENV"] === "production") {
+      throw new Error(
+        "[khotan] `authorize` is required in production. Pass an authorization hook to gate " +
+          "management routes, or pass `authorize: false` to explicitly opt into " +
+          "publicly accessible management routes (not recommended).",
+      );
+    }
     console.warn(
       "[khotan] No `authorize` hook configured: the management API " +
         "(/api/khotan/*) is publicly accessible. Pass `authorize` to gate it " +
-        "behind your auth layer (e.g. better-auth). This is required for any " +
-        "deployed environment.",
+        "behind your auth layer (e.g. better-auth), or `authorize: false` to " +
+        "silence this warning. This will throw in production.",
     );
   }
+  const authorizeHook = authorize === undefined || authorize === false ? null : authorize;
+
   if (!(config.secret ?? process.env["KHOTAN_SECRET"])) {
     console.warn(
       "[khotan] No `secret`/`KHOTAN_SECRET` configured: plug credentials and " +
@@ -209,8 +307,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   const resourceIdByName = new Map<string, string>();
   const resourceConfigById = new Map<string, ResourceRegistration>();
 
+  const secret = config.secret ?? process.env["KHOTAN_SECRET"] ?? "";
+
   async function doInit(): Promise<void> {
     if (initialized) return;
+    await waitUntilReady;
 
     resourceIdByName.clear();
     resourceConfigById.clear();
@@ -298,6 +399,138 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     initPromise ??= doInit();
     return initPromise;
   }
+
+  // -------------------------------------------------------------------------
+  // Var management
+  // -------------------------------------------------------------------------
+
+  async function resolvePlugId(plugName: string): Promise<string> {
+    await init();
+    const allPlugs = await adapter.listPlugs();
+    const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+    if (!dbPlug) {
+      throw new Error(`Plug "${plugName}" not found in database`);
+    }
+    return dbPlug["id"] as string;
+  }
+
+  function getDefaultVars(plugName: string): Record<string, string> {
+    const defaults: Record<string, string> = {};
+    for (const field of getVarFields(plugName)) {
+      if (field.defaultValue !== undefined) {
+        defaults[field.key] = field.defaultValue;
+      }
+    }
+    return defaults;
+  }
+
+  async function getStoredVarsByPlugId(
+    plugId: string,
+  ): Promise<Record<string, string>> {
+    if (!secret) {
+      throw new Error("KHOTAN_SECRET is required for var operations");
+    }
+    const encrypted = await adapter.getEncryptedVariables(plugId);
+    if (!encrypted) return {};
+    const json = await decryptVars(encrypted, secret);
+    return JSON.parse(json) as Record<string, string>;
+  }
+
+  async function setVarsByPlugId(
+    plugId: string,
+    vars: Record<string, string>,
+  ): Promise<void> {
+    if (!secret) {
+      throw new Error("KHOTAN_SECRET is required for var operations");
+    }
+    const json = JSON.stringify(vars);
+    const encrypted = await encryptVars(json, secret);
+    await adapter.setEncryptedVariables(plugId, encrypted);
+  }
+
+  async function seedDefaultVarsForPlug(
+    plugId: string,
+    plugName: string,
+  ): Promise<void> {
+    const defaults = getDefaultVars(plugName);
+    if (!secret || Object.keys(defaults).length === 0) {
+      return;
+    }
+
+    const storedVars: Record<string, string> = await getStoredVarsByPlugId(
+      plugId,
+    ).catch(() => ({}));
+    const seededVars = { ...defaults, ...storedVars };
+    const hasChanges = Object.keys(seededVars).some(
+      (key) => seededVars[key] !== storedVars[key],
+    );
+
+    if (hasChanges) {
+      await setVarsByPlugId(plugId, seededVars);
+    }
+  }
+
+  async function getVars(plugName: string): Promise<Record<string, string>> {
+    const plugId = await resolvePlugId(plugName);
+    const defaults = getDefaultVars(plugName);
+    const stored = await getStoredVarsByPlugId(plugId);
+    return { ...defaults, ...stored };
+  }
+
+  async function setVars(
+    plugName: string,
+    vars: Record<string, string>,
+  ): Promise<void> {
+    const plugId = await resolvePlugId(plugName);
+    await setVarsByPlugId(plugId, vars);
+  }
+
+  async function clearVars(plugName: string): Promise<void> {
+    const plugId = await resolvePlugId(plugName);
+    await adapter.clearEncryptedVariables(plugId);
+  }
+
+  async function hasVars(plugName: string): Promise<boolean> {
+    const plugId = await resolvePlugId(plugName);
+    const encrypted = await adapter.getEncryptedVariables(plugId);
+    return encrypted !== null && encrypted !== "";
+  }
+
+  function getVarFields(plugName: string): readonly VarField[] {
+    const plugReg = plugs.find((p) => p.name === plugName);
+    if (!plugReg) {
+      throw new Error(`Plug "${plugName}" not registered`);
+    }
+    return plugReg.vars ?? plugReg.plug.varFields ?? [];
+  }
+
+  function maskVars(
+    plugName: string,
+    vars: Record<string, string>,
+  ): Record<string, string> {
+    const fields = getVarFields(plugName);
+    return Object.fromEntries(
+      Object.entries(vars).map(([key, value]) => {
+        const field = fields.find((f) => f.key === key);
+        if (field?.secret) {
+          return [key, value ? "••••••••" : ""];
+        }
+        return [key, value];
+      }),
+    );
+  }
+
+  function getPlug(plugName: string): PlugRegistration["plug"] {
+    const plugReg = plugs.find((p) => p.name === plugName);
+    if (!plugReg) {
+      throw new Error(`Plug "${plugName}" not registered`);
+    }
+    return plugReg.plug;
+  }
+
+  // -------------------------------------------------------------------------
+  // Resource/mapping helpers
+  // -------------------------------------------------------------------------
 
   async function getRegisteredResourceById(
     resourceId: string,
@@ -557,6 +790,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     await adapter.deleteMapping(id);
   }
 
+  // -------------------------------------------------------------------------
+  // Wire management
+  // -------------------------------------------------------------------------
+
   function wire(plugName: string): WireInstance {
     const plugReg = plugs.find((p) => p.name === plugName);
     if (!plugReg) {
@@ -578,24 +815,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       wireId: string,
     ): Promise<Record<string, string>> {
       const raw = await adapter.getWireMetadata(wireId);
-      if (!raw) return {};
-      if (!secret) {
-        try {
-          return JSON.parse(raw) as Record<string, string>;
-        } catch {
-          return {};
-        }
-      }
-      try {
-        const decrypted = await decryptVars(raw, secret);
-        return JSON.parse(decrypted) as Record<string, string>;
-      } catch {
-        try {
-          return JSON.parse(raw) as Record<string, string>;
-        } catch {
-          return {};
-        }
-      }
+      return readEncryptedJson(raw, secret, decryptVars);
     }
 
     async function setWireVars(
@@ -717,6 +937,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       },
     };
   }
+
+  // -------------------------------------------------------------------------
+  // Flow execution
+  // -------------------------------------------------------------------------
 
   async function triggerFlowRun(
     flowId: string,
@@ -922,6 +1146,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Cron scheduling
+  // -------------------------------------------------------------------------
 
   function isFlowOverdue(schedule: string, lastRunAt: Date, now: Date): boolean {
     const elapsedMs = now.getTime() - lastRunAt.getTime();
@@ -1120,6 +1347,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Flow instance (programmatic)
+  // -------------------------------------------------------------------------
+
   async function resolveFlowId(
     flowNameOrId: string,
     options: FlowSelectorOptions = {},
@@ -1147,12 +1378,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     if (matches.length > 1) {
-      const plugs = matches
+      const plugsStr = matches
         .map((flow) => String(flow["plugName"]))
         .filter(Boolean)
         .join(", ");
       throw new Error(
-        `Flow "${flowNameOrId}" is registered on multiple plugs (${plugs}). Pass { plugName } to select one.`,
+        `Flow "${flowNameOrId}" is registered on multiple plugs (${plugsStr}). Pass { plugName } to select one.`,
       );
     }
 
@@ -1187,6 +1418,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Workflow run helpers
+  // -------------------------------------------------------------------------
+
   async function getRunWithWorkflowStatus(
     runId: string,
   ): Promise<Record<string, unknown> | null> {
@@ -1196,9 +1431,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     const workflowRunId =
       typeof run["workflowRunId"] === "string"
         ? run["workflowRunId"]
-        : typeof run["workflow_run_id"] === "string"
-          ? run["workflow_run_id"]
-          : null;
+        : null;
 
     if (!workflowRunId) {
       return { ...run, workflowStatus: null };
@@ -1223,136 +1456,169 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   function getRunWorkflowId(run: Record<string, unknown>): string | null {
     return typeof run["workflowRunId"] === "string"
       ? run["workflowRunId"]
-      : typeof run["workflow_run_id"] === "string"
-        ? run["workflow_run_id"]
-        : null;
+      : null;
   }
 
-  async function handler(request: Request): Promise<Response> {
-    await init();
+  // -------------------------------------------------------------------------
+  // Webhook processing helper (de-duplicated catch/pass loop)
+  // -------------------------------------------------------------------------
 
-    const url = new URL(request.url);
-    const segments = url.pathname
-      .replace(/^\/+|\/+$/g, "")
-      .split("/")
-      .filter(Boolean);
+  async function processWebhookHandler(
+    handler: CatchRegistration | PassRegistration,
+    ctx: {
+      event: Record<string, unknown>;
+      eventType: string;
+      headers: Record<string, string>;
+      dbHandlers: Record<string, unknown>[];
+      wireId: string | null;
+      startWorkflow: Awaited<ReturnType<typeof importWorkflowStart>>;
+      allPlugs: Record<string, unknown>[];
+    },
+  ): Promise<void> {
+    if (
+      Array.isArray(handler.events) &&
+      handler.events.length > 0 &&
+      !handler.events.includes(ctx.eventType)
+    ) {
+      return;
+    }
 
-    const plugsIdx = segments.indexOf("plugs");
-    const flowsIdx = segments.indexOf("flows");
-    const resourcesIdx = segments.indexOf("resources");
-    const cachesIdx = segments.indexOf("caches");
-    const mappingsIdx = segments.indexOf("mappings");
-    const runsIdx = segments.indexOf("runs");
-    const wiresIdx = segments.indexOf("wires");
-    const webhookHandlersIdx = segments.indexOf("webhook-handlers");
-    const webhookEventsIdx = segments.indexOf("webhook-events");
-    const variablesIdx = segments.indexOf("variables");
-    const cronIdx = segments.indexOf("cron");
-    const webhookIdx = segments.indexOf("webhook");
+    const handlerRow = ctx.dbHandlers.find(
+      (h) => h["name"] === handler.name && h["type"] === handler.type,
+    );
+    if (handlerRow?.["enabled"] === false) {
+      return;
+    }
 
-    const debugIdx = segments.indexOf("debug");
-
-    const isInboundWebhook =
-      webhookIdx !== -1 && webhookIdx === segments.length - 2;
-    const isCronRoute = cronIdx !== -1 && cronIdx === segments.length - 1;
-    const isDebugRoute = debugIdx !== -1;
-
-    if (authorize && !isInboundWebhook && !isCronRoute && !isDebugRoute) {
-      let allowed = await isCliRequestAuthorized(request, secret);
-      if (!allowed) {
-        try {
-          allowed = await authorize(request);
-        } catch {
-          allowed = false;
+    let destVars: Record<string, string> = {};
+    if (handler.type === "pass") {
+      const destPlug = ctx.allPlugs.find((dp) => dp["name"] === handler.to);
+      if (destPlug) {
+        const destPlugId = destPlug["id"] as string;
+        const encrypted = await adapter.getEncryptedVariables(destPlugId);
+        if (encrypted && secret) {
+          destVars = await readEncryptedJson(encrypted, secret, decryptVars);
         }
-      }
-      if (!allowed) {
-        return Response.json(
-          {
-            error: "Unauthorized",
-            code: "authorize_rejected",
-            hint:
-              "Management routes (/api/khotan/*) require your `authorize` hook to pass. " +
-              "KHOTAN_SECRET is an encryption key, not an HTTP credential — sending it as a " +
-              "Bearer token will not authenticate the request. To trigger a flow: call " +
-              "khotanData.flow(name).start() from server code (no HTTP/auth needed), or send a " +
-              "credential your authorize hook accepts (e.g. a session cookie or your own token). " +
-              "The khotan CLI authenticates automatically via a dev-only token derived from KHOTAN_SECRET.",
-          },
-          { status: 401 },
-        );
       }
     }
 
-    const limit = Math.min(
-      Math.max(
-        Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20,
-        1,
-      ),
-      100,
-    );
-    const offset = Math.max(
-      Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
-      0,
-    );
-    const search = url.searchParams.get("search")?.trim() || undefined;
-    const wantsMappingPage =
-      url.searchParams.has("limit") ||
-      url.searchParams.has("offset") ||
-      url.searchParams.has("search");
+    const handlerId = handlerRow ? (handlerRow["id"] as string) : null;
+    const { id: khotanRunId } = await adapter.insertRun({
+      webhookHandlerId: handlerId,
+      wireId: ctx.wireId,
+      workflowRunId: null,
+      runType: "webhook",
+      status: "running",
+    });
 
-    if (request.method === "GET") {
-      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
-        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
-        const key = decodeURIComponent(segments[cachesIdx + 2]!);
+    if (handlerId && ctx.wireId) {
+      await adapter.insertWebhookEvent({
+        wireId: ctx.wireId,
+        webhookHandlerId: handlerId,
+        khotanRunId,
+        eventType: ctx.eventType,
+        payload: ctx.event,
+        headers: ctx.headers,
+      });
+    }
 
+    try {
+      const workflowCtx =
+        handler.type === "pass"
+          ? {
+              event: ctx.event,
+              eventType: ctx.eventType,
+              headers: ctx.headers,
+              destVars,
+              khotanRunId,
+              khotanInstanceId: instanceId,
+            }
+          : {
+              event: ctx.event,
+              eventType: ctx.eventType,
+              headers: ctx.headers,
+              khotanRunId,
+              khotanInstanceId: instanceId,
+            };
+
+      const result = await ctx.startWorkflow(handler.workflow, [workflowCtx]);
+      const workflowRunId = getWorkflowRunId(result);
+      if (workflowRunId) {
+        await adapter.updateRun(khotanRunId, {
+          status: "running",
+          workflowRunId,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      await adapter.updateRun(khotanRunId, {
+        status: "failed",
+        completedAt: new Date(),
+        failed: 1,
+        error: message,
+      });
+      throw err;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Declarative route table
+  // -------------------------------------------------------------------------
+
+  const routes: RouteDefinition[] = [
+    // --- GET routes ---
+    {
+      method: "GET",
+      pattern: "caches/:cacheName/:key",
+      auth: "authorize",
+      handler: async ({ params }) => {
         try {
-          const entry = await readCacheEntry(cacheName, key);
+          const entry = await readCacheEntry(params["cacheName"]!, params["key"]!);
           if (!entry) {
             return Response.json({ error: "Cache entry not found" }, { status: 404 });
           }
-
           return Response.json({
-            cache: cacheName,
+            cache: params["cacheName"],
             key: entry.key,
             value: entry.value,
             expiresAt: entry.expiresAt,
           });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Invalid cache request";
+          const message = error instanceof Error ? error.message : "Invalid cache request";
           return Response.json({ error: message }, { status: 400 });
         }
-      }
-
-      if (cronIdx !== -1 && cronIdx === segments.length - 1) {
-        if (!isCronRequestAuthorized(request)) {
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
-        }
+      },
+    },
+    {
+      method: "GET",
+      pattern: "cron",
+      auth: "cron",
+      handler: async () => {
         const result = await dispatchScheduledFlows();
         return Response.json(result);
-      }
-
-      if (debugIdx !== -1 && debugIdx === segments.length - 1) {
-        if (!isDebugEnabled()) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
+      },
+    },
+    {
+      method: "GET",
+      pattern: "debug",
+      auth: "debug",
+      handler: async () => {
         return Response.json({ enabled: true });
-      }
-
-      if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        if (!isDebugEnabled()) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
-        const plugName = segments[debugIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "debug/:plugName",
+      auth: "debug",
+      handler: async ({ params }) => {
+        const plugName = params["plugName"]!;
         const plugReg = plugs.find((p) => p.name === plugName);
         if (!plugReg) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
         const fields = plugReg.vars ?? plugReg.plug.varFields ?? [];
         const hasConfigured = await hasVars(plugName).catch(() => false);
-        const rawEndpoints =
-          plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
+        const rawEndpoints = plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
 
         let varValues: Record<string, string> = {};
         if (hasConfigured || Object.keys(getDefaultVars(plugName)).length > 0) {
@@ -1380,10 +1646,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             values: varValues,
           },
         });
-      }
-
-      if (variablesIdx !== -1 && variablesIdx === segments.length - 2) {
-        const plugName = segments[variablesIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "variables/:plugName",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
@@ -1399,10 +1669,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           }
         }
         return Response.json({ fields, values: masked, configured: hasValues });
-      }
-
-      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
-        const plugName = segments[wiresIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "wires/:plugName",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
@@ -1412,18 +1686,19 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const wireRecord = await wire(plugName).get();
         return Response.json({ wire: wireRecord, configured: true });
-      }
-
-      if (
-        webhookHandlersIdx !== -1 &&
-        webhookHandlersIdx === segments.length - 2
-      ) {
-        const plugName = segments[webhookHandlersIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "webhook-handlers/:plugName",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
-        const allPlugs = await adapter.listPlugs();
-        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        const allPlugsRows = await adapter.listPlugs();
+        const dbPlug = allPlugsRows.find((p) => p["name"] === plugName);
         if (!dbPlug) {
           return Response.json([]);
         }
@@ -1448,8 +1723,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           handlers.map(async (handler) => {
             const handlerId = handler["id"];
             if (typeof handlerId !== "string") return handler;
-            const latestRun =
-              await adapter.getLatestWebhookHandlerRun(handlerId);
+            const latestRun = await adapter.getLatestWebhookHandlerRun(handlerId);
             return {
               ...handler,
               events:
@@ -1462,19 +1736,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           }),
         );
         return Response.json(handlersWithRuns);
-      }
-
-      if (plugsIdx !== -1 && plugsIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "GET",
+      pattern: "plugs",
+      auth: "authorize",
+      handler: async () => {
         const data = await adapter.listPlugs();
         const filtered = data.filter(
           (p) => typeof p["name"] === "string" && plugNames.has(p["name"]),
         );
         const withVarState = await Promise.all(
           filtered.map(async (plug) => {
-            const plugName = plug["name"] as string;
+            const pName = plug["name"] as string;
             let varsConfigured = false;
             try {
-              varsConfigured = await hasVars(plugName);
+              varsConfigured = await hasVars(pName);
             } catch {
               varsConfigured = false;
             }
@@ -1482,10 +1760,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           }),
         );
         return Response.json(withVarState);
-      }
-
-      if (plugsIdx !== -1 && plugsIdx === segments.length - 2) {
-        const plugId = segments[plugsIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "plugs/:plugId",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const plugId = params["plugId"]!;
         const plug = await adapter.getPlug(plugId);
         if (
           !plug ||
@@ -1496,25 +1778,41 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const flows = await adapter.getPlugFlows(plugId);
         return Response.json({ ...plug, flows });
-      }
-
-      if (flowsIdx !== -1 && flowsIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "GET",
+      pattern: "flows",
+      auth: "authorize",
+      handler: async () => {
         const data = await adapter.listFlows();
-        const filtered = data.filter((flow) => isRegisteredFlowRecord(flow));
+        const filtered = data.filter((f) => isRegisteredFlowRecord(f));
         return Response.json(filtered);
-      }
-
-      if (
-        flowsIdx !== -1 &&
-        flowsIdx === segments.length - 3 &&
-        segments[flowsIdx + 2] === "runs"
-      ) {
-        const flowId = segments[flowsIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "flows/:flowId/runs",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const flowId = params["flowId"]!;
         const data = await adapter.listRuns(flowId);
         return Response.json(data);
-      }
-
-      if (runsIdx !== -1 && runsIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "GET",
+      pattern: "runs",
+      auth: "authorize",
+      handler: async ({ url }) => {
+        const limit = Math.min(
+          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          100,
+        );
+        const offset = Math.max(
+          Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
+          0,
+        );
         const page = await adapter.listRunsPage({ limit, offset });
         return Response.json({
           items: page.items,
@@ -1526,14 +1824,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             nextOffset: offset + limit,
           },
         });
-      }
-
-      if (
-        runsIdx !== -1 &&
-        runsIdx === segments.length - 3 &&
-        segments[runsIdx + 2] === "stream"
-      ) {
-        const runId = segments[runsIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "runs/:runId/stream",
+      auth: "authorize",
+      handler: async ({ params, url }) => {
+        const runId = params["runId"]!;
         const run = await adapter.getRun(runId);
         if (!run) {
           return Response.json({ error: "Run not found" }, { status: 404 });
@@ -1553,10 +1851,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const getRun = await importWorkflowGetRun();
         const workflowRun = getRun(workflowRunId);
         const streamOptions: { startIndex?: number; namespace?: string } = {};
-        if (
-          typeof parsedStartIndex === "number" &&
-          Number.isFinite(parsedStartIndex)
-        ) {
+        if (typeof parsedStartIndex === "number" && Number.isFinite(parsedStartIndex)) {
           streamOptions.startIndex = parsedStartIndex;
         }
         if (namespace) streamOptions.namespace = namespace;
@@ -1575,18 +1870,34 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             "Cache-Control": "no-cache, no-transform",
           },
         });
-      }
-
-      if (runsIdx !== -1 && runsIdx === segments.length - 2) {
-        const runId = segments[runsIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "runs/:runId",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const runId = params["runId"]!;
         const run = await getRunWithWorkflowStatus(runId);
         if (!run) {
           return Response.json({ error: "Run not found" }, { status: 404 });
         }
         return Response.json(run);
-      }
-
-      if (webhookEventsIdx !== -1 && webhookEventsIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "GET",
+      pattern: "webhook-events",
+      auth: "authorize",
+      handler: async ({ url }) => {
+        const limit = Math.min(
+          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          100,
+        );
+        const offset = Math.max(
+          Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
+          0,
+        );
         const page = await adapter.listWebhookEventsPage({ limit, offset });
         return Response.json({
           items: page.items,
@@ -1598,29 +1909,44 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             nextOffset: offset + limit,
           },
         });
-      }
-
-      if (resourcesIdx !== -1 && resourcesIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "GET",
+      pattern: "resources",
+      auth: "authorize",
+      handler: async () => {
         const data = await adapter.listResources();
         const filtered = data.filter(
           (r) => typeof r["name"] === "string" && resourceNames.has(r["name"]),
         );
         return Response.json(filtered.map(decorateResourceRecord));
-      }
-
-      if (
-        resourcesIdx !== -1 &&
-        resourcesIdx === segments.length - 3 &&
-        segments[resourcesIdx + 2] === "mappings"
-      ) {
-        const resourceId = segments[resourcesIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "resources/:resourceId/mappings",
+      auth: "authorize",
+      handler: async ({ params, url }) => {
+        const resourceId = params["resourceId"]!;
         const resource = await getRegisteredResourceById(resourceId);
         if (!resource) {
-          return Response.json(
-            { error: "Resource not found" },
-            { status: 404 },
-          );
+          return Response.json({ error: "Resource not found" }, { status: 404 });
         }
+
+        const limit = Math.min(
+          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          100,
+        );
+        const offset = Math.max(
+          Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
+          0,
+        );
+        const search = url.searchParams.get("search")?.trim() || undefined;
+        const wantsMappingPage =
+          url.searchParams.has("limit") ||
+          url.searchParams.has("offset") ||
+          url.searchParams.has("search");
 
         const page = await listMappings({
           resourceId,
@@ -1634,42 +1960,49 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
 
         return Response.json(page);
-      }
-
-      if (resourcesIdx !== -1 && resourcesIdx === segments.length - 2) {
-        const resourceId = segments[resourcesIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "resources/:resourceId",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const resourceId = params["resourceId"]!;
         const resource = await adapter.getResource(resourceId);
         if (
           !resource ||
           typeof resource["name"] !== "string" ||
           !resourceNames.has(resource["name"])
         ) {
-          return Response.json(
-            { error: "Resource not found" },
-            { status: 404 },
-          );
+          return Response.json({ error: "Resource not found" }, { status: 404 });
         }
         const flows = await adapter.getResourceFlows(resourceId);
         return Response.json({ ...decorateResourceRecord(resource), flows });
-      }
-
-      if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
-        const mappingId = segments[mappingsIdx + 1]!;
+      },
+    },
+    {
+      method: "GET",
+      pattern: "mappings/:mappingId",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const mappingId = params["mappingId"]!;
         const mapping = await adapter.getMapping(mappingId);
         if (!mapping) {
           return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
         return Response.json(mapping);
-      }
-    }
+      },
+    },
 
-    if (request.method === "POST") {
-      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
-        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
-        const key = decodeURIComponent(segments[cachesIdx + 2]!);
-        const body = (await request.json().catch(() => ({}))) as {
-          value?: unknown;
-        };
+    // --- POST routes ---
+    {
+      method: "POST",
+      pattern: "caches/:cacheName/:key",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const cacheName = params["cacheName"]!;
+        const key = params["key"]!;
+        const body = (await request.json().catch(() => ({}))) as { value?: unknown };
 
         if (!("value" in body)) {
           return Response.json({ error: "Cache writes require a value" }, { status: 400 });
@@ -1686,17 +2019,16 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             expiresAt: entry?.expiresAt ?? null,
           });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Invalid cache payload";
+          const message = error instanceof Error ? error.message : "Invalid cache payload";
           return Response.json({ error: message }, { status: 400 });
         }
-      }
-
-      if (cronIdx !== -1 && cronIdx === segments.length - 1) {
-        if (!isCronRequestAuthorized(request)) {
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+      },
+    },
+    {
+      method: "POST",
+      pattern: "cron",
+      auth: "cron",
+      handler: async ({ request }) => {
         let body: Record<string, unknown> = {};
         try {
           body = (await request.json()) as Record<string, unknown>;
@@ -1704,14 +2036,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           body = {};
         }
 
-        const runType =
-          typeof body["runType"] === "string" ? body["runType"] : "full";
+        const runType = typeof body["runType"] === "string" ? body["runType"] : "full";
         const result = await dispatchScheduledFlows({ runType });
         return Response.json(result);
-      }
-
-      if (webhookIdx !== -1 && webhookIdx === segments.length - 2) {
-        const plugName = segments[webhookIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "webhook/:plugName",
+      auth: "webhook",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
         const plugReg = plugs.find((p) => p.name === plugName);
         if (!plugReg) {
           return Response.json(
@@ -1730,8 +2065,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         const rawBody = await request.text();
 
-        const allPlugs = await adapter.listPlugs();
-        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        const allPlugsRows = await adapter.listPlugs();
+        const dbPlug = allPlugsRows.find((p) => p["name"] === plugName);
         if (!dbPlug) {
           return Response.json(
             { error: `Plug "${plugName}" not found in database` },
@@ -1745,26 +2080,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         let wireVars: Record<string, string> = {};
         if (wireId) {
           const raw = await adapter.getWireMetadata(wireId);
-          if (raw) {
-            if (secret) {
-              try {
-                const decrypted = await decryptVars(raw, secret);
-                wireVars = JSON.parse(decrypted) as Record<string, string>;
-              } catch {
-                try {
-                  wireVars = JSON.parse(raw) as Record<string, string>;
-                } catch {
-                  /* empty */
-                }
-              }
-            } else {
-              try {
-                wireVars = JSON.parse(raw) as Record<string, string>;
-              } catch {
-                /* empty */
-              }
-            }
-          }
+          wireVars = await readEncryptedJson(raw, secret, decryptVars);
         }
 
         const headers: Record<string, string> = {};
@@ -1794,191 +2110,41 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           typeof event["type"] === "string" ? event["type"] : "unknown";
 
         const webhookHandlers = getWebhookHandlersForPlug(plugReg);
-        const catches = webhookHandlers.filter(
-          (handler): handler is CatchRegistration => handler.type === "catch",
-        );
-        const passes = webhookHandlers.filter(
-          (handler): handler is PassRegistration => handler.type === "pass",
-        );
 
-        void Promise.resolve().then(async () => {
+        const processingWork = (async () => {
           try {
             const startWorkflow = await importWorkflowStart();
-
             const dbHandlers = wireId
               ? await adapter.listWebhookHandlers(wireId)
               : [];
 
-            for (const c of catches) {
-              if (
-                Array.isArray(c.events) &&
-                c.events.length > 0 &&
-                !c.events.includes(eventType)
-              ) {
-                continue;
-              }
-              const handlerRow = dbHandlers.find(
-                (h) => h["name"] === c.name && h["type"] === "catch",
-              );
-              if (handlerRow?.["enabled"] === false) {
-                continue;
-              }
-              const handlerId = handlerRow
-                ? (handlerRow["id"] as string)
-                : null;
-              const { id: khotanRunId } = await adapter.insertRun({
-                webhookHandlerId: handlerId,
+            for (const handler of webhookHandlers) {
+              await processWebhookHandler(handler, {
+                event,
+                eventType,
+                headers,
+                dbHandlers,
                 wireId,
-                workflowRunId: null,
-                runType: "webhook",
-                status: "running",
+                startWorkflow,
+                allPlugs: allPlugsRows,
               });
-              if (handlerId && wireId) {
-                await adapter.insertWebhookEvent({
-                  wireId,
-                  webhookHandlerId: handlerId,
-                  khotanRunId,
-                  eventType,
-                  payload: event,
-                  headers,
-                });
-              }
-              try {
-                const result = await startWorkflow(c.workflow, [
-                  {
-                    event,
-                    eventType,
-                    headers,
-                    khotanRunId,
-                    khotanInstanceId: instanceId,
-                  },
-                ]);
-                const workflowRunId =
-                  result && typeof result === "object"
-                    ? "runId" in result
-                      ? String(result.runId)
-                      : "id" in result
-                        ? String(result.id)
-                        : null
-                    : null;
-                if (workflowRunId) {
-                  await adapter.updateRun(khotanRunId, {
-                    status: "running",
-                    workflowRunId,
-                  });
-                }
-              } catch (err) {
-                const message =
-                  err instanceof Error ? err.message : "Unknown error";
-                await adapter.updateRun(khotanRunId, {
-                  status: "failed",
-                  completedAt: new Date(),
-                  failed: 1,
-                  error: message,
-                });
-                throw err;
-              }
-            }
-
-            for (const p of passes) {
-              if (
-                Array.isArray(p.events) &&
-                p.events.length > 0 &&
-                !p.events.includes(eventType)
-              ) {
-                continue;
-              }
-              const handlerRow = dbHandlers.find(
-                (h) => h["name"] === p.name && h["type"] === "pass",
-              );
-              if (handlerRow?.["enabled"] === false) {
-                continue;
-              }
-              let destVars: Record<string, string> = {};
-              const destPlug = allPlugs.find((dp) => dp["name"] === p.to);
-              if (destPlug) {
-                const destPlugId = destPlug["id"] as string;
-                const encrypted =
-                  await adapter.getEncryptedVariables(destPlugId);
-                if (encrypted && secret) {
-                  try {
-                    const json = await decryptVars(encrypted, secret);
-                    destVars = JSON.parse(json) as Record<string, string>;
-                  } catch {
-                    /* empty */
-                  }
-                }
-              }
-              const handlerId = handlerRow
-                ? (handlerRow["id"] as string)
-                : null;
-              const { id: khotanRunId } = await adapter.insertRun({
-                webhookHandlerId: handlerId,
-                wireId,
-                workflowRunId: null,
-                runType: "webhook",
-                status: "running",
-              });
-              if (handlerId && wireId) {
-                await adapter.insertWebhookEvent({
-                  wireId,
-                  webhookHandlerId: handlerId,
-                  khotanRunId,
-                  eventType,
-                  payload: event,
-                  headers,
-                });
-              }
-              try {
-                const result = await startWorkflow(p.workflow, [
-                  {
-                    event,
-                    eventType,
-                    headers,
-                    destVars,
-                    khotanRunId,
-                    khotanInstanceId: instanceId,
-                  },
-                ]);
-                const workflowRunId =
-                  result && typeof result === "object"
-                    ? "runId" in result
-                      ? String(result.runId)
-                      : "id" in result
-                        ? String(result.id)
-                        : null
-                    : null;
-                if (workflowRunId) {
-                  await adapter.updateRun(khotanRunId, {
-                    status: "running",
-                    workflowRunId,
-                  });
-                }
-              } catch (err) {
-                const message =
-                  err instanceof Error ? err.message : "Unknown error";
-                await adapter.updateRun(khotanRunId, {
-                  status: "failed",
-                  completedAt: new Date(),
-                  failed: 1,
-                  error: message,
-                });
-                throw err;
-              }
             }
           } catch (err) {
             kd("webhook", `${plugName}: workflow start failed:`, err);
           }
-        });
+        })();
+
+        getWaitUntil()(processingWork);
 
         return Response.json({ received: true }, { status: 202 });
-      }
-
-      if (debugIdx !== -1 && debugIdx === segments.length - 2) {
-        if (!isDebugEnabled()) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
-        const plugName = segments[debugIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "debug/:plugName",
+      auth: "debug",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
         const plugReg = plugs.find((p) => p.name === plugName);
         if (!plugReg) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
@@ -2078,10 +2244,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             error,
           });
         }
-      }
-
-      if (variablesIdx !== -1 && variablesIdx === segments.length - 2) {
-        const plugName = segments[variablesIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "variables/:plugName",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
@@ -2120,18 +2290,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           await setVars(plugName, vars);
           return Response.json({ ok: true });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
+          const message = error instanceof Error ? error.message : "Unknown error";
           return Response.json({ error: message }, { status: 500 });
         }
-      }
-
-      if (
-        runsIdx !== -1 &&
-        runsIdx === segments.length - 3 &&
-        segments[runsIdx + 2] === "cancel"
-      ) {
-        const runId = segments[runsIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "runs/:runId/cancel",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const runId = params["runId"]!;
         const run = await adapter.getRun(runId);
         if (!run) {
           return Response.json({ error: "Run not found" }, { status: 404 });
@@ -2169,14 +2338,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           status: "cancelled",
           error: "Cancelled",
         });
-      }
-
-      if (
-        runsIdx !== -1 &&
-        runsIdx === segments.length - 3 &&
-        segments[runsIdx + 2] === "retry"
-      ) {
-        const runId = segments[runsIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "runs/:runId/retry",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const runId = params["runId"]!;
         const run = await adapter.getRun(runId);
         if (!run) {
           return Response.json({ error: "Run not found" }, { status: 404 });
@@ -2188,23 +2357,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             { status: 400 },
           );
         }
-        const runType =
-          typeof run["runType"] === "string" ? run["runType"] : "full";
+        const runType = typeof run["runType"] === "string" ? run["runType"] : "full";
         return triggerFlowRun(flowId, { runType });
-      }
-
-      if (
-        flowsIdx !== -1 &&
-        flowsIdx === segments.length - 3 &&
-        segments[flowsIdx + 2] === "runs"
-      ) {
-        const flowId = segments[flowsIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "flows/:flowId/runs",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const flowId = params["flowId"]!;
         const body = await request.json().catch(() => ({}));
         return triggerFlowRun(flowId, body);
-      }
-
-      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
-        const plugName = segments[wiresIdx + 1]!;
+      },
+    },
+    {
+      method: "POST",
+      pattern: "wires/:plugName",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
@@ -2219,31 +2391,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const record = await wire(plugName).create(body.callbackUrl);
           return Response.json({ wire: record }, { status: 201 });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
+          const message = error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: create failed:`, message);
           if (error && typeof error === "object" && "body" in error) {
             kd("wire", `${plugName}: response body:`, error.body);
           }
           return Response.json({ error: message }, { status: 500 });
         }
-      }
-
-      if (
-        mappingsIdx !== -1 &&
-        mappingsIdx === segments.length - 2 &&
-        segments[mappingsIdx + 1] === "lookup"
-      ) {
+      },
+    },
+    {
+      method: "POST",
+      pattern: "mappings/lookup",
+      auth: "authorize",
+      handler: async ({ request }) => {
         const body = (await request.json()) as
-          | {
-              resourceId: string;
-              connectValue: string | string[];
-            }
-          | {
-              resourceId: string;
-              plugName: string;
-              ref: string;
-            };
+          | { resourceId: string; connectValue: string | string[] }
+          | { resourceId: string; plugName: string; ref: string };
         if (
           !body ||
           typeof body !== "object" ||
@@ -2268,8 +2432,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         if (!hasConnectValue && !hasPlugRef) {
           return Response.json(
             {
-              error:
-                "Lookup requires either connectValue or plugName with ref",
+              error: "Lookup requires either connectValue or plugName with ref",
             },
             { status: 400 },
           );
@@ -2297,9 +2460,13 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
         return Response.json(mapping);
-      }
-
-      if (mappingsIdx !== -1 && mappingsIdx === segments.length - 1) {
+      },
+    },
+    {
+      method: "POST",
+      pattern: "mappings",
+      auth: "authorize",
+      handler: async ({ request }) => {
         const body = (await request.json()) as {
           resourceId: string;
           connectValue: string | string[];
@@ -2318,12 +2485,16 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             error instanceof Error ? error.message : "Invalid mapping payload";
           return Response.json({ error: message }, { status: 400 });
         }
-      }
-    }
+      },
+    },
 
-    if (request.method === "PATCH") {
-      if (plugsIdx !== -1 && plugsIdx === segments.length - 2) {
-        const plugId = segments[plugsIdx + 1]!;
+    // --- PATCH routes ---
+    {
+      method: "PATCH",
+      pattern: "plugs/:plugId",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugId = params["plugId"]!;
         const plug = await adapter.getPlug(plugId);
         if (
           !plug ||
@@ -2338,33 +2509,42 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const updated = await adapter.getPlug(plugId);
         return Response.json(updated);
-      }
-
-      if (flowsIdx !== -1 && flowsIdx === segments.length - 2) {
-        const flowId = segments[flowsIdx + 1]!;
+      },
+    },
+    {
+      method: "PATCH",
+      pattern: "flows/:flowId",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const flowId = params["flowId"]!;
         const body = (await request.json()) as { enabled?: boolean };
         if (typeof body.enabled === "boolean") {
           await adapter.toggleFlowEnabled(flowId, body.enabled);
         }
         return Response.json({ id: flowId, ...body });
-      }
-
-      if (
-        webhookHandlersIdx !== -1 &&
-        webhookHandlersIdx === segments.length - 2
-      ) {
-        const handlerId = segments[webhookHandlersIdx + 1]!;
+      },
+    },
+    {
+      method: "PATCH",
+      pattern: "webhook-handlers/:handlerId",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const handlerId = params["handlerId"]!;
         const body = (await request.json()) as { enabled?: boolean };
         if (typeof body.enabled === "boolean") {
           await adapter.toggleWebhookHandlerEnabled(handlerId, body.enabled);
         }
         return Response.json({ id: handlerId, ...body });
-      }
-    }
+      },
+    },
 
-    if (request.method === "PUT") {
-      if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
-        const mappingId = segments[mappingsIdx + 1]!;
+    // --- PUT routes ---
+    {
+      method: "PUT",
+      pattern: "mappings/:mappingId",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const mappingId = params["mappingId"]!;
         const body = (await request.json()) as {
           resourceId: string;
           connectValue: string | string[];
@@ -2382,35 +2562,43 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             { status: message.includes("not found") ? 404 : 400 },
           );
         }
-      }
-    }
+      },
+    },
 
-    if (request.method === "DELETE") {
-      if (cachesIdx !== -1 && cachesIdx === segments.length - 3) {
-        const cacheName = decodeURIComponent(segments[cachesIdx + 1]!);
-        const key = decodeURIComponent(segments[cachesIdx + 2]!);
-
+    // --- DELETE routes ---
+    {
+      method: "DELETE",
+      pattern: "caches/:cacheName/:key",
+      auth: "authorize",
+      handler: async ({ params }) => {
         try {
-          await createCacheInstance(cacheName).delete(key);
+          await createCacheInstance(params["cacheName"]!).delete(params["key"]!);
           return new Response(null, { status: 204 });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Invalid cache request";
+          const message = error instanceof Error ? error.message : "Invalid cache request";
           return Response.json({ error: message }, { status: 400 });
         }
-      }
-
-      if (variablesIdx !== -1 && variablesIdx === segments.length - 2) {
-        const plugName = segments[variablesIdx + 1]!;
+      },
+    },
+    {
+      method: "DELETE",
+      pattern: "variables/:plugName",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
         await clearVars(plugName);
         return new Response(null, { status: 204 });
-      }
-
-      if (wiresIdx !== -1 && wiresIdx === segments.length - 2) {
-        const plugName = segments[wiresIdx + 1]!;
+      },
+    },
+    {
+      method: "DELETE",
+      pattern: "wires/:plugName",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
         if (!plugNames.has(plugName)) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
@@ -2425,152 +2613,127 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           await wire(plugName).delete(body.wireId);
           return new Response(null, { status: 204 });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
+          const message = error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
           return Response.json({ error: message }, { status: 500 });
         }
-      }
-
-      if (mappingsIdx !== -1 && mappingsIdx === segments.length - 2) {
-        const mappingId = segments[mappingsIdx + 1]!;
+      },
+    },
+    {
+      method: "DELETE",
+      pattern: "mappings/:mappingId",
+      auth: "authorize",
+      handler: async ({ params }) => {
+        const mappingId = params["mappingId"]!;
         const existing = await adapter.getMapping(mappingId);
         if (!existing) {
           return Response.json({ error: "Mapping not found" }, { status: 404 });
         }
         await adapter.deleteMapping(mappingId);
         return new Response(null, { status: 204 });
-      }
-    }
+      },
+    },
+  ];
 
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
+  // -------------------------------------------------------------------------
+  // Request handler — matches against the route table
+  // -------------------------------------------------------------------------
 
-  const secret = config.secret ?? process.env["KHOTAN_SECRET"] ?? "";
-
-  async function resolvePlugId(plugName: string): Promise<string> {
+  async function handler(request: Request): Promise<Response> {
     await init();
-    const allPlugs = await adapter.listPlugs();
-    const dbPlug = allPlugs.find((p) => p["name"] === plugName);
-    if (!dbPlug) {
-      throw new Error(`Plug "${plugName}" not found in database`);
-    }
-    return dbPlug["id"] as string;
-  }
 
-  function getDefaultVars(plugName: string): Record<string, string> {
-    const defaults: Record<string, string> = {};
-    for (const field of getVarFields(plugName)) {
-      if (field.defaultValue !== undefined) {
-        defaults[field.key] = field.defaultValue;
+    const url = new URL(request.url);
+    const fullSegments = url.pathname
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter(Boolean);
+
+    // Strip the base prefix (everything before the khotan-managed segment).
+    // The route patterns start from the first khotan-managed keyword.
+    // Find where khotan routes begin by looking for a known first-segment keyword.
+    const knownFirstSegments = new Set([
+      "plugs", "flows", "resources", "caches", "mappings", "runs",
+      "wires", "webhook-handlers", "webhook-events", "variables",
+      "cron", "webhook", "debug",
+    ]);
+
+    let routeStartIdx = -1;
+    for (let i = 0; i < fullSegments.length; i++) {
+      if (knownFirstSegments.has(fullSegments[i]!)) {
+        routeStartIdx = i;
+        break;
       }
     }
-    return defaults;
-  }
 
-  async function getStoredVarsByPlugId(
-    plugId: string,
-  ): Promise<Record<string, string>> {
-    if (!secret) {
-      throw new Error("KHOTAN_SECRET is required for var operations");
-    }
-    const encrypted = await adapter.getEncryptedVariables(plugId);
-    if (!encrypted) return {};
-    const json = await decryptVars(encrypted, secret);
-    return JSON.parse(json) as Record<string, string>;
-  }
-
-  async function setVarsByPlugId(
-    plugId: string,
-    vars: Record<string, string>,
-  ): Promise<void> {
-    if (!secret) {
-      throw new Error("KHOTAN_SECRET is required for var operations");
-    }
-    const json = JSON.stringify(vars);
-    const encrypted = await encryptVars(json, secret);
-    await adapter.setEncryptedVariables(plugId, encrypted);
-  }
-
-  async function seedDefaultVarsForPlug(
-    plugId: string,
-    plugName: string,
-  ): Promise<void> {
-    const defaults = getDefaultVars(plugName);
-    if (!secret || Object.keys(defaults).length === 0) {
-      return;
+    if (routeStartIdx === -1) {
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
-    const storedVars: Record<string, string> = await getStoredVarsByPlugId(
-      plugId,
-    ).catch(() => ({}));
-    const seededVars = { ...defaults, ...storedVars };
-    const hasChanges = Object.keys(seededVars).some(
-      (key) => seededVars[key] !== storedVars[key],
-    );
+    const pathSegments = fullSegments.slice(routeStartIdx);
+    const match = matchRoute(request.method, pathSegments, routes);
 
-    if (hasChanges) {
-      await setVarsByPlugId(plugId, seededVars);
+    if (!match) {
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
-  }
 
-  async function getVars(plugName: string): Promise<Record<string, string>> {
-    const plugId = await resolvePlugId(plugName);
-    const defaults = getDefaultVars(plugName);
-    const stored = await getStoredVarsByPlugId(plugId);
-    return { ...defaults, ...stored };
-  }
-
-  async function setVars(
-    plugName: string,
-    vars: Record<string, string>,
-  ): Promise<void> {
-    const plugId = await resolvePlugId(plugName);
-    await setVarsByPlugId(plugId, vars);
-  }
-
-  async function clearVars(plugName: string): Promise<void> {
-    const plugId = await resolvePlugId(plugName);
-    await adapter.clearEncryptedVariables(plugId);
-  }
-
-  async function hasVars(plugName: string): Promise<boolean> {
-    const plugId = await resolvePlugId(plugName);
-    const encrypted = await adapter.getEncryptedVariables(plugId);
-    return encrypted !== null && encrypted !== "";
-  }
-
-  function getVarFields(plugName: string): readonly VarField[] {
-    const plugReg = plugs.find((p) => p.name === plugName);
-    if (!plugReg) {
-      throw new Error(`Plug "${plugName}" not registered`);
-    }
-    return plugReg.vars ?? plugReg.plug.varFields ?? [];
-  }
-
-  function maskVars(
-    plugName: string,
-    vars: Record<string, string>,
-  ): Record<string, string> {
-    const fields = getVarFields(plugName);
-    return Object.fromEntries(
-      Object.entries(vars).map(([key, value]) => {
-        const field = fields.find((f) => f.key === key);
-        if (field?.secret) {
-          return [key, value ? "••••••••" : ""];
+    // Auth gate
+    const { route, params } = match;
+    switch (route.auth) {
+      case "cron":
+        if (!isCronRequestAuthorized(request)) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
         }
-        return [key, value];
-      }),
-    );
+        break;
+
+      case "debug":
+        if (!isDebugEnabled()) {
+          return Response.json({ error: "Not found" }, { status: 404 });
+        }
+        break;
+
+      case "webhook":
+        // Webhooks self-verify via onVerify — no management auth needed
+        break;
+
+      case "authorize":
+        if (authorizeHook) {
+          let allowed = await isCliRequestAuthorized(request, secret);
+          if (!allowed) {
+            try {
+              allowed = await authorizeHook(request);
+            } catch {
+              allowed = false;
+            }
+          }
+          if (!allowed) {
+            return Response.json(
+              {
+                error: "Unauthorized",
+                code: "authorize_rejected",
+                hint:
+                  "Management routes (/api/khotan/*) require your `authorize` hook to pass. " +
+                  "KHOTAN_SECRET is an encryption key, not an HTTP credential — sending it as a " +
+                  "Bearer token will not authenticate the request. To trigger a flow: call " +
+                  "khotanData.flow(name).start() from server code (no HTTP/auth needed), or send a " +
+                  "credential your authorize hook accepts (e.g. a session cookie or your own token). " +
+                  "The khotan CLI authenticates automatically via a dev-only token derived from KHOTAN_SECRET.",
+              },
+              { status: 401 },
+            );
+          }
+        }
+        break;
+
+      case "none":
+        break;
+    }
+
+    return route.handler({ request, params, url, searchParams: url.searchParams });
   }
 
-  function getPlug(plugName: string): PlugRegistration["plug"] {
-    const plugReg = plugs.find((p) => p.name === plugName);
-    if (!plugReg) {
-      throw new Error(`Plug "${plugName}" not registered`);
-    }
-    return plugReg.plug;
-  }
+  // -------------------------------------------------------------------------
+  // Runtime registry
+  // -------------------------------------------------------------------------
 
   khotanRuntimeRegistry.set(instanceId, {
     cache: createCacheInstance,
@@ -2580,6 +2743,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     updateMapping,
     deleteMapping,
   });
+
+  function dispose(): void {
+    khotanRuntimeRegistry.delete(instanceId);
+  }
 
   return {
     handler,
@@ -2598,6 +2765,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     hasVars,
     getVarFields,
     getPlug,
+    dispose,
   };
 }
 

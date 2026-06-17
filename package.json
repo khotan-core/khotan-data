@@ -1,6 +1,6 @@
 {
   "name": "khotan-data",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Data sync, ETL, and webhook primitives for Next.js + Drizzle + Postgres. shadcn for data plumbing.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -91,6 +91,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
+    "test:integration": "vitest run --config vitest.integration.ts",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "changeset": "changeset",

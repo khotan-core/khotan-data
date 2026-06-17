@@ -633,10 +633,15 @@ export interface KhotanConfig {
   /**
    * Gate every management route (plugs, variables, flows, runs, wires,
    * mappings, caches, resources, webhook handlers/events) behind a custom
-   * authorization check. Strongly recommended for any deployed app — without
-   * it the management API is publicly accessible. See {@link KhotanAuthorize}.
+   * authorization check.
+   *
+   * Pass a function to gate requests behind your auth layer (e.g. better-auth),
+   * or pass `false` to explicitly opt into publicly accessible management
+   * routes. Omitting this field in production (`NODE_ENV=production`) will
+   * throw — you must be explicit about your security posture. In development
+   * the field defaults to `false` with a warning. See {@link KhotanAuthorize}.
    */
-  authorize?: KhotanAuthorize;
+  authorize?: KhotanAuthorize | false;
 }
 
 export type KhotanHandler = (request: Request) => Promise<Response>;
@@ -716,6 +721,12 @@ export interface KhotanInstance {
   hasVars(plugName: string): Promise<boolean>;
   getVarFields(plugName: string): readonly VarField[];
   getPlug(plugName: string): PlugRegistration["plug"];
+  /**
+   * Remove this instance from the module-level runtime registry. Call when
+   * tearing down in tests, HMR, or multi-instance scenarios to prevent
+   * unbounded growth of the registry.
+   */
+  dispose(): void;
 }
 
 // ---------------------------------------------------------------------------
