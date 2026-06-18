@@ -125,10 +125,12 @@ This is the only commit that uses the `release` type.
 
 ### Step 7: Git tag
 
-Tag the release commit:
+Tag the release commit. Use an **annotated** tag so `git push --follow-tags`
+(Step 10) pushes it automatically — `--follow-tags` ignores lightweight tags:
 
 ```bash
-git tag "v$(node -p "require('./package.json').version")"
+VERSION="v$(node -p "require('./package.json').version")"
+git tag -a "$VERSION" -m "$VERSION"
 ```
 
 ### Step 8: Run publish dry-run
