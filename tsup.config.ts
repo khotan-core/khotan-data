@@ -90,10 +90,6 @@ export default defineConfig([
         path.resolve(templatesDir, "webhook-events-table.tsx"),
       );
       copyFileSync(
-        path.resolve("src", "cli", "templates", "khotan-route.ts"),
-        path.resolve(templatesDir, "khotan-route.ts"),
-      );
-      copyFileSync(
         path.resolve("src", "cli", "templates", "khotan-config.ts"),
         path.resolve(templatesDir, "khotan-config.ts"),
       );

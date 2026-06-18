@@ -14,31 +14,9 @@ import {
 } from "../deps.js";
 import { getComponent, getTemplateContent, isMultiFile } from "../registry.js";
 import { installSkills, type SkillDefinition } from "../agent-detect.js";
+import { resolveOutputDir } from "../cli-api.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function resolveOutputDir(projectRoot: string): string {
-  // Respect an existing config's outputDir so re-running init (or running it
-  // after a custom setup) does not scaffold a second khotan.ts at the default
-  // path. Mirrors how the `add` command resolves the output directory.
-  const configPath = path.join(projectRoot, "khotan.config.ts");
-  if (fs.existsSync(configPath)) {
-    try {
-      const content = fs.readFileSync(configPath, "utf-8");
-      const match = /outputDir:\s*["']([^"']+)["']/.exec(content);
-      if (match?.[1]) return match[1];
-    } catch {
-      // Fall through to layout-based default.
-    }
-  }
-  if (fs.existsSync(path.join(projectRoot, "src", "app"))) {
-    return "src/khotan";
-  }
-  if (fs.existsSync(path.join(projectRoot, "app"))) {
-    return "khotan";
-  }
-  return "src/khotan";
-}
 
 function hasSrcLayout(cwd: string): boolean {
   return fs.existsSync(path.join(cwd, "src", "app"));
@@ -80,8 +58,6 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
   }
 
   // Scaffold route.ts (API catch-all) — never overwrite.
-  // The import path is derived from outputDir so it works regardless of project
-  // layout (src/khotan, khotan, lib/khotan, etc.).
   const routeDir = path.resolve(
     cwd,
     hasSrcLayout(cwd)
@@ -118,9 +94,6 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
 }
 
 // Proxy/middleware files that can intercept requests before they reach a route.
-// Vercel Workflow callbacks travel over `/.well-known/workflow/*`; if a matcher
-// captures those paths the runtime silently fails. We warn (rather than patch)
-// because matcher edits are project-specific and risky to rewrite blindly.
 const MIDDLEWARE_CANDIDATES = [
   "middleware.ts",
   "middleware.js",
@@ -152,7 +125,6 @@ export function warnAboutWorkflowProxy(cwd: string): boolean {
     return false;
   }
 
-  // If the file already excludes the workflow / .well-known paths, stay quiet.
   if (/\.well-known|workflow/i.test(contents)) {
     return false;
   }
@@ -169,7 +141,10 @@ export function warnAboutWorkflowProxy(cwd: string): boolean {
   return true;
 }
 
-async function runFullSetup(cwd: string): Promise<StepResult[]> {
+async function runFullSetup(
+  cwd: string,
+  opts: { yes?: boolean },
+): Promise<StepResult[]> {
   const results: StepResult[] = [];
   const pm = detectPackageManager(cwd);
   console.log(`Detected package manager: ${pm.name}\n`);
@@ -293,8 +268,8 @@ async function runFullSetup(cwd: string): Promise<StepResult[]> {
 
   warnAboutWorkflowProxy(cwd);
 
-  // Step 6: Install agent skills
-  const skillCount = scaffoldAgentSkills(cwd);
+  // Step 6: Install agent skills (--yes makes this non-interactive)
+  const skillCount = scaffoldAgentSkills(cwd, opts.yes ?? false);
   if (skillCount > 0) {
     console.log(`✓ Installed ${String(skillCount)} agent skills`);
     results.push({ name: "Install agent skills", status: "success" });
@@ -355,7 +330,7 @@ const SKILL_COMPONENTS = [
   "agent-skill",
 ];
 
-function scaffoldAgentSkills(cwd: string): number {
+function scaffoldAgentSkills(cwd: string, autoYes: boolean = false): number {
   const skills: SkillDefinition[] = [];
 
   for (const name of SKILL_COMPONENTS) {
@@ -372,7 +347,7 @@ function scaffoldAgentSkills(cwd: string): number {
   if (skills.length === 0) return 0;
 
   const agentsTemplatePath = path.resolve(__dirname, "templates", "agents.md");
-  const result = installSkills(cwd, skills, agentsTemplatePath);
+  const result = installSkills(cwd, skills, agentsTemplatePath, { autoYes });
 
   if (result.created.length > 0) {
     console.log(`  Agents detected: ${result.agents.join(", ")}`);
@@ -390,13 +365,13 @@ export const initCommand = new Command("init")
     "--full",
     "Full project setup: install drizzle, shadcn, and configure everything",
   )
-  .option("-y, --yes", "Auto-accept all prompts")
+  .option("-y, --yes", "Auto-accept all prompts (non-interactive mode)")
   .action(async (opts: { full?: boolean; yes?: boolean }) => {
     const cwd = process.cwd();
 
     if (opts.full) {
       console.log("Running full khotan setup...\n");
-      const results = await runFullSetup(cwd);
+      const results = await runFullSetup(cwd, opts);
 
       const succeeded = results.filter((r) => r.status === "success");
       const skipped = results.filter((r) => r.status === "skipped");
@@ -417,6 +392,7 @@ export const initCommand = new Command("init")
         console.log(
           `\n${String(failed.length)} step(s) failed. You may need to run them manually.`,
         );
+        process.exit(1);
       } else {
         console.log("\nAll done! Your project is ready for khotan.");
       }
@@ -440,19 +416,19 @@ export const initCommand = new Command("init")
 
     warnAboutWorkflowProxy(cwd);
 
-    // Offer to install agent skills
-    let installSkills = opts.yes ?? false;
-    if (!installSkills && process.stdin.isTTY) {
+    // Offer to install agent skills — --yes makes this non-interactive
+    let shouldInstallSkills = opts.yes ?? false;
+    if (!shouldInstallSkills && process.stdin.isTTY) {
       const response = await prompts({
         type: "confirm",
         name: "install",
         message: "Install agent skills for AI-assisted development? (Y/n)",
         initial: true,
       });
-      installSkills = response.install === true;
+      shouldInstallSkills = response.install === true;
     }
-    if (installSkills) {
-      const count = scaffoldAgentSkills(cwd);
+    if (shouldInstallSkills) {
+      const count = scaffoldAgentSkills(cwd, opts.yes ?? false);
       if (count > 0) {
         console.log(`✓ Installed ${String(count)} agent skills`);
       }

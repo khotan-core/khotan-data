@@ -1,5 +1,23 @@
 # khotan-data
 
+## 0.5.0
+
+### Minor Changes
+
+- Harden CLI, templates, and published primitives (Group 3)
+  - Extract shared CLI utilities into `cli-api.ts` (kill copy-paste across probe/wire/flows/mappings/vars)
+  - Unify `outputDir` resolution with a single `resolveOutputDir()` used everywhere
+  - Make `generate` non-destructive (requires `--force` to overwrite)
+  - Fix `--yes`/`--force` semantics: `--yes` = non-interactive, `--force` = overwrite
+  - Redact secrets in `probe vars` output by default (add `--show-secrets`)
+  - Fix corrupted plug template header and remove dead `khotan-route.ts`
+  - Correct probe connectivity checks per operation (`/plugs` for list, `/debug` for debug)
+  - Agent-skill installer: version stamps, refresh-on-upgrade, multi-agent link rewriting
+  - Pipeline builder: `run()` rejects on error by default, `step:start` once per step, cancellation support with `result.cancelled` flag
+  - Safer regex mutations in next-config and drizzle-detect (non-greedy, verify match before write)
+  - `isScaffolded` requires all files present for multi-file components
+  - Docs alignment (README + skill templates)
+
 ## 0.4.1
 
 ### Patch Changes

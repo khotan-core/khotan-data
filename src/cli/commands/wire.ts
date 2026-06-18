@@ -1,84 +1,12 @@
 import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
-import { cliFetch, unauthorizedHint } from "../cli-auth.js";
-
-function output(obj: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
-}
-
-function fail(error: string, hint: string): never {
-  output({ ok: false, error, hint });
-  process.exit(1);
-}
-
-function parseEnvFile(filePath: string): Record<string, string> {
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const values: Record<string, string> = {};
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const match = /^([A-Z0-9_]+)\s*=\s*["']?(.*?)["']?$/.exec(trimmed);
-      if (match) values[match[1]!] = match[2]!;
-    }
-    return values;
-  } catch {
-    return {};
-  }
-}
-
-function parsePortFromEnvFile(filePath: string): number | null {
-  const env = parseEnvFile(filePath);
-  const raw = env["PORT"];
-  if (!raw) return null;
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function resolvePort(portFlag: string | undefined): number {
-  if (portFlag) return parseInt(portFlag, 10);
-  const cwd = process.cwd();
-  return (
-    parsePortFromEnvFile(path.join(cwd, ".env.local")) ??
-    parsePortFromEnvFile(path.join(cwd, ".env")) ??
-    3000
-  );
-}
-
-function resolveWebhookOrigin(originFlag: string | undefined): string {
-  if (originFlag) return originFlag.replace(/\/$/, "");
-  const cwd = process.cwd();
-  const env = {
-    ...parseEnvFile(path.join(cwd, ".env")),
-    ...parseEnvFile(path.join(cwd, ".env.local")),
-  };
-  const origin =
-    env["KHOTAN_WEBHOOK_URL"] ??
-    env["NGROK_URL"] ??
-    env["NEXT_PUBLIC_APP_URL"] ??
-    `http://localhost:${resolvePort(undefined)}`;
-  return origin.replace(/\/$/, "");
-}
-
-async function checkConnectivity(baseUrl: string): Promise<void> {
-  let res: Response;
-  try {
-    res = await cliFetch(`${baseUrl}/plugs`);
-  } catch {
-    fail(
-      "connect_failed",
-      `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
-    );
-  }
-  if (res.status === 401) fail("unauthorized", unauthorizedHint());
-  if (!res.ok) {
-    fail(
-      "api_unavailable",
-      `Could not reach Khotan API at ${baseUrl}. Check your base path and dev server.`,
-    );
-  }
-}
+import { cliFetch } from "../cli-auth.js";
+import {
+  output,
+  fail,
+  resolvePort,
+  checkConnectivity,
+  resolveWebhookOrigin,
+} from "../cli-api.js";
 
 interface WireRecord {
   id: string;

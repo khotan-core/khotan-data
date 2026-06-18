@@ -36,8 +36,9 @@ npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
 npx khotan add config-page-1   # /config page that renders the KhotanHub dashboard
 
 # Options
-npx khotan add schema --force   # Overwrite existing files
-npx khotan add hub --yes        # Auto-accept dependency install prompts
+npx khotan add schema --force   # Overwrite existing files without prompting
+npx khotan add hub --yes        # Non-interactive mode: auto-accept all prompts
+npx khotan generate --force     # Regenerate schema (prompts before overwriting by default)
 ```
 
 ## Factory (Runtime Engine)
@@ -313,11 +314,13 @@ const toFile = base.load(toFileSink).run();
 ### Options
 
 ```typescript
-await pipeline.run({
+const result = await pipeline.run({
   batchSize: 500,          // records per load batch (default: 1000)
-  continueOnError: true,   // don't throw on errors, collect them
+  continueOnError: true,   // collect errors in result.errors instead of throwing
   signal: controller.signal, // AbortSignal for cancellation
 });
+// result.cancelled is true when stopped via AbortSignal
+// With continueOnError: false (default), errors reject the promise
 ```
 
 ### Events
@@ -347,6 +350,16 @@ npm run test:watch   # watch mode tests
 npm run check        # typecheck + lint + format + test
 npm run build        # production build
 ```
+
+## Contributing
+
+1. Fork the repo and create a branch from `main` (`feat/`, `fix/`, `chore/`, etc.)
+2. Make your changes with conventional commit messages (`type: short description`)
+3. Run `npx changeset` and describe what changed — pick patch, minor, or major
+4. Run `npm run check` to verify typecheck, lint, format, and tests all pass
+5. Open a PR against `main`
+
+Every PR that changes user-facing behavior should include a changeset file (the `.changeset/*.md` file created in step 3). Internal-only changes like refactors or test updates can skip this.
 
 ## License
 

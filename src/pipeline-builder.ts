@@ -106,6 +106,10 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
 
   /**
    * Execute the pipeline.
+   *
+   * With the default `continueOnError: false`, errors reject the returned
+   * promise rather than being silently swallowed into `result.errors`.
+   * Set `continueOnError: true` to collect errors and continue processing.
    */
   async run(options: PipelineOptions = {}): Promise<PipelineResult> {
     if (!this.#extractor) {
@@ -126,6 +130,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
     const errors: PipelineStepError[] = [];
     let recordsProcessed = 0;
     let recordsLoaded = 0;
+    let cancelled = false;
 
     this.#emit({
       type: "pipeline:start",
@@ -134,17 +139,20 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
     });
 
     let batch: DataRecord[] = [];
+    const stepsStarted = new Set<string>();
+
+    const emitStepStart = (stepName: string): void => {
+      if (stepsStarted.has(stepName)) return;
+      stepsStarted.add(stepName);
+      this.#emit({ type: "step:start", timestamp: new Date(), stepName });
+    };
 
     const flushBatch = async (): Promise<void> => {
       if (batch.length === 0) return;
 
       for (const loader of this.#loaders) {
         try {
-          this.#emit({
-            type: "step:start",
-            timestamp: new Date(),
-            stepName: loader.name,
-          });
+          emitStepStart(loader.name);
 
           const result = await loader.load(batch);
           recordsLoaded += result.recordsLoaded;
@@ -179,6 +187,12 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
     try {
       for await (const raw of this.#extractor.extract()) {
         if (signal?.aborted) {
+          cancelled = true;
+          this.#emit({
+            type: "pipeline:cancelled",
+            timestamp: new Date(),
+            data: { name: this.#name, reason: signal.reason },
+          });
           break;
         }
 
@@ -194,14 +208,10 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
         for (const transformer of this.#transformers) {
           const nextRecords: DataRecord[] = [];
 
+          emitStepStart(transformer.name);
+
           for (const record of records) {
             try {
-              this.#emit({
-                type: "step:start",
-                timestamp: new Date(),
-                stepName: transformer.name,
-              });
-
               const result = await transformer.transform(record);
               const transformed = Array.isArray(result) ? result : [result];
               nextRecords.push(...transformed);
@@ -233,6 +243,12 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
             }
           }
 
+          this.#emit({
+            type: "step:end",
+            timestamp: new Date(),
+            stepName: transformer.name,
+          });
+
           records = nextRecords;
         }
 
@@ -245,27 +261,42 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
       }
 
       await flushBatch();
-    } catch {
+    } catch (err) {
       if (!continueOnError) {
         const duration = performance.now() - startTime;
+        const result: PipelineResult = {
+          recordsProcessed,
+          recordsLoaded,
+          errors,
+          duration,
+          cancelled,
+        };
         this.#emit({
           type: "pipeline:end",
           timestamp: new Date(),
-          data: { recordsProcessed, recordsLoaded, errors, duration },
+          data: result,
         });
-        return { recordsProcessed, recordsLoaded, errors, duration };
+        throw err;
       }
     }
 
     const duration = performance.now() - startTime;
 
+    const result: PipelineResult = {
+      recordsProcessed,
+      recordsLoaded,
+      errors,
+      duration,
+      cancelled,
+    };
+
     this.#emit({
       type: "pipeline:end",
       timestamp: new Date(),
-      data: { recordsProcessed, recordsLoaded, errors, duration },
+      data: result,
     });
 
-    return { recordsProcessed, recordsLoaded, errors, duration };
+    return result;
   }
 
   #emit(event: {

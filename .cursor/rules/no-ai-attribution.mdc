@@ -1,0 +1,8 @@
+---
+description: Never add Co-authored-by or AI attribution trailers to git commits
+alwaysApply: true
+---
+
+# No AI Attribution in Commits
+
+Never add `Co-authored-by`, `Signed-off-by`, or any AI/tool attribution trailers to git commit messages. Commits belong to the user — no exceptions.

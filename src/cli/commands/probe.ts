@@ -1,55 +1,22 @@
 import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
 import { inferShape, diffSchemas, type SerializedSchema } from "../compare.js";
 import { varsCommand } from "./plug-vars.js";
 import { cliFetch, unauthorizedHint } from "../cli-auth.js";
+import {
+  output,
+  fail,
+  resolvePort,
+  checkConnectivity,
+} from "../cli-api.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function output(obj: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
-}
-
-function fail(error: string, hint: string): never {
-  output({ ok: false, error, hint });
-  process.exit(1);
-}
-
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}b`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}kb`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}mb`;
-}
-
-export function parsePortFromEnvFile(filePath: string): number | null {
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("#") || !trimmed) continue;
-      const match = /^PORT\s*=\s*["']?(\d+)["']?/.exec(trimmed);
-      if (match) return parseInt(match[1]!, 10);
-    }
-  } catch {
-    // file doesn't exist or unreadable
-  }
-  return null;
-}
-
-function resolvePort(portFlag: string | undefined): number {
-  if (portFlag) return parseInt(portFlag, 10);
-
-  const cwd = process.cwd();
-  const fromLocal = parsePortFromEnvFile(path.join(cwd, ".env.local"));
-  if (fromLocal) return fromLocal;
-
-  const fromEnv = parsePortFromEnvFile(path.join(cwd, ".env"));
-  if (fromEnv) return fromEnv;
-
-  return 3000;
 }
 
 /**
@@ -66,7 +33,11 @@ function tryParseJson(value: unknown): unknown {
   return value;
 }
 
-async function checkConnectivity(baseUrl: string): Promise<void> {
+/**
+ * Check debug route connectivity — only used for operations that actually
+ * need the debug endpoint (--info, --endpoint, --compare, and firing requests).
+ */
+async function checkDebugConnectivity(baseUrl: string): Promise<void> {
   let res: Response;
   try {
     res = await cliFetch(`${baseUrl}/debug`);
@@ -76,6 +47,8 @@ async function checkConnectivity(baseUrl: string): Promise<void> {
       `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
     );
   }
+
+  if (res.status === 401) fail("unauthorized", unauthorizedHint());
 
   if (res.status === 404) {
     fail(
@@ -126,7 +99,7 @@ export const plugCommand = new Command("plug")
       const port = resolvePort(opts.port);
       const baseUrl = `http://localhost:${port}${opts.basePath}`;
 
-      // --list mode
+      // --list mode: uses /plugs management route, not debug
       if (opts.list) {
         await checkConnectivity(baseUrl);
         try {
@@ -169,12 +142,12 @@ export const plugCommand = new Command("plug")
         );
       }
 
-      await checkConnectivity(baseUrl);
-
-      // --info mode
+      // --info mode: uses debug route
       if (opts.info) {
+        await checkDebugConnectivity(baseUrl);
         try {
           const res = await cliFetch(`${baseUrl}/debug/${plugName}`);
+          if (res.status === 401) fail("unauthorized", unauthorizedHint());
           if (res.status === 404) {
             fail(
               "plug_not_found",
@@ -189,6 +162,9 @@ export const plugCommand = new Command("plug")
         return;
       }
 
+      // All remaining operations need the debug route
+      await checkDebugConnectivity(baseUrl);
+
       // Resolve method + path from --endpoint or positional args
       let resolvedMethod = method?.toUpperCase();
       let resolvedPath = reqPath;
@@ -197,6 +173,7 @@ export const plugCommand = new Command("plug")
       if (opts.endpoint) {
         try {
           const res = await cliFetch(`${baseUrl}/debug/${plugName}`);
+          if (res.status === 401) fail("unauthorized", unauthorizedHint());
           if (res.status === 404) {
             fail(
               "plug_not_found",
@@ -279,6 +256,8 @@ export const plugCommand = new Command("plug")
         fail("request_failed", `Failed to fire request: ${String(e)}`);
       }
 
+      if (debugRes.status === 401) fail("unauthorized", unauthorizedHint());
+
       const debugData = (await debugRes.json()) as Record<string, unknown>;
 
       // The debug route returns { status, statusText, headers, body, timing, endpoint?, error? }
@@ -335,6 +314,8 @@ export const plugCommand = new Command("plug")
           if (!allEndpoints) {
             try {
               const metaRes = await cliFetch(`${baseUrl}/debug/${plugName}`);
+              if (metaRes.status === 401)
+                fail("unauthorized", unauthorizedHint());
               const metaData = (await metaRes.json()) as {
                 endpoints?: Record<string, Record<string, unknown>>;
               };

@@ -55,7 +55,8 @@ function wrapDefaultExport(source: string): string | null {
     );
   }
 
-  const objectExportPattern = /export\s+default\s+(\{[\s\S]*\})\s*;?/m;
+  // Non-greedy match to avoid over-matching nested braces in multi-object files
+  const objectExportPattern = /export\s+default\s+(\{[\s\S]*?\})\s*;?/m;
   if (objectExportPattern.test(source)) {
     return source.replace(
       objectExportPattern,

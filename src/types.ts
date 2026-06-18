@@ -37,6 +37,7 @@ export interface PipelineEvent {
   readonly type:
     | "pipeline:start"
     | "pipeline:end"
+    | "pipeline:cancelled"
     | "step:start"
     | "step:end"
     | "record:extracted"
@@ -64,6 +65,7 @@ export interface PipelineResult {
   readonly recordsLoaded: number;
   readonly errors: PipelineStepError[];
   readonly duration: number;
+  readonly cancelled: boolean;
 }
 
 export interface PipelineStepError {

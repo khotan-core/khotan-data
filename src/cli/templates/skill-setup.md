@@ -130,8 +130,9 @@ Notes:
   non-production only) are exempt from `authorize` automatically.
 - Also protect the Hub dashboard page (e.g. `/config`) with your app's
   middleware — `authorize` only guards the API, not your React pages.
-- Without `authorize`, khotan logs a startup warning. Always configure it
-  before deploying.
+- Without `authorize`, khotan logs a startup warning and refuses to start.
+  Set `authorize: false` to explicitly opt out (development only).
+  Always configure a real `authorize` hook before deploying.
 
 ## Next.js Config
 

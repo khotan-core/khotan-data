@@ -544,6 +544,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? "/", "http://localhost");
 
+        if (req.method === "GET" && url.pathname === "/api/khotan/plugs") {
+          sendJson(res, 200, []);
+          return;
+        }
+
         if (req.method === "GET" && url.pathname === "/api/khotan/flows") {
           sendJson(res, 200, flows);
           return;
@@ -714,6 +719,11 @@ describe("CLI", { timeout: 30_000 }, () => {
 
       const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? "/", "http://localhost");
+
+        if (req.method === "GET" && url.pathname === "/api/khotan/plugs") {
+          sendJson(res, 200, []);
+          return;
+        }
 
         if (req.method === "GET" && url.pathname === "/api/khotan/flows") {
           sendJson(res, 200, []);

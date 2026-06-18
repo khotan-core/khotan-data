@@ -1,69 +1,11 @@
 import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
-import { cliFetch, unauthorizedHint } from "../cli-auth.js";
-
-function output(obj: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
-}
-
-function fail(error: string, hint: string): never {
-  output({ ok: false, error, hint });
-  process.exit(1);
-}
-
-function parseEnvFile(filePath: string): Record<string, string> {
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const values: Record<string, string> = {};
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const match = /^([A-Z0-9_]+)\s*=\s*["']?(.*?)["']?$/.exec(trimmed);
-      if (match) values[match[1]!] = match[2]!;
-    }
-    return values;
-  } catch {
-    return {};
-  }
-}
-
-function parsePortFromEnvFile(filePath: string): number | null {
-  const env = parseEnvFile(filePath);
-  const raw = env["PORT"];
-  if (!raw) return null;
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function resolvePort(portFlag: string | undefined): number {
-  if (portFlag) return parseInt(portFlag, 10);
-  const cwd = process.cwd();
-  return (
-    parsePortFromEnvFile(path.join(cwd, ".env.local")) ??
-    parsePortFromEnvFile(path.join(cwd, ".env")) ??
-    3000
-  );
-}
-
-async function checkConnectivity(baseUrl: string): Promise<void> {
-  let res: Response;
-  try {
-    res = await cliFetch(`${baseUrl}/plugs`);
-  } catch {
-    fail(
-      "connect_failed",
-      `Could not connect to dev server at ${baseUrl.replace("http://", "")}. Is it running?`,
-    );
-  }
-  if (res.status === 401) fail("unauthorized", unauthorizedHint());
-  if (!res.ok) {
-    fail(
-      "api_unavailable",
-      `Could not reach Khotan API at ${baseUrl}. Check your base path and dev server.`,
-    );
-  }
-}
+import { cliFetch } from "../cli-auth.js";
+import {
+  output,
+  fail,
+  resolvePort,
+  checkConnectivity,
+} from "../cli-api.js";
 
 interface VariablesResponse {
   fields: {
@@ -80,6 +22,26 @@ interface VariablesResponse {
   configured: boolean;
 }
 
+/**
+ * Redact values for fields marked as `secret: true`. Pass `--show-secrets`
+ * to reveal them.
+ */
+function redactSecrets(
+  fields: VariablesResponse["fields"],
+  values: Record<string, string>,
+  showSecrets: boolean,
+): Record<string, string> {
+  if (showSecrets) return values;
+  const redacted: Record<string, string> = {};
+  const secretKeys = new Set(
+    fields.filter((f) => f.secret || f.type === "password").map((f) => f.key),
+  );
+  for (const [key, value] of Object.entries(values)) {
+    redacted[key] = secretKeys.has(key) ? "••••••••" : value;
+  }
+  return redacted;
+}
+
 export const varsCommand = new Command("vars")
   .description("View and manage plug variables via the running Khotan API")
   .argument("[plugName]", "Name of the plug whose variables you want to manage")
@@ -88,6 +50,7 @@ export const varsCommand = new Command("vars")
   .option("--base-path <path>", "API base path", "/api/khotan")
   .option("--list", "List all plugs and their variable state")
   .option("--json <json>", "Variable payload for set (JSON object)")
+  .option("--show-secrets", "Show secret values in plaintext (redacted by default)")
   .action(
     async (
       plugName: string | undefined,
@@ -97,10 +60,12 @@ export const varsCommand = new Command("vars")
         basePath: string;
         list?: boolean;
         json?: string;
+        showSecrets?: boolean;
       },
     ) => {
       const port = resolvePort(opts.port);
       const baseUrl = `http://localhost:${port}${opts.basePath}`;
+      const showSecrets = opts.showSecrets ?? false;
 
       await checkConnectivity(baseUrl);
 
@@ -123,7 +88,11 @@ export const varsCommand = new Command("vars")
               plugName: plug.name,
               configured: data.configured ?? false,
               fields: data.fields ?? [],
-              values: data.values ?? {},
+              values: redactSecrets(
+                data.fields ?? [],
+                data.values ?? {},
+                showSecrets,
+              ),
             };
           }),
         );
@@ -151,7 +120,11 @@ export const varsCommand = new Command("vars")
           plugName,
           configured: data.configured ?? false,
           fields: data.fields ?? [],
-          values: data.values ?? {},
+          values: redactSecrets(
+            data.fields ?? [],
+            data.values ?? {},
+            showSecrets,
+          ),
         });
         return;
       }

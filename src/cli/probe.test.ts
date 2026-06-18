@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { formatSize, parsePortFromEnvFile } from "./commands/probe.js";
+import { formatSize } from "./commands/probe.js";
 import { plugCommand, probeCommand } from "./commands/probe.js";
+import { parsePortFromEnvFile } from "./cli-api.js";
 
 // ---------------------------------------------------------------------------
 // Port detection tests (unit-level, no server needed)
@@ -208,7 +209,17 @@ describe("probe command integration", () => {
   it("supports --list mode with connectivity check", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ enabled: true }))
+      // --list uses /plugs for connectivity (not /debug)
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            name: "pollinate",
+            baseUrl: "https://api.example.com",
+            authType: "bearer",
+            varsConfigured: true,
+          },
+        ]),
+      )
       .mockResolvedValueOnce(
         jsonResponse([
           {
@@ -228,9 +239,6 @@ describe("probe command integration", () => {
 
     expect(thrown).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/khotan/debug",
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:3000/api/khotan/plugs",
     );
     expect(parsed[0]).toEqual({
@@ -249,7 +257,8 @@ describe("probe command integration", () => {
   it("supports the legacy probe alias", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ enabled: true }))
+      // --list uses /plugs for connectivity (not /debug)
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([]));
 
     const { parsed, thrown } = await runProbeAction([
@@ -261,7 +270,7 @@ describe("probe command integration", () => {
 
     expect(thrown).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:3000/api/khotan/debug",
+      "http://localhost:3000/api/khotan/plugs",
     );
     expect(parsed[0]).toEqual({
       ok: true,

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import prompts from "prompts";
 import {
   getEntry,
@@ -25,21 +26,7 @@ import {
 } from "../deps.js";
 import { installSkills, type SkillDefinition } from "../agent-detect.js";
 import { ensureWorkflowNextConfig } from "../next-config.js";
-
-async function loadConfig(): Promise<{ outputDir: string } | null> {
-  const configPath = path.resolve(process.cwd(), "khotan.config.ts");
-
-  if (!fs.existsSync(configPath)) {
-    return null;
-  }
-
-  const content = fs.readFileSync(configPath, "utf-8");
-  const outputDirMatch = /outputDir:\s*["']([^"']+)["']/.exec(content);
-
-  return {
-    outputDir: outputDirMatch?.[1] ?? "src/lib/khotan",
-  };
-}
+import { loadConfigOutputDir, resolveOutputDir } from "../cli-api.js";
 
 function hasSrcLayout(cwd: string): boolean {
   return fs.existsSync(path.join(cwd, "src", "app"));
@@ -73,13 +60,18 @@ function resolveOutputBase(
   }
 }
 
+/**
+ * Check whether a component is already scaffolded. For multi-file components,
+ * require ALL files to be present — a partial scaffold means the component is
+ * incomplete and should be re-scaffolded.
+ */
 function isScaffolded(
   entry: ComponentEntry,
   cwd: string,
   outputDir: string,
 ): boolean {
   if (isMultiFile(entry)) {
-    return entry.files.some((f) => {
+    return entry.files.every((f) => {
       const base = resolveOutputBase(f, cwd, outputDir);
       return fs.existsSync(path.join(base, f.outputFile));
     });
@@ -204,6 +196,27 @@ async function checkAndInstallDeps(
   }
 }
 
+/**
+ * Internal function to run `add <name>` for required component dependencies.
+ * Uses a direct import rather than spawning a subprocess, which avoids
+ * unreliable path resolution under npx/pnpm exec/bunx.
+ */
+async function addRequiredComponent(
+  componentName: string,
+  cwd: string,
+  opts: { force?: boolean; yes?: boolean; withoutUi?: boolean },
+): Promise<void> {
+  await addCommand.parseAsync(
+    [
+      componentName,
+      ...(opts.force ? ["--force"] : []),
+      ...(opts.yes ? ["--yes"] : []),
+      ...(opts.withoutUi ? ["--without-ui"] : []),
+    ],
+    { from: "user" },
+  );
+}
+
 export const addCommand = new Command("add")
   .description("Add a component or block to your project")
   .argument(
@@ -211,14 +224,14 @@ export const addCommand = new Command("add")
     "Component or block to add (e.g., plug, inflow, outflow, relay, schema, hub, config-page-1)",
   )
   .option("-f, --force", "Overwrite existing files without prompting")
-  .option("-y, --yes", "Auto-accept all install prompts")
+  .option("-y, --yes", "Auto-accept all install prompts (non-interactive mode)")
   .option("--without-ui", "Skip UI component scaffolding")
   .action(
     async (
       componentName: string,
       opts: { force?: boolean; yes?: boolean; withoutUi?: boolean },
     ) => {
-      let config = await loadConfig();
+      let config = loadConfigOutputDir(process.cwd());
 
       if (!config) {
         console.log("No khotan.config.ts found. Running init...\n");
@@ -227,7 +240,7 @@ export const addCommand = new Command("add")
           console.error("✗ Init failed. Cannot proceed with add.");
           process.exit(1);
         }
-        config = await loadConfig();
+        config = loadConfigOutputDir(process.cwd());
         if (!config) {
           console.error("✗ Could not read config after init.");
           process.exit(1);
@@ -280,11 +293,7 @@ export const addCommand = new Command("add")
 
             if (shouldAdd) {
               console.log(`\nAdding required component: ${reqName}...`);
-              const { execSync } = await import("node:child_process");
-              execSync(
-                `node ${process.argv[1] ?? ""} add ${reqName}${opts.force ? " --force" : ""}${opts.yes ? " --yes" : ""}`,
-                { cwd, stdio: "inherit" },
-              );
+              await addRequiredComponent(reqName, cwd, opts);
               console.log("");
             } else {
               console.warn(
@@ -331,7 +340,9 @@ export const addCommand = new Command("add")
             path.dirname(component.files[0]!.templatePath),
             "agents.md",
           );
-          const result = installSkills(cwd, skills, agentsTemplatePath);
+          const result = installSkills(cwd, skills, agentsTemplatePath, {
+            autoYes: opts.yes ?? false,
+          });
 
           if (result.created.length > 0) {
             console.log(
@@ -529,14 +540,20 @@ export const addCommand = new Command("add")
           }
 
           if (shouldUpdate) {
-            updateDrizzleConfigSchema(
+            const updated = updateDrizzleConfigSchema(
               singleFile.configPath,
               singleFile.currentValue,
               singleFile.globValue,
             );
-            console.log(
-              `✓ Updated ${relConfig}: schema → "${singleFile.globValue}"`,
-            );
+            if (updated) {
+              console.log(
+                `✓ Updated ${relConfig}: schema → "${singleFile.globValue}"`,
+              );
+            } else {
+              console.warn(
+                `⚠ Could not update ${relConfig} automatically. Set schema to "${singleFile.globValue}" manually.`,
+              );
+            }
           } else {
             console.log(
               `  Skipped. Update the schema value manually or Drizzle Kit won't see the khotan tables.`,
@@ -588,7 +605,9 @@ export const addCommand = new Command("add")
         const importBase = config.outputDir.replace(/^src\//, "@/");
         if (componentName === "wire") {
           console.log(`\nUsage:\n`);
-          console.log(`  import { wire } from "${importBase}/wire";`);
+          console.log(
+            `  import { wire } from "${importBase}/wires/${component.name}";`,
+          );
           console.log(`  import { myPlug } from "${importBase}/plugs/plug";`);
           console.log(`  import { db } from "@/db";\n`);
           console.log(`  const myWire = wire({`);

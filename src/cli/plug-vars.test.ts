@@ -161,6 +161,90 @@ describe("plug vars command", () => {
   });
 });
 
+describe("plug vars secret redaction", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("redacts secret fields by default", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          configured: true,
+          fields: [
+            { key: "apiKey", label: "API Key", type: "password", secret: true },
+            { key: "orgId", label: "Org ID", type: "text", secret: false },
+          ],
+          values: { apiKey: "super-secret-key", orgId: "org_123" },
+        }),
+      );
+
+    const { parsed, thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+    ]);
+
+    expect(thrown).toBeNull();
+    expect(parsed[0]?.values).toEqual({
+      apiKey: "••••••••",
+      orgId: "org_123",
+    });
+  });
+
+  it("reveals secrets with --show-secrets flag", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          configured: true,
+          fields: [
+            { key: "apiKey", label: "API Key", type: "password", secret: true },
+            { key: "orgId", label: "Org ID", type: "text", secret: false },
+          ],
+          values: { apiKey: "super-secret-key", orgId: "org_123" },
+        }),
+      );
+
+    const { parsed, thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+      "--show-secrets",
+    ]);
+
+    expect(thrown).toBeNull();
+    expect(parsed[0]?.values).toEqual({
+      apiKey: "super-secret-key",
+      orgId: "org_123",
+    });
+  });
+
+  it("redacts fields with type=password even without secret flag", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          configured: true,
+          fields: [
+            { key: "token", label: "Token", type: "password" },
+          ],
+          values: { token: "tok_abc123" },
+        }),
+      );
+
+    const { parsed, thrown } = await runPlugVarsAction([
+      "pollinate",
+      "--base-path",
+      "/api/khotan",
+    ]);
+
+    expect(thrown).toBeNull();
+    expect(parsed[0]?.values).toEqual({ token: "••••••••" });
+  });
+});
+
 describe("plug vars CLI auth (security)", () => {
   const originalSecret = process.env["KHOTAN_SECRET"];
 

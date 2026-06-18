@@ -130,7 +130,7 @@ describe("Pipeline", () => {
     expect(loadCalls).toEqual([2, 2, 1]);
   });
 
-  it("stops on AbortSignal", async () => {
+  it("stops on AbortSignal and sets cancelled flag", async () => {
     const controller = new AbortController();
     const output: Record<string, unknown>[] = [];
 
@@ -150,6 +150,78 @@ describe("Pipeline", () => {
       .run({ signal: controller.signal });
 
     expect(result.recordsProcessed).toBeLessThanOrEqual(2);
+    expect(result.cancelled).toBe(true);
+  });
+
+  it("emits pipeline:cancelled event on abort", async () => {
+    const controller = new AbortController();
+    const events: PipelineEvent[] = [];
+    const output: Record<string, unknown>[] = [];
+
+    const extractor = {
+      name: "slow-source",
+      async *extract() {
+        yield { id: 1 };
+        controller.abort();
+        yield { id: 2 };
+      },
+    };
+
+    await Pipeline.create("abort-events")
+      .extract(extractor)
+      .load(toArray("sink", output))
+      .on((event) => events.push(event))
+      .run({ signal: controller.signal });
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("pipeline:cancelled");
+  });
+
+  it("sets cancelled to false on normal completion", async () => {
+    const output: Record<string, unknown>[] = [];
+
+    const result = await Pipeline.create("no-cancel")
+      .extract(fromArray("source", [{ id: 1 }]))
+      .load(toArray("sink", output))
+      .run();
+
+    expect(result.cancelled).toBe(false);
+  });
+
+  it("throws on transform error when continueOnError is false (default)", async () => {
+    const output: Record<string, unknown>[] = [];
+
+    const failAlways = {
+      name: "always-fail",
+      transform: (_r: { id: number }) => {
+        throw new Error("boom");
+      },
+    };
+
+    await expect(
+      Pipeline.create("throw-on-error")
+        .extract(fromArray("source", [{ id: 1 }]))
+        .transform(failAlways)
+        .load(toArray("sink", output))
+        .run(),
+    ).rejects.toThrow("boom");
+  });
+
+  it("emits step:start once per step, not per record", async () => {
+    const events: PipelineEvent[] = [];
+    const output: Record<string, unknown>[] = [];
+
+    await Pipeline.create("step-events")
+      .extract(fromArray("source", [{ id: 1 }, { id: 2 }, { id: 3 }]))
+      .transform(map("double", (r: { id: number }) => ({ id: r.id * 2 })))
+      .load(toArray("sink", output))
+      .on((event) => events.push(event))
+      .run();
+
+    const stepStartEvents = events.filter((e) => e.type === "step:start");
+    expect(stepStartEvents.length).toBe(2);
+    expect(stepStartEvents[0]?.stepName).toBe("double");
+    expect(stepStartEvents[1]?.stepName).toBe("sink");
   });
 
   it("continues on error when configured", async () => {

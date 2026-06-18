@@ -15,8 +15,26 @@ function readSecretFromEnvFile(filePath: string): string | null {
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
-      const match = /^KHOTAN_SECRET\s*=\s*["']?(.*?)["']?\s*$/.exec(trimmed);
-      if (match) return match[1] ?? null;
+      // Strip optional `export ` prefix
+      const stripped = trimmed.replace(/^export\s+/, "");
+      const match = /^KHOTAN_SECRET\s*=\s*(.*)$/.exec(stripped);
+      if (!match) continue;
+      let value = match[1]!;
+      // Handle quoted values (preserve everything inside quotes including = and #)
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      } else {
+        // Unquoted: strip inline comments (space + #)
+        const commentIdx = value.indexOf(" #");
+        if (commentIdx !== -1) {
+          value = value.slice(0, commentIdx);
+        }
+        value = value.trim();
+      }
+      return value || null;
     }
   } catch {
     // file missing or unreadable

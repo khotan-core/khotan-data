@@ -78,18 +78,24 @@ export function detectSingleFileSchema(projectRoot: string): {
 
 /**
  * Rewrite the schema value in drizzle.config.ts.
+ * Returns true if the replacement was applied, false if the pattern was not
+ * found (avoids writing the file back unchanged and claiming success).
  */
 export function updateDrizzleConfigSchema(
   configPath: string,
   oldValue: string,
   newValue: string,
-): void {
+): boolean {
   const content = fs.readFileSync(configPath, "utf-8");
-  const updated = content.replace(
-    new RegExp(
-      `(schema:\\s*)(["'\`])${oldValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\2`,
-    ),
-    `$1$2${newValue}$2`,
+  const pattern = new RegExp(
+    `(schema:\\s*)(["'\`])${oldValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\2`,
   );
+
+  if (!pattern.test(content)) {
+    return false;
+  }
+
+  const updated = content.replace(pattern, `$1$2${newValue}$2`);
   fs.writeFileSync(configPath, updated, "utf-8");
+  return true;
 }

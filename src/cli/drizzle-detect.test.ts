@@ -177,18 +177,31 @@ describe("updateDrizzleConfigSchema", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("replaces single file schema with glob", () => {
+  it("replaces single file schema with glob and returns true", () => {
     const configPath = path.join(tmpDir, "drizzle.config.ts");
     fs.writeFileSync(
       configPath,
       `import { defineConfig } from "drizzle-kit";\nexport default defineConfig({ schema: "./src/db/schema.ts", out: "./drizzle" });`,
     );
-    updateDrizzleConfigSchema(configPath, "./src/db/schema.ts", "./src/db/*");
+    const replaced = updateDrizzleConfigSchema(configPath, "./src/db/schema.ts", "./src/db/*");
+    expect(replaced).toBe(true);
     const content = fs.readFileSync(configPath, "utf-8");
     expect(content).toContain('"./src/db/*"');
     expect(content).not.toContain("schema.ts");
     expect(content).toContain("drizzle-kit");
     expect(content).toContain("./drizzle");
+  });
+
+  it("returns false when pattern is not found", () => {
+    const configPath = path.join(tmpDir, "drizzle.config.ts");
+    fs.writeFileSync(
+      configPath,
+      `export default { schema: "./src/db/*" };`,
+    );
+    const replaced = updateDrizzleConfigSchema(configPath, "./src/db/schema.ts", "./src/db/*");
+    expect(replaced).toBe(false);
+    const content = fs.readFileSync(configPath, "utf-8");
+    expect(content).toContain('"./src/db/*"');
   });
 
   it("preserves quote style", () => {
