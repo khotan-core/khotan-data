@@ -178,6 +178,10 @@ export default defineConfig([
         path.resolve(templatesDir, "agent-skill.md"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-build.md"),
+        path.resolve(templatesDir, "skill-build.md"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "skill-setup.md"),
         path.resolve(templatesDir, "skill-setup.md"),
       );
@@ -186,12 +190,24 @@ export default defineConfig([
         path.resolve(templatesDir, "skill-plug.md"),
       );
       copyFileSync(
-        path.resolve("src", "cli", "templates", "skill-dashboard.md"),
-        path.resolve(templatesDir, "skill-dashboard.md"),
+        path.resolve("src", "cli", "templates", "skill-flow.md"),
+        path.resolve(templatesDir, "skill-flow.md"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "skill-webhook.md"),
         path.resolve(templatesDir, "skill-webhook.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-cache.md"),
+        path.resolve(templatesDir, "skill-cache.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-mappings.md"),
+        path.resolve(templatesDir, "skill-mappings.md"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "skill-frontend.md"),
+        path.resolve(templatesDir, "skill-frontend.md"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "agents.md"),

@@ -9,6 +9,35 @@ description: >
 
 Set up webhook subscriptions and event processing with khotan Wires, Catch, and Pass. Use when receiving webhooks from external services, registering callback URLs, processing incoming events durably, or forwarding events between services.
 
+This is the event-driven half of Phase 5 of `khotan-build` (for pull/push/sync
+on a schedule, use `khotan-flow` instead).
+
+## When to use
+
+- A service should call *you* on events (Wire registers the subscription).
+- You need to durably process incoming events (Catch) or forward them to another
+  service (Pass).
+
+## Order of operations
+
+1. Verify the source plug's endpoints first (`khotan-probe`).
+2. Build the Wire, then Catch/Pass handlers as requested.
+3. Register on the source plug, then test the receive path.
+
+## STOP and ask when
+
+- **Which events/handlers are wanted.** Ask before building — don't subscribe to
+  events the user didn't request.
+- **Creating a remote subscription.** `onSubscribe` issues a live `POST` to the
+  service; treat it like any mutation and get consent before running it.
+
+## Workflow step rule
+
+Catch and Pass run on Vercel Workflow. The `"use step"` (top level) /
+`"use workflow"` (orchestration only) rule is identical to flows — see
+`khotan-flow` for the full explanation. Never nest steps inside the workflow
+function.
+
 ## Wire (Webhook Subscriptions)
 
 ```bash

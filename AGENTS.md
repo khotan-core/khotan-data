@@ -20,11 +20,15 @@ Source templates live in `src/cli/templates/`:
 
 | Template | Skill name | Teaches |
 |----------|-----------|---------|
-| `skill-setup.md` | khotan-setup | Project initialization, factory config, database setup |
+| `skill-build.md` | khotan-build | End-to-end integration workflow + consent gates (orchestrator) |
+| `skill-setup.md` | khotan-setup | Project initialization, factory config, database setup, securing |
 | `skill-plug.md` | khotan-plug | Plug authoring, auth strategies, typed endpoints |
-| `skill-dashboard.md` | khotan-dashboard | Hub dashboard, plug debugger UI |
+| `agent-skill.md` | khotan-probe | Probe CLI for verifying endpoint shapes (GET-first) |
+| `skill-flow.md` | khotan-flow | Inflows, outflows, relays; triggering and scheduling |
 | `skill-webhook.md` | khotan-webhook | Wires, Catch, Pass, webhook flow |
-| `agent-skill.md` | khotan-probe | Probe CLI for debugging plugs |
+| `skill-cache.md` | khotan-cache | Durable caching of snapshots/checkpoints/dedupe markers |
+| `skill-mappings.md` | khotan-mappings | Resources and cross-service record mappings |
+| `skill-frontend.md` | khotan-frontend | Suggests UI components/blocks; never adds UI/routes unprompted |
 
 ## Agent Detection
 

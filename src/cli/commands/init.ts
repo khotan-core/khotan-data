@@ -322,12 +322,16 @@ export async function runInit(cwd: string): Promise<boolean> {
   return fs.existsSync(configPath);
 }
 
-const SKILL_COMPONENTS = [
+export const SKILL_COMPONENTS = [
+  "skill-build",
   "skill-setup",
   "skill-plug",
-  "skill-dashboard",
-  "skill-webhook",
   "agent-skill",
+  "skill-flow",
+  "skill-webhook",
+  "skill-cache",
+  "skill-mappings",
+  "skill-frontend",
 ];
 
 function scaffoldAgentSkills(cwd: string, autoYes: boolean = false): number {

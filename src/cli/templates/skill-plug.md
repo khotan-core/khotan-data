@@ -9,6 +9,26 @@ description: >
 
 Create and configure khotan Plugs — HTTP clients for external APIs with auth, retry, pagination, and typed endpoints. Use when connecting to a new API, defining endpoint contracts, configuring authentication, or creating a typed API client.
 
+This is Phase 2 of `khotan-build`. Build the plug, then verify its endpoints
+with `khotan-probe` before building flows.
+
+## When to use
+
+- Authoring or editing a plug: auth strategy, vars, typed endpoints, hooks.
+
+## Order of operations
+
+1. Confirm scope — which endpoints does the prompt actually need?
+2. Create the plug with auth + a **small** set of typed `GET` endpoints.
+3. Hand off to `khotan-probe` to verify shapes before anything downstream.
+
+## STOP and ask when
+
+- **Scope is unclear.** Do not guess which endpoints/resources to model — ask.
+- **A mutation is involved.** Define `POST`/`PATCH`/`PUT`/`DELETE` endpoints if
+  the contract needs them, but do not *fire* them against the live API without
+  explicit user consent (see `khotan-probe`).
+
 ## Scaffold
 
 ```bash

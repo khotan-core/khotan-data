@@ -1,12 +1,22 @@
 ---
 name: khotan-setup
 description: >
-  Set up khotan-data in a Next.js + Drizzle + Postgres project. Use when
-  initializing khotan in a new project, adding the database schema,
-  configuring the factory, or troubleshooting missing setup steps.
+  Foundation reference for khotan-data in a Next.js + Drizzle + Postgres
+  project. Use when initializing khotan, adding the database schema,
+  configuring the factory, securing the management API, fixing
+  middleware/workflow interception, or troubleshooting missing setup steps.
 ---
 
-Set up khotan-data in a Next.js + Drizzle + Postgres project. Use when initializing khotan in a new project, adding the database schema, configuring the factory, or troubleshooting missing setup steps.
+Foundation reference for khotan-data. Use when laying or repairing the base of a
+khotan project. For the full integration journey (docs → plug → flows →
+frontend) start from `khotan-build`, which points here for Phase 0.
+
+## When to use
+
+- Initializing khotan in a new project, or checking the foundation is sound.
+- Adding/migrating the database schema, configuring the factory, or gating the
+  management API with `authorize`.
+- Diagnosing setup-level failures (missing modules, hanging workflow runs).
 
 ## Quick Start
 
@@ -94,6 +104,19 @@ The schema command auto-detects your Drizzle schema directory, updates `drizzle.
 | `KHOTAN_WEBHOOK_URL` | For webhooks | Public URL for wire callbacks |
 | `CRON_SECRET` | For production cron | Protects the built-in `/api/khotan/cron` dispatcher route. The route fails closed in production when this is unset |
 
+### Credential triage
+
+When wiring a new service, decide where each value lives:
+
+- **Plug var** (stored in DB, encrypted via `KHOTAN_SECRET`, editable in Hub/CLI)
+  — for secrets/tokens the service issues to this integration.
+- **Env var** — for infra/config that differs per deploy (base URLs, regions).
+
+Rules of thumb:
+- If `KHOTAN_SECRET` is unset or empty, generate one: `openssl rand -hex 32`.
+- Set `KHOTAN_DEBUG=1` in **development only** — it auto-disables under
+  `NODE_ENV=production`.
+
 ## Securing the Management API
 
 The management API (`/api/khotan/*`) and the Hub dashboard expose plug
@@ -175,44 +198,12 @@ export function middleware(request: NextRequest) {
 Vercel Workflow also requires AI Gateway OIDC — run `vercel link` and
 `vercel env pull` so `VERCEL_OIDC_TOKEN` is available locally.
 
-## Triggering Flows
+## Triggering & scheduling flows
 
-Start a flow through khotan (never call the workflow function directly) so run
-tracking and Workflow IDs are recorded. The API is `khotanData.flow(name).start()`:
-
-```typescript
-import khotanData from "@/lib/khotan/khotan";
-
-await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
-  runType: "delta", // or "full"
-});
-```
-
-`plugName` is only needed to disambiguate when the same flow name is registered
-under multiple plugs. There is no `khotanData.api.*` or `flow().run()` surface —
-`flow(name).start(options)` is the single entry point for manual and scheduled
-runs alike. The cron dispatcher (`/api/khotan/cron`) calls this same path.
-
-### Triggering over HTTP (scripts / external services)
-
-There is **no** `POST /flows/:name/run` route. The HTTP trigger is:
-
-```
-POST /api/khotan/flows/{flowId}/runs    body: { "runType": "delta" }
-```
-
-This is a **management route**, so it goes through your `authorize` hook. Common
-gotcha: `KHOTAN_SECRET` is an encryption key, **not** an HTTP credential — sending
-`Authorization: Bearer <KHOTAN_SECRET>` returns `401` with `code: authorize_rejected`.
-To trigger from outside the app, authenticate with a credential your `authorize`
-hook accepts (a session cookie, or your own token you validate inside `authorize`).
-
-Prefer triggering server-side with `khotanData.flow(name).start()` whenever you
-can — it needs no HTTP round-trip or auth.
-
-The `npx khotan flows trigger <name>` CLI works in **dev** without any of this: it
-signs a short-lived HMAC token from `KHOTAN_SECRET` (the `KhotanCLI` auth scheme,
-disabled when `NODE_ENV=production`). The raw secret never leaves your machine.
+Flow triggering, HTTP trigger routes, and the Vercel cron dispatcher live in the
+`khotan-flow` skill. The short version: start flows with
+`khotanData.flow(name).start()` server-side, or `npx khotan flows trigger <name>`
+in dev — never call the workflow function directly.
 
 ## Verify Setup
 
@@ -222,46 +213,11 @@ curl http://localhost:3000/api/khotan/flows      # Should list flows
 curl http://localhost:3000/api/khotan/resources   # Should list resources
 ```
 
-## Scheduled Flows On Vercel
+## Build order
 
-Khotan flow `schedule` values are runtime source-of-truth metadata. On Vercel, prefer a single dispatcher CRON instead of defining one platform CRON per flow.
-
-Add one entry to `vercel.json`:
-
-```json
-{
-  "crons": [
-    { "path": "/api/khotan/cron", "schedule": "* * * * *" }
-  ]
-}
-```
-
-Then define schedules only on your flows in `{outputDir}/khotan.ts`:
-
-```typescript
-{
-  name: "products-inflow",
-  type: "inflow",
-  schedule: "0 * * * *",
-  resource: "products",
-}
-```
-
-The dispatcher route evaluates which flows are due on each tick and starts them through the normal run-tracking path. If `CRON_SECRET` is set, Vercel should call the route with `Authorization: Bearer <CRON_SECRET>`.
-
-## Typical Build Order
-
-After init and schema setup, the usual path to a working sync is:
-
-1. Add or author a plug file for the external service.
-2. Define a few typed endpoints directly on the plug with Zod response schemas.
-3. Start the app with `KHOTAN_DEBUG=1`.
-4. Verify the plug is visible with `npx khotan plug --list` and `npx khotan plug myPlug --info`.
-5. Hit live endpoints with `npx khotan plug myPlug --endpoint listProducts --compare` until the schemas match the real API shape you intend to use.
-6. Register the plug in `{outputDir}/khotan.ts` with resources and flows.
-7. Only after endpoint verification, build inflows, relays, outflows, or webhook handlers on top of those live-checked endpoints.
-
-This keeps sync logic grounded in real API payloads before you write pagination, mapping, or transformation code.
+The integration journey (docs → plug → endpoint verification → flows/webhooks →
+frontend), including all the consent gates, lives in `khotan-build`. Scheduling
+flows on Vercel (the single cron-dispatcher pattern) lives in `khotan-flow`.
 
 ## Troubleshooting
 

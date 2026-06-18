@@ -12,6 +12,17 @@ Inspect and debug khotan plugs via the CLI. Prefer `khotan plug` (legacy alias: 
 
 **Requires**: A running dev server with `KHOTAN_DEBUG=1` set.
 
+This is Phase 3 of `khotan-build`. The goal of this loop is to learn the exact
+request/response shapes of the service **before** building any flows on top.
+
+## Headline rule (MUST)
+
+- **`GET` endpoints: probe freely.** Kitchen-sink every relevant `GET` to learn
+  real payloads.
+- **Non-`GET` (`POST`/`PATCH`/`PUT`/`DELETE`): require explicit user consent
+  first.** Firing these mutates live remote data and you usually lack the setup
+  to do so safely. Do not run them just because the endpoint exists.
+
 ## Commands
 
 ### List all plugs

@@ -4,13 +4,20 @@ Production-grade data flow, ETL, and webhook components for Next.js + Drizzle + 
 
 ## Skills
 
+Start from **khotan-build** when integrating a service — it orchestrates the
+whole workflow and points to the focused skills below at each step.
+
 | Skill | When to use |
 |-------|-------------|
-| [khotan-setup](skills/khotan-setup/SKILL.md) | Initializing khotan in a new project, adding the database schema, configuring the factory |
+| [khotan-build](skills/khotan-build/SKILL.md) | Integrating a service end to end — owns the order of operations and the consent gates. Start here. |
+| [khotan-setup](skills/khotan-setup/SKILL.md) | Foundation: initializing khotan, schema/migrations, factory, securing the API, middleware/workflow fixes |
 | [khotan-plug](skills/khotan-plug/SKILL.md) | Connecting to a new API, defining endpoint contracts, configuring authentication |
-| [khotan-dashboard](skills/khotan-dashboard/SKILL.md) | Adding a management interface, configuring plug variables in the browser |
-| [khotan-webhook](skills/khotan-webhook/SKILL.md) | Receiving webhooks, registering callback URLs, processing incoming events |
-| [khotan-probe](skills/khotan-probe/SKILL.md) | Debugging plugs via CLI with `khotan plug` (legacy alias: `probe`) |
+| [khotan-probe](skills/khotan-probe/SKILL.md) | Verifying endpoint shapes via CLI with `khotan plug` (legacy alias: `probe`) — GET-first, consent before mutations |
+| [khotan-flow](skills/khotan-flow/SKILL.md) | Building/running inflows, outflows, relays; triggering and scheduling flows |
+| [khotan-webhook](skills/khotan-webhook/SKILL.md) | Receiving webhooks, registering callback URLs, processing/forwarding events |
+| [khotan-cache](skills/khotan-cache/SKILL.md) | Durable caching of upstream snapshots, checkpoints, and dedupe markers |
+| [khotan-mappings](skills/khotan-mappings/SKILL.md) | Resources and cross-service record matching/dedupe via connect keys |
+| [khotan-frontend](skills/khotan-frontend/SKILL.md) | Suggesting frontend components/pages — never adds UI or routes without confirmation |
 
 ## Quick Reference
 

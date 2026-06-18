@@ -389,6 +389,18 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       },
     ],
   },
+  "skill-build": {
+    name: "skill-build",
+    description:
+      "Agent skill orchestrating the end-to-end service integration workflow",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-build.md"),
+        outputFile: "khotan-build",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
   "skill-setup": {
     name: "skill-setup",
     description: "Agent skill for setting up khotan-data in a Next.js project",
@@ -412,18 +424,14 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       },
     ],
   },
-  "skill-dashboard": {
-    name: "skill-dashboard",
+  "skill-flow": {
+    name: "skill-flow",
     description:
-      "Agent skill for setting up the Hub dashboard and Plug Debugger UI",
+      "Agent skill for building and running flows (inflow, outflow, relay)",
     files: [
       {
-        templatePath: path.resolve(
-          __dirname,
-          "templates",
-          "skill-dashboard.md",
-        ),
-        outputFile: "khotan-dashboard",
+        templatePath: path.resolve(__dirname, "templates", "skill-flow.md"),
+        outputFile: "khotan-flow",
         outputBase: "agentSkills",
       },
     ],
@@ -436,6 +444,41 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       {
         templatePath: path.resolve(__dirname, "templates", "skill-webhook.md"),
         outputFile: "khotan-webhook",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-cache": {
+    name: "skill-cache",
+    description:
+      "Agent skill for first-class durable caching in flows and webhooks",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-cache.md"),
+        outputFile: "khotan-cache",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-mappings": {
+    name: "skill-mappings",
+    description: "Agent skill for resources and cross-service record mappings",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-mappings.md"),
+        outputFile: "khotan-mappings",
+        outputBase: "agentSkills",
+      },
+    ],
+  },
+  "skill-frontend": {
+    name: "skill-frontend",
+    description:
+      "Agent skill that suggests khotan frontend components and page blocks",
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "skill-frontend.md"),
+        outputFile: "khotan-frontend",
         outputBase: "agentSkills",
       },
     ],
@@ -497,11 +540,7 @@ const BLOCKS: Record<string, ComponentEntry> = {
     requires: ["mapping-browser"],
     files: [
       {
-        templatePath: path.resolve(
-          __dirname,
-          "templates",
-          "mappings-page.tsx",
-        ),
+        templatePath: path.resolve(__dirname, "templates", "mappings-page.tsx"),
         outputFile: "mappings/page.tsx",
         outputBase: "appRoot",
       },
