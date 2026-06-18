@@ -152,10 +152,11 @@ This confirms npm is happy with the package before the real publish. No auth is 
 Run from the repo root:
 
 ```bash
+npm login
 npm publish --access public
 ```
 
-If npm requires auth or an OTP, stop and let the user handle it manually.
+You must be logged in to npm before publishing. If you're already logged in (`npm whoami` shows your username), skip `npm login`.
 
 ### Step 10: Push commit and tag to origin
 
