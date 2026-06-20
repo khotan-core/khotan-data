@@ -88,6 +88,13 @@ async function scaffoldFile(
   force: boolean,
 ): Promise<boolean> {
   if (fs.existsSync(outputPath) && !force) {
+    // Non-interactive (no TTY): never block on a prompt. Skip the existing file
+    // so --yes / piped / CI invocations stay deterministic instead of hanging
+    // forever waiting on stdin. Use --force to overwrite in these contexts.
+    if (!process.stdin.isTTY) {
+      return false;
+    }
+
     const response = await prompts({
       type: "confirm",
       name: "overwrite",
@@ -459,6 +466,11 @@ export const addCommand = new Command("add")
       if (componentName === "schema") {
         schemaDir = resolveDrizzleSchemaDir(cwd);
 
+        // Conventional fallback when no drizzle.config.ts is detected. Never
+        // fall back to the factory `outputDir`, whose `khotan.ts` collides with
+        // the factory config file of the same name.
+        const fallbackSchemaDir = hasSrcLayout(cwd) ? "src/db/schema" : "db/schema";
+
         if (schemaDir) {
           outputDir = path.resolve(cwd, schemaDir);
           console.log(`✓ Detected Drizzle schema directory: ${schemaDir}`);
@@ -468,7 +480,7 @@ export const addCommand = new Command("add")
               type: "text",
               name: "schemaPath",
               message: "Where should the schema file be placed?",
-              initial: config.outputDir,
+              initial: fallbackSchemaDir,
             },
             {
               onCancel: () => {
@@ -478,13 +490,32 @@ export const addCommand = new Command("add")
           );
 
           const schemaPath = response.schemaPath as string | undefined;
-          if (schemaPath) {
-            outputDir = path.resolve(cwd, schemaPath);
-          }
+          outputDir = path.resolve(cwd, schemaPath || fallbackSchemaDir);
+        } else {
+          outputDir = path.resolve(cwd, fallbackSchemaDir);
+          console.log(
+            `✓ No drizzle.config.ts detected; placing schema in ${fallbackSchemaDir}`,
+          );
         }
       }
 
       const outputPath = path.join(outputDir, component.outputFile);
+
+      // Safety net: the schema template's filename is `khotan.ts`, the same as
+      // the factory config. Refuse to ever write the schema over it.
+      if (componentName === "schema") {
+        const factoryConfigPath = path.resolve(cwd, config.outputDir, "khotan.ts");
+        if (path.resolve(outputPath) === factoryConfigPath) {
+          console.error(
+            `✗ Refusing to write the Drizzle schema over the factory config (${path.relative(cwd, factoryConfigPath)}).`,
+          );
+          console.error(
+            `  Add a drizzle.config.ts with a schema dir (e.g. schema: "./src/db/schema/*") and re-run,`,
+          );
+          console.error(`  or run \`npx khotan init --full\` to scaffold Drizzle.`);
+          process.exit(1);
+        }
+      }
 
       const created = await scaffoldFile(
         component.templatePath,
@@ -493,7 +524,13 @@ export const addCommand = new Command("add")
       );
 
       if (!created) {
-        console.log("Cancelled.");
+        if (fs.existsSync(outputPath)) {
+          console.log(
+            `✓ ${path.relative(cwd, outputPath)} already exists, skipping (use --force to overwrite)`,
+          );
+        } else {
+          console.log("Cancelled.");
+        }
         return;
       }
 
