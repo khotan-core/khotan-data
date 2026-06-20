@@ -93,6 +93,62 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
   return created;
 }
 
+/**
+ * Scaffold a Drizzle config + db instance so the factory's `@/db` import
+ * resolves and `migrate` works out of the box. Never overwrites existing files.
+ * Used by `init --full` (greenfield setup).
+ */
+export function scaffoldDrizzleSetup(cwd: string): StepResult {
+  const srcLayout = hasSrcLayout(cwd);
+  const schemaDirRel = srcLayout ? "src/db/schema" : "db/schema";
+  const dbDirRel = srcLayout ? "src/db" : "db";
+  const created: string[] = [];
+
+  const drizzleConfigPath = path.join(cwd, "drizzle.config.ts");
+  if (!fs.existsSync(drizzleConfigPath)) {
+    const content =
+      `import { defineConfig } from "drizzle-kit";\n` +
+      `\n` +
+      `export default defineConfig({\n` +
+      `  dialect: "postgresql",\n` +
+      `  schema: "./${schemaDirRel}/*",\n` +
+      `  out: "./drizzle",\n` +
+      `  dbCredentials: {\n` +
+      `    url: process.env.DATABASE_URL!,\n` +
+      `  },\n` +
+      `});\n`;
+    fs.writeFileSync(drizzleConfigPath, content, "utf-8");
+    created.push("drizzle.config.ts");
+  }
+
+  const dbIndexPath = path.join(cwd, dbDirRel, "index.ts");
+  if (!fs.existsSync(dbIndexPath)) {
+    fs.mkdirSync(path.dirname(dbIndexPath), { recursive: true });
+    const content =
+      `import { drizzle } from "drizzle-orm/postgres-js";\n` +
+      `import postgres from "postgres";\n` +
+      `\n` +
+      `const connectionString = process.env.DATABASE_URL;\n` +
+      `if (!connectionString) {\n` +
+      `  throw new Error("DATABASE_URL is not set");\n` +
+      `}\n` +
+      `\n` +
+      `const client = postgres(connectionString, { prepare: false });\n` +
+      `\n` +
+      `export const db = drizzle(client);\n`;
+    fs.writeFileSync(dbIndexPath, content, "utf-8");
+    created.push(`${dbDirRel}/index.ts`);
+  }
+
+  if (created.length > 0) {
+    console.log(`✓ Scaffolded Drizzle: ${created.join(", ")}`);
+    return { name: "Scaffold Drizzle config + db instance", status: "success" };
+  }
+
+  console.log("✓ Drizzle config + db instance already present, skipping");
+  return { name: "Scaffold Drizzle config + db instance", status: "skipped" };
+}
+
 // Proxy/middleware files that can intercept requests before they reach a route.
 const MIDDLEWARE_CANDIDATES = [
   "middleware.ts",
@@ -262,6 +318,9 @@ async function runFullSetup(
   } else {
     results.push({ name: "Scaffold core files", status: "skipped" });
   }
+
+  // Step 4b: Scaffold Drizzle config + db instance so `@/db` resolves
+  results.push(scaffoldDrizzleSetup(cwd));
 
   // Step 5: Install khotan-data package
   results.push(ensureKhotanDataInstalled(cwd));
