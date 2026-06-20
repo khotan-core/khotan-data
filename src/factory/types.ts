@@ -130,6 +130,10 @@ export interface FlowRunContext {
     to?: string | null;
   };
   runType: string;
+  /** Optional named variant for this run; lets a flow branch its
+   *  extract/transform/load behavior. Passed via trigger `--variant` or the
+   *  request/start body. Undefined for scheduled (cron) runs. */
+  variant?: string | undefined;
   body?: unknown;
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
@@ -146,6 +150,10 @@ export interface FlowWorkflowContext {
     to?: string | null;
   };
   runType: string;
+  /** Optional named variant for this run; lets a flow branch its
+   *  extract/transform/load behavior. Passed via trigger `--variant` or the
+   *  request/start body. Undefined for scheduled (cron) runs. */
+  variant?: string | undefined;
   body?: unknown;
   vars: Record<string, string>;
   plugVarsByName?: Record<string, Record<string, string>>;
@@ -654,6 +662,8 @@ export interface WireInstance {
 
 export interface FlowStartOptions {
   runType?: string;
+  /** Optional named variant passed through to the flow context as ctx.variant. */
+  variant?: string | undefined;
   body?: unknown;
 }
 

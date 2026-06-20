@@ -984,6 +984,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       typeof requestBody["runType"] === "string"
         ? requestBody["runType"]
         : "full";
+    const variant =
+      typeof requestBody["variant"] === "string"
+        ? requestBody["variant"]
+        : undefined;
 
     const { id: runId } = await adapter.insertRun({
       flowId,
@@ -1088,6 +1092,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           {
             flow: flowContext,
             runType,
+            variant,
             body: requestBody["body"],
             vars,
             plugVarsByName,
@@ -1112,6 +1117,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           workflowRunId,
           status: "running",
           runType,
+          variant,
         });
       }
 
@@ -1119,6 +1125,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         plug: boundPlug,
         flow: flowContext,
         runType,
+        variant,
         body: requestBody["body"],
         vars,
         setVars: setFlowVars,
@@ -1133,6 +1140,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         flowId,
         status,
         runType,
+        variant,
         ...counters,
         error: runResult?.error ?? null,
         metadata: runResult?.metadata ?? null,
