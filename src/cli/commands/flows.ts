@@ -123,16 +123,26 @@ withApiOptions(
       "Run type: full, delta, backfill, reconcile, dry-run",
       "full",
     )
+    .option(
+      "--variant <name>",
+      "Named variant passed to the flow context as ctx.variant",
+    )
     .option("--body <json>", "JSON body passed to the flow context"),
 ).action(
   async (
     flowNameOrId: string,
-    opts: ApiOptions & { plug?: string; runType: string; body?: string },
+    opts: ApiOptions & {
+      plug?: string;
+      runType: string;
+      variant?: string;
+      body?: string;
+    },
   ) => {
     const baseUrl = resolveBaseUrl(opts);
     await checkConnectivity(baseUrl);
     const flow = resolveFlow(await listFlows(baseUrl), flowNameOrId, opts.plug);
     const requestBody: Record<string, unknown> = { runType: opts.runType };
+    if (opts.variant !== undefined) requestBody["variant"] = opts.variant;
     const body = parseJsonOption(opts.body, "--body");
     if (body !== undefined) requestBody["body"] = body;
 
