@@ -204,6 +204,36 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.readFileSync(khotanPath, "utf-8")).toBe("// user modified");
       expect(fs.readFileSync(routePath, "utf-8")).toBe("// user route");
     });
+
+    it("--skills-only installs skills without scaffolding core files", () => {
+      // Pre-create an agent marker so skills install deterministically.
+      fs.mkdirSync(path.join(tmpDir, ".cursor"), { recursive: true });
+
+      const result = run("init --skills-only --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+
+      // A known skill landed under the detected agent root.
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, ".cursor", "skills", "khotan-build", "SKILL.md"),
+        ),
+      ).toBe(true);
+
+      // No runtime code files were scaffolded.
+      expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "khotan", "khotan.ts"))).toBe(
+        false,
+      );
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(false);
+    });
+
+    it("rejects --skills-only combined with --full", () => {
+      const result = run("init --skills-only --full", tmpDir);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("cannot be combined");
+    });
   });
 
   describe("add", () => {
@@ -764,7 +794,10 @@ describe("CLI", { timeout: 30_000 }, () => {
           return;
         }
 
-        if (req.method === "POST" && url.pathname === "/api/khotan/mappings/lookup") {
+        if (
+          req.method === "POST" &&
+          url.pathname === "/api/khotan/mappings/lookup"
+        ) {
           lastLookupBody = await readJsonBody(req);
           sendJson(res, 200, {
             id: "mapping-1",
@@ -2002,7 +2035,10 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("scaffolds the reusable mapping browser component", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, {});
-      fs.writeFileSync(path.join(tmpDir, "components.json"), JSON.stringify({}));
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       seedUi(tmpDir);
       run("init", tmpDir);
 
@@ -2019,7 +2055,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.existsSync(componentPath)).toBe(true);
       const content = fs.readFileSync(componentPath, "utf-8");
       expect(content).toContain("export function KhotanMappingBrowser");
-      expect(content).toContain('/api/khotan/resources');
+      expect(content).toContain("/api/khotan/resources");
       expect(content).not.toContain('from "khotan-data"');
       expect(content).not.toContain("from 'khotan-data'");
     });
@@ -2027,7 +2063,10 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("scaffolds mappings-page-1 and auto-adds mapping-browser", () => {
       fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
       writePkgJson(tmpDir, {});
-      fs.writeFileSync(path.join(tmpDir, "components.json"), JSON.stringify({}));
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
       seedUi(tmpDir, true);
       run("init", tmpDir);
 
@@ -2044,13 +2083,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         "khotan",
         "mapping-browser.tsx",
       );
-      const pagePath = path.join(
-        tmpDir,
-        "src",
-        "app",
-        "mappings",
-        "page.tsx",
-      );
+      const pagePath = path.join(tmpDir, "src", "app", "mappings", "page.tsx");
       expect(fs.existsSync(componentPath)).toBe(true);
       expect(fs.existsSync(pagePath)).toBe(true);
       expect(fs.readFileSync(pagePath, "utf-8")).toContain(

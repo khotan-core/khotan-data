@@ -428,86 +428,110 @@ export const initCommand = new Command("init")
     "--full",
     "Full project setup: install drizzle, shadcn, and configure everything",
   )
+  .option(
+    "--skills-only",
+    "Only install agent skills; skip config, core files, and package install",
+  )
   .option("-y, --yes", "Auto-accept all prompts (non-interactive mode)")
-  .action(async (opts: { full?: boolean; yes?: boolean }) => {
-    const cwd = process.cwd();
+  .action(
+    async (opts: { full?: boolean; skillsOnly?: boolean; yes?: boolean }) => {
+      const cwd = process.cwd();
 
-    if (opts.full) {
-      console.log("Running full khotan setup...\n");
-      const results = await runFullSetup(cwd, opts);
-
-      const succeeded = results.filter((r) => r.status === "success");
-      const skipped = results.filter((r) => r.status === "skipped");
-      const failed = results.filter((r) => r.status === "failed");
-
-      console.log("\n── Setup Summary ──");
-      for (const r of succeeded) {
-        console.log(`  ✓ ${r.name}`);
-      }
-      for (const r of skipped) {
-        console.log(`  ⊘ ${r.name} (already done)`);
-      }
-      for (const r of failed) {
-        console.log(`  ✗ ${r.name}: ${r.error ?? "unknown error"}`);
-      }
-
-      if (failed.length > 0) {
-        console.log(
-          `\n${String(failed.length)} step(s) failed. You may need to run them manually.`,
-        );
+      if (opts.skillsOnly && opts.full) {
+        console.error("✗ --skills-only cannot be combined with --full");
         process.exit(1);
+      }
+
+      // Skills-only: install the agent skill set and nothing else. Useful in
+      // polyrepo setups where the khotan-data runtime lives elsewhere and this
+      // location only hosts the skills the agent operates from.
+      if (opts.skillsOnly) {
+        const count = scaffoldAgentSkills(cwd, opts.yes ?? false);
+        console.log(
+          count > 0
+            ? `✓ Installed ${String(count)} agent skills`
+            : "✓ Agent skills already up to date",
+        );
+        return;
+      }
+
+      if (opts.full) {
+        console.log("Running full khotan setup...\n");
+        const results = await runFullSetup(cwd, opts);
+
+        const succeeded = results.filter((r) => r.status === "success");
+        const skipped = results.filter((r) => r.status === "skipped");
+        const failed = results.filter((r) => r.status === "failed");
+
+        console.log("\n── Setup Summary ──");
+        for (const r of succeeded) {
+          console.log(`  ✓ ${r.name}`);
+        }
+        for (const r of skipped) {
+          console.log(`  ⊘ ${r.name} (already done)`);
+        }
+        for (const r of failed) {
+          console.log(`  ✗ ${r.name}: ${r.error ?? "unknown error"}`);
+        }
+
+        if (failed.length > 0) {
+          console.log(
+            `\n${String(failed.length)} step(s) failed. You may need to run them manually.`,
+          );
+          process.exit(1);
+        } else {
+          console.log("\nAll done! Your project is ready for khotan.");
+        }
+
+        return;
+      }
+
+      const configPath = path.resolve(cwd, "khotan.config.ts");
+      const outputDir = resolveOutputDir(cwd);
+
+      if (fs.existsSync(configPath)) {
+        console.log(`✓ khotan.config.ts already exists, skipping`);
       } else {
-        console.log("\nAll done! Your project is ready for khotan.");
+        fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
+        console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
       }
 
-      return;
-    }
+      const coreFiles = scaffoldCoreFiles(cwd, outputDir);
 
-    const configPath = path.resolve(cwd, "khotan.config.ts");
-    const outputDir = resolveOutputDir(cwd);
+      ensureKhotanDataInstalled(cwd);
 
-    if (fs.existsSync(configPath)) {
-      console.log(`✓ khotan.config.ts already exists, skipping`);
-    } else {
-      fs.writeFileSync(configPath, configTemplate(outputDir), "utf-8");
-      console.log(`✓ Created khotan.config.ts (outputDir: ${outputDir})`);
-    }
+      warnAboutWorkflowProxy(cwd);
 
-    const coreFiles = scaffoldCoreFiles(cwd, outputDir);
-
-    ensureKhotanDataInstalled(cwd);
-
-    warnAboutWorkflowProxy(cwd);
-
-    // Offer to install agent skills — --yes makes this non-interactive
-    let shouldInstallSkills = opts.yes ?? false;
-    if (!shouldInstallSkills && process.stdin.isTTY) {
-      const response = await prompts({
-        type: "confirm",
-        name: "install",
-        message: "Install agent skills for AI-assisted development? (Y/n)",
-        initial: true,
-      });
-      shouldInstallSkills = response.install === true;
-    }
-    if (shouldInstallSkills) {
-      const count = scaffoldAgentSkills(cwd, opts.yes ?? false);
-      if (count > 0) {
-        console.log(`✓ Installed ${String(count)} agent skills`);
+      // Offer to install agent skills — --yes makes this non-interactive
+      let shouldInstallSkills = opts.yes ?? false;
+      if (!shouldInstallSkills && process.stdin.isTTY) {
+        const response = await prompts({
+          type: "confirm",
+          name: "install",
+          message: "Install agent skills for AI-assisted development? (Y/n)",
+          initial: true,
+        });
+        shouldInstallSkills = response.install === true;
       }
-    }
+      if (shouldInstallSkills) {
+        const count = scaffoldAgentSkills(cwd, opts.yes ?? false);
+        if (count > 0) {
+          console.log(`✓ Installed ${String(count)} agent skills`);
+        }
+      }
 
-    const allFiles = [
-      ...(fs.existsSync(configPath) && coreFiles.length === 0
-        ? []
-        : ["khotan.config.ts"]),
-      ...coreFiles,
-    ];
+      const allFiles = [
+        ...(fs.existsSync(configPath) && coreFiles.length === 0
+          ? []
+          : ["khotan.config.ts"]),
+        ...coreFiles,
+      ];
 
-    if (allFiles.length > 0 || coreFiles.length > 0) {
-      console.log("\nNext steps:");
-      console.log("  1. Update the db import in your khotan config file");
-      console.log("  2. Run `npx khotan add plug` to add the HTTP client");
-      console.log("  3. Run `npx khotan migrate` to create database tables");
-    }
-  });
+      if (allFiles.length > 0 || coreFiles.length > 0) {
+        console.log("\nNext steps:");
+        console.log("  1. Update the db import in your khotan config file");
+        console.log("  2. Run `npx khotan add plug` to add the HTTP client");
+        console.log("  3. Run `npx khotan migrate` to create database tables");
+      }
+    },
+  );
