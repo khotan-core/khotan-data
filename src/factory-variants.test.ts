@@ -46,6 +46,7 @@ interface MockRun {
   updated: number;
   deleted: number;
   failed: number;
+  skipped: number;
   error: string | null;
   metadata: Record<string, unknown> | null;
 }
@@ -128,6 +129,7 @@ function createMockAdapter() {
         updated: 0,
         deleted: 0,
         failed: 0,
+        skipped: 0,
         error: null,
         metadata: null,
       });
@@ -575,6 +577,7 @@ describe("slackNotifier", () => {
         updated: 0,
         deleted: 0,
         failed: 2,
+        skipped: 0,
         error: "kaboom",
       },
     );

@@ -765,6 +765,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           updated: updates.updated,
           deleted: updates.deleted,
           failed: updates.failed,
+          skipped: updates.skipped,
           error: updates.error,
           metadata: updates.metadata,
         })

@@ -42,6 +42,7 @@ export interface FlowRunResult {
   updated?: number;
   deleted?: number;
   failed?: number;
+  skipped?: number;
   error?: string | null;
   metadata?: Record<string, unknown> | null;
 }
@@ -68,7 +69,7 @@ export interface BoundPlug {
   ): Promise<T>;
   delete<T>(
     path: string,
-    options?: { headers?: Record<string, string> },
+    options?: { body?: unknown; headers?: Record<string, string> },
   ): Promise<T>;
 }
 
@@ -112,6 +113,7 @@ export interface BindablePlug {
   delete<T>(
     path: string,
     options?: {
+      body?: unknown;
       headers?: Record<string, string>;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
@@ -149,6 +151,7 @@ export interface RunSummary {
   updated: number;
   deleted: number;
   failed: number;
+  skipped: number;
   error: string | null;
 }
 
@@ -633,6 +636,7 @@ export interface KhotanAdapter {
       updated?: number;
       deleted?: number;
       failed?: number;
+      skipped?: number;
       error?: string | null;
       metadata?: Record<string, unknown> | null;
     },
@@ -846,7 +850,10 @@ export function bindPlugWithVars(
     ) {
       return plug.patch<T>(path, opts(extra));
     },
-    delete<T>(path: string, extra?: { headers?: Record<string, string> }) {
+    delete<T>(
+      path: string,
+      extra?: { body?: unknown; headers?: Record<string, string> },
+    ) {
       return plug.delete<T>(path, opts(extra));
     },
   };

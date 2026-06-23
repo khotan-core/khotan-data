@@ -53,6 +53,7 @@ interface StoredRun {
   updated: number;
   deleted: number;
   failed: number;
+  skipped: number;
   error: string | null;
   metadata: Record<string, unknown> | null;
 }
@@ -620,6 +621,7 @@ function createMockAdapter(): KhotanAdapter {
         updated: 0,
         deleted: 0,
         failed: 0,
+        skipped: 0,
         error: null,
         metadata: null,
       });
@@ -744,6 +746,41 @@ describe("bindWorkflowPlug", () => {
       vars: { _token: "token-1" },
     });
     expect(ctx.plugVarsByName["pollinate"]).toEqual({ _token: "token-1" });
+  });
+
+  it("forwards a request body on delete for batch soft-delete", async () => {
+    const del = vi.fn(async () => ({ ok: true }));
+    const plug = {
+      get: vi.fn(),
+      post: vi.fn(),
+      put: vi.fn(),
+      patch: vi.fn(),
+      delete: del,
+    };
+
+    const ctx = {
+      flow: {
+        id: "flow-1",
+        name: "purge-products",
+        plugName: "cin7",
+        type: "outflow" as const,
+        resource: "products",
+        to: null,
+      },
+      variant: "delta",
+      vars: { _token: "abc" },
+      khotanRunId: "run-1",
+    };
+
+    const boundPlug = bindWorkflowPlug(plug, ctx);
+    // Type-checks: delete now accepts a body alongside headers.
+    await boundPlug.delete("/products", { body: { ids: [1, 2, 3] } });
+
+    expect(del).toHaveBeenCalledTimes(1);
+    expect(del.mock.calls[0]?.[1]).toMatchObject({
+      body: { ids: [1, 2, 3] },
+      vars: { _token: "abc" },
+    });
   });
 });
 
@@ -1459,6 +1496,50 @@ describe("khotan factory", () => {
       expect(adapter.updateFlowLastRun).toHaveBeenCalledWith(
         "flow-1",
         expect.objectContaining({ lastRunStatus: "completed" }),
+      );
+    });
+
+    it("POST /api/khotan/flows/:id/runs threads a skipped counter through the run response and updateRun", async () => {
+      const run = vi.fn(async () => ({
+        skipped: 5,
+      }));
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", run }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      const res = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "run-1",
+        // skipped is neutral: a run with only skipped records still completes.
+        status: "completed",
+        skipped: 5,
+      });
+      expect(adapter.updateRun).toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({
+          status: "completed",
+          skipped: 5,
+        }),
       );
     });
 

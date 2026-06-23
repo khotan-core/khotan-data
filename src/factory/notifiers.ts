@@ -61,6 +61,7 @@ export function slackNotifier(webhookUrl: string): FlowHook {
         created: run.created,
         updated: run.updated,
         deleted: run.deleted,
+        skipped: run.skipped,
         failed: run.failed,
         error: run.error,
       }),
