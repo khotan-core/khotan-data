@@ -41,7 +41,10 @@ export class PlugError extends Error {
 
 export interface AuthStrategy {
   type: string;
-  apply(headers: Headers): void | Promise<void>;
+  /** Mutate the outgoing request headers. Receives the plug's bound vars
+   *  (decrypted plug variables for this run) so a custom strategy can read
+   *  credentials without reaching back into the factory. */
+  apply(headers: Headers, vars?: Record<string, string>): void | Promise<void>;
   onUnauthorized?: () => void | Promise<void>;
   baseUrl?: string;
 }
@@ -86,7 +89,7 @@ export function apiKey(
 }
 
 export function custom(
-  fn: (headers: Headers) => void | Promise<void>,
+  fn: (headers: Headers, vars?: Record<string, string>) => void | Promise<void>,
 ): AuthStrategy {
   return {
     type: "custom",
@@ -126,6 +129,13 @@ export interface TokenExchangeConfig {
   tokenEndpoint: string;
   buildTokenRequest: (vars: Record<string, string>) => {
     headers?: Record<string, string>;
+    /**
+     * Request body. A plain object is JSON-encoded with a default
+     * `Content-Type: application/json`. A `string` or `URLSearchParams` is sent
+     * verbatim and the `Content-Type` you set in `headers` is honored — use this
+     * for OAuth2 endpoints that require `application/x-www-form-urlencoded`, e.g.
+     * `body: new URLSearchParams({ grant_type: "client_credentials" })`.
+     */
     body?: unknown;
     method?: string;
   };
@@ -165,8 +175,23 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
     const reqConfig = config.buildTokenRequest(vars);
 
     const headers = new Headers(reqConfig.headers);
-    if (reqConfig.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
+    // Send a pre-encoded body (string / URLSearchParams) verbatim and honor the
+    // caller's Content-Type; only JSON-encode plain objects (and default the
+    // Content-Type for them). This lets token endpoints that require
+    // application/x-www-form-urlencoded work without a custom AuthStrategy.
+    let tokenBody: BodyInit | undefined;
+    if (reqConfig.body == null) {
+      tokenBody = undefined;
+    } else if (
+      typeof reqConfig.body === "string" ||
+      reqConfig.body instanceof URLSearchParams
+    ) {
+      tokenBody = reqConfig.body;
+    } else {
+      tokenBody = JSON.stringify(reqConfig.body);
+      if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
     }
 
     const endpoint = resolveEndpoint();
@@ -174,7 +199,7 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
     const res = await fetch(endpoint, {
       method: reqConfig.method ?? "POST",
       headers,
-      body: reqConfig.body ? JSON.stringify(reqConfig.body) : undefined,
+      body: tokenBody,
     });
 
     if (!res.ok) {
@@ -423,7 +448,14 @@ export interface EndpointDef {
 
 export interface PlugConfig<V extends readonly VarField[] = VarField[]> {
   name?: string;
-  baseUrl: string;
+  /**
+   * Base URL for the connector. Pass a string for a single fixed host, or a
+   * function of the plug's bound vars to resolve the host per environment /
+   * tenant at request time (e.g. `(vars) => vars.baseUrl ?? PROD_URL`). The
+   * debug/probe route binds the same vars, so it targets the same host a flow
+   * would — no probe/flow divergence.
+   */
+  baseUrl: string | ((vars: VarsRecord<V>) => string);
   auth?: AuthStrategy;
   vars?: V;
   endpoints?: Record<string, EndpointDef>;
@@ -457,7 +489,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 
   constructor(config: PlugConfig<V>) {
     this.config = config;
-    if (config.auth) {
+    // For a static baseUrl, seed the auth strategy once (used to resolve
+    // relative token endpoints). For a dynamic (function) baseUrl, the auth
+    // baseUrl is refreshed per request in request() from the bound vars.
+    if (config.auth && typeof config.baseUrl === "string") {
       config.auth.baseUrl = config.baseUrl;
     }
   }
@@ -467,7 +502,20 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
   }
 
   get baseUrl(): string {
-    return this.config.baseUrl;
+    return this.resolveBaseUrl();
+  }
+
+  /**
+   * Resolve the effective base URL. When `baseUrl` is a function it is invoked
+   * with the request's bound vars, enabling per-environment / per-tenant hosts
+   * sourced from plug vars. Flows and the debug/probe route both pass their
+   * bound vars, so they resolve to the same host.
+   */
+  resolveBaseUrl(vars?: Record<string, string>): string {
+    const { baseUrl } = this.config;
+    return typeof baseUrl === "function"
+      ? baseUrl((vars ?? {}) as VarsRecord<V>)
+      : baseUrl;
   }
 
   get authType(): string {
@@ -507,7 +555,13 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     path: string,
     options?: RequestOptions,
   ): Promise<T> {
-    const url = this.buildUrl(path, options?.params);
+    const base = this.resolveBaseUrl(options?.vars);
+    // Refresh the auth strategy's baseUrl per request when it's dynamic, so
+    // relative token endpoints resolve against the current environment.
+    if (this.config.auth && typeof this.config.baseUrl === "function") {
+      this.config.auth.baseUrl = base;
+    }
+    const url = this.buildUrl(base, path, options?.params);
     const headers = this.buildHeaders(options?.headers);
 
     if (!options?._skipHooks && this.config.hooks?.beforeRequest) {
@@ -524,7 +578,7 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     }
 
     if (this.config.auth) {
-      await this.config.auth.apply(headers);
+      await this.config.auth.apply(headers, options?.vars);
     }
 
     const authWithQuery = this.config.auth as AuthStrategy & {
@@ -589,10 +643,14 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     return this.with({ auth });
   }
 
-  private buildUrl(path: string, params?: Record<string, unknown>): string {
-    const base = this.config.baseUrl.replace(/\/+$/, "");
+  private buildUrl(
+    base: string,
+    path: string,
+    params?: Record<string, unknown>,
+  ): string {
+    const trimmedBase = base.replace(/\/+$/, "");
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
-    const url = new URL(`${base}${cleanPath}`);
+    const url = new URL(`${trimmedBase}${cleanPath}`);
 
     if (params) {
       for (const [key, value] of Object.entries(params)) {
@@ -643,7 +701,7 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
         );
         await this.config.auth.onUnauthorized();
         const freshHeaders = this.buildHeaders(options?.headers);
-        await this.config.auth.apply(freshHeaders);
+        await this.config.auth.apply(freshHeaders, options?.vars);
         return this._fetch<T>(method, url, freshHeaders, options);
       }
       throw error;
@@ -702,7 +760,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
           const setVars = options?._setVars ?? (async () => {});
           await this.config.hooks.afterResponse(response.clone(), {
             url,
-            path: url.replace(this.config.baseUrl.replace(/\/+$/, ""), ""),
+            path: url.replace(
+              this.resolveBaseUrl(options?.vars).replace(/\/+$/, ""),
+              "",
+            ),
             method,
             headers,
             body: options?.body,

@@ -10,6 +10,7 @@ import {
   keysetPagination,
   offsetPagination,
   plug,
+  tokenExchange,
 } from "./plug.js";
 
 const BASE = "https://api.example.com";
@@ -490,5 +491,130 @@ describe("pagination", () => {
         }
       })(),
     ).rejects.toThrow("Pagination strategy must be configured");
+  });
+});
+
+describe("dynamic baseUrl (per-environment)", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("resolves baseUrl from a function of the request's bound vars", async () => {
+    const w = plug({
+      baseUrl: (vars: Record<string, string>) =>
+        vars["host"] ?? "https://default.example.com",
+      retry: false,
+    });
+    await w.get("/items", { vars: { host: "https://live.example.com" } });
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toBe("https://live.example.com/items");
+  });
+
+  it("falls back to the function's default when no var is provided", async () => {
+    const w = plug({
+      baseUrl: (vars: Record<string, string>) =>
+        vars["host"] ?? "https://default.example.com",
+      retry: false,
+    });
+    await w.get("/items");
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toBe("https://default.example.com/items");
+  });
+});
+
+describe("custom auth receives bound vars", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("passes the request's vars to a custom() strategy", async () => {
+    const w = plug({
+      baseUrl: BASE,
+      auth: custom((headers, vars) => {
+        headers.set("Authorization", `Bearer ${vars?.["token"] ?? "none"}`);
+      }),
+      retry: false,
+    });
+    await w.get("/test", { vars: { token: "from_vars_123" } });
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer from_vars_123");
+  });
+});
+
+describe("tokenExchange body encoding", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends a URLSearchParams token body verbatim with the caller's Content-Type", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ access_token: "tok_abc" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const w = plug({
+      baseUrl: BASE,
+      auth: tokenExchange({
+        getVariables: () => ({ clientId: "id", clientSecret: "secret" }),
+        tokenEndpoint: "/oauth/token",
+        buildTokenRequest: (vars) => ({
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: vars["clientId"]!,
+            client_secret: vars["clientSecret"]!,
+          }),
+        }),
+        parseTokenResponse: (data) => ({
+          accessToken: (data as { access_token: string }).access_token,
+        }),
+      }),
+      retry: false,
+    });
+
+    await w.get("/test");
+
+    const tokenCall = fetchSpy.mock.calls[0];
+    expect(tokenCall[0]).toBe(`${BASE}/oauth/token`);
+    const tokenInit = tokenCall[1]!;
+    // Body is forwarded as URLSearchParams, NOT JSON.stringify'd.
+    expect(tokenInit.body).toBeInstanceOf(URLSearchParams);
+    expect((tokenInit.body as URLSearchParams).get("grant_type")).toBe(
+      "client_credentials",
+    );
+    expect((tokenInit.headers as Headers).get("Content-Type")).toBe(
+      "application/x-www-form-urlencoded",
+    );
+    // The actual request then carries the bearer token from the exchange.
+    const apiHeaders = fetchSpy.mock.calls[1][1]!.headers as Headers;
+    expect(apiHeaders.get("Authorization")).toBe("Bearer tok_abc");
+  });
+
+  it("still JSON-encodes a plain object token body with a default Content-Type", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ access_token: "tok_json" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const w = plug({
+      baseUrl: BASE,
+      auth: tokenExchange({
+        getVariables: () => ({ key: "v" }),
+        tokenEndpoint: "/oauth/token",
+        buildTokenRequest: (vars) => ({ body: { key: vars["key"] } }),
+        parseTokenResponse: (data) => ({
+          accessToken: (data as { access_token: string }).access_token,
+        }),
+      }),
+      retry: false,
+    });
+
+    await w.get("/test");
+
+    const tokenInit = fetchSpy.mock.calls[0][1]!;
+    expect(tokenInit.body).toBe(JSON.stringify({ key: "v" }));
+    expect((tokenInit.headers as Headers).get("Content-Type")).toBe(
+      "application/json",
+    );
   });
 });
