@@ -114,7 +114,7 @@ recorded. Never call the workflow function directly.
 import khotanData from "@/lib/khotan/khotan";
 
 await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
-  runType: "delta", // full | delta | backfill | reconcile | dry-run
+  variant: "delta", // the run mode; defaults to "default"
 });
 ```
 
@@ -126,7 +126,9 @@ and scheduled runs alike.
 
 ```bash
 npx khotan flows list
-npx khotan flows trigger <flowName> --run-type full
+npx khotan flows trigger <flowName>            # runs the "default" variant
+npx khotan flows trigger <flowName> delta      # runs the "delta" variant
+npx khotan flows trigger <flowName> --variant healthcheck
 npx khotan flows runs <flowName>
 npx khotan flows cancel <runId>
 ```
@@ -140,7 +142,7 @@ your machine.
 There is **no** `POST /flows/:name/run` route. The HTTP trigger is:
 
 ```
-POST /api/khotan/flows/{flowId}/runs    body: { "runType": "delta" }
+POST /api/khotan/flows/{flowId}/runs    body: { "variant": "delta" }
 ```
 
 This is a **management route**, so it goes through your `authorize` hook.
@@ -150,10 +152,76 @@ sending `Authorization: Bearer <KHOTAN_SECRET>` returns `401` with
 accepts (a session cookie, or your own token you validate inside `authorize`).
 Prefer server-side `khotanData.flow(name).start()` whenever you can.
 
-## Run types
+## Variants (run modes)
 
-`full` (everything), `delta` (changes since last run), `backfill` (historical
-catch-up), `reconcile` (verify/repair), `dry-run` (no writes).
+A flow can declare a `variants` map of named run modes, each with its own
+optional `schedule` and lifecycle hooks. The variant **name** is the mode —
+flow code branches on `ctx.variant`. A flow that declares no `variants` is
+treated as having a single implicit `default` variant carrying the top-level
+`schedule` (so `ctx.variant === "default"`).
+
+`variants` and a top-level `schedule` are **mutually exclusive** — put the
+schedule inside a variant.
+
+```typescript
+import { inflow, type InflowContext } from "./inflow";
+import { slackNotifier } from "khotan-data/factory";
+
+export const itemsInflow = inflow({
+  name: "pronto-items-inflow",
+  resource: "items",
+  variants: {
+    // Cheap daily probe.
+    healthcheck: {
+      schedule: "0 6 * * *",
+      onError: slackNotifier(process.env.SLACK_WEBHOOK_URL!),
+    },
+    // Changes since the last run — branch on ctx.variant in your step.
+    delta: { schedule: "*/15 * * * *" },
+    // Full weekly rebuild.
+    full: { schedule: "0 2 * * 0" },
+    // No schedule → manual-only.
+    backfill: {},
+  },
+  workflow: itemsWorkflow,
+});
+```
+
+Inside the workflow, branch on the active variant:
+
+```typescript
+async function extractAndLoad(ctx: InflowContext) {
+  "use step";
+  const since = ctx.variant === "delta" ? await loadCursor(ctx) : undefined;
+  // ...fetch full vs. changed-only based on ctx.variant...
+}
+```
+
+### Lifecycle hooks
+
+Each variant may declare `onError` (fires on `failed`/`partial`) and
+`onComplete` (fires on success). Hooks receive `(ctx, run)` where `run`
+summarizes the finished run (status, variant, durationMs, counters, error).
+Use the built-in `slackNotifier(webhookUrl)` or write your own. A throwing hook
+is caught and logged — it never changes the recorded run status.
+
+### Triggering a variant
+
+```typescript
+await khotanData.flow("pronto-items-inflow").start({ variant: "delta" });
+```
+
+```bash
+npx khotan flows trigger pronto-items-inflow delta
+```
+
+If a flow declares variants and none is named `default`, triggering without a
+variant fails with an error listing the available variant names.
+
+> Migration note: `runType` is replaced by `variant`. `--run-type` (CLI) and
+> `{ runType }` (API/`start`) still work as deprecated aliases for one minor
+> release. The `khotan_runs.run_type` column is replaced by `variant` (the mode)
+> plus `source` (`scheduled` | `manual` | `webhook`).
 
 ## Scheduling on Vercel
 
@@ -165,8 +233,9 @@ single dispatcher cron instead of one platform cron per flow.
 { "crons": [{ "path": "/api/khotan/cron", "schedule": "* * * * *" }] }
 ```
 
-Then set `schedule` only on each flow. The dispatcher evaluates which flows are
-due on each tick and starts them through the normal run-tracking path. If
+Then set `schedule` on each flow (or per variant). The dispatcher evaluates
+every flow × variant on each tick and starts any whose `schedule` is due,
+passing that variant name. Variants without a `schedule` are manual-only. If
 `CRON_SECRET` is set, Vercel calls the route with
 `Authorization: Bearer <CRON_SECRET>`.
 

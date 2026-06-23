@@ -17,6 +17,11 @@ export type {
   FlowRunContext,
   FlowWorkflowContext,
   KhotanRunUpdate,
+  RunSource,
+  FlowHookContext,
+  RunSummary,
+  FlowHook,
+  FlowVariant,
   FlowRegistration,
   WireSubscribeContext,
   WireUnsubscribeContext,
@@ -56,3 +61,4 @@ export {
   sendUpdate,
 } from "./factory/workflow.js";
 export { khotan, toNextJsHandler } from "./factory/runtime.js";
+export { slackNotifier } from "./factory/notifiers.js";

@@ -22,11 +22,11 @@ async function extractAndLoad(ctx: InflowContext) {
   console.log("Starting inflow", {
     flow: ctx.flow.name,
     khotanRunId: ctx.khotanRunId,
-    runType: ctx.runType,
+    variant: ctx.variant,
   });
   await sendUpdate({
     message: "Starting product inflow",
-    metadata: { flow: ctx.flow.name, runType: ctx.runType },
+    metadata: { flow: ctx.flow.name, variant: ctx.variant },
   });
 
   const response = await fetch("https://api.example.com/products", {

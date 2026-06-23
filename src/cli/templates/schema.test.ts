@@ -75,7 +75,8 @@ describe("schema template", () => {
       const columns = Object.keys(khotanRuns);
       expect(columns).toContain("id");
       expect(columns).toContain("flowId");
-      expect(columns).toContain("runType");
+      expect(columns).toContain("variant");
+      expect(columns).toContain("source");
       expect(columns).toContain("status");
       expect(columns).toContain("startedAt");
       expect(columns).toContain("completedAt");

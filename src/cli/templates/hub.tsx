@@ -167,7 +167,7 @@ export function KhotanHub({
       const res = await fetch(`/api/khotan/flows/${flowId}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runType: "full" }),
+        body: JSON.stringify({ variant: "default" }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as {

@@ -265,16 +265,16 @@ describe("cron dispatch", () => {
     expect(typeof data["evaluated"]).toBe("number");
   });
 
-  it("POST /cron with custom runType", async () => {
+  it("POST /cron dispatches scheduled flows", async () => {
     const { status, body } = await fetchApi("/cron", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runType: "test" }),
+      body: JSON.stringify({}),
     });
     expect(status).toBe(200);
     const data = body as Record<string, unknown>;
     expect(data["ok"]).toBe(true);
-    expect(data["runType"]).toBe("test");
+    expect(typeof data["evaluated"]).toBe("number");
   });
 });
 

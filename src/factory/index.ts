@@ -17,6 +17,11 @@ export type {
   FlowRunContext,
   FlowWorkflowContext,
   KhotanRunUpdate,
+  RunSource,
+  FlowHookContext,
+  RunSummary,
+  FlowHook,
+  FlowVariant,
   FlowRegistration,
   WireSubscribeContext,
   WireUnsubscribeContext,
@@ -65,3 +70,6 @@ export {
 
 // Core factory
 export { khotan, toNextJsHandler } from "./runtime.js";
+
+// Batteries-included lifecycle hook helpers
+export { slackNotifier } from "./notifiers.js";

@@ -2,6 +2,8 @@ import type {
   CacheEntryRecord,
   CacheRegistration,
   CacheScope,
+  FlowRegistration,
+  FlowVariant,
   FlowRunResult,
   KhotanTerminalRunStatus,
   ResourceConnectField,
@@ -55,6 +57,48 @@ export function resolveTerminalRunStatus(
     return result.status;
   }
   return counters.failed > 0 ? "partial" : "completed";
+}
+
+export const DEFAULT_VARIANT = "default";
+
+/**
+ * Normalize a flow registration into a non-empty map of variants. A flow that
+ * declares no `variants` is treated as a single `default` variant carrying the
+ * flow's top-level `schedule`. Validates variant names and the schedule/variants
+ * mutual-exclusivity invariant; throws at config time on violation.
+ */
+export function normalizeFlowVariants(
+  flow: FlowRegistration,
+): Record<string, FlowVariant> {
+  const hasVariants =
+    flow.variants !== undefined && Object.keys(flow.variants).length > 0;
+
+  if (!hasVariants) {
+    return {
+      [DEFAULT_VARIANT]: flow.schedule ? { schedule: flow.schedule } : {},
+    };
+  }
+
+  if (flow.schedule !== undefined) {
+    throw new Error(
+      `Flow "${flow.name}" declares both a top-level "schedule" and "variants". ` +
+        `Move the schedule into a variant (e.g. variants: { default: { schedule } }).`,
+    );
+  }
+
+  const normalized: Record<string, FlowVariant> = {};
+  for (const [name, config] of Object.entries(flow.variants!)) {
+    if (typeof name !== "string" || !name.trim()) {
+      throw new Error(`Flow "${flow.name}" declares a variant with an empty name`);
+    }
+    if (name !== name.trim()) {
+      throw new Error(
+        `Flow "${flow.name}" variant name "${name}" must not have leading/trailing whitespace`,
+      );
+    }
+    normalized[name] = config ?? {};
+  }
+  return normalized;
 }
 
 export function extractEventTypes(body: Record<string, unknown>): string[] {

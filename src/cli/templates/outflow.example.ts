@@ -21,7 +21,7 @@ async function loadAndPush(ctx: OutflowContext) {
   console.log("Starting outflow", {
     flow: ctx.flow.name,
     khotanRunId: ctx.khotanRunId,
-    runType: ctx.runType,
+    variant: ctx.variant,
   });
 
   // Replace this with your app-specific DB query.

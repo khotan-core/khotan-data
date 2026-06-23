@@ -229,9 +229,18 @@ export const khotanRuns = pgTable(
       () => khotanWebhookHandlers.id,
     ),
     workflowRunId: text("workflow_run_id"),
-    runType: text("run_type", {
-      enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
-    }).notNull(),
+    // The variant (run mode) that executed, e.g. "default", "delta", "full",
+    // "healthcheck". Free-form — the variant name is the mode. The default is a
+    // migration safety net (so adding this NOT NULL column to a table with
+    // existing rows never fails); the runtime always sets it explicitly.
+    variant: text("variant").default("default").notNull(),
+    // How the run was triggered. Distinguishes scheduled/manual flow runs from
+    // inbound-webhook runs.
+    source: text("source", {
+      enum: ["scheduled", "manual", "webhook"],
+    })
+      .default("manual")
+      .notNull(),
     status: text("status", {
       enum: [
         "pending",

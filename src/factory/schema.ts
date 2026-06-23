@@ -182,9 +182,14 @@ export const khotanRuns = pgTable(
     wireId: text("wire_id"),
     webhookHandlerId: text("webhook_handler_id"),
     workflowRunId: text("workflow_run_id"),
-    runType: text("run_type", {
-      enum: ["full", "delta", "backfill", "reconcile", "dry-run", "webhook"],
-    }).notNull(),
+    // Default is a migration safety net so adding this NOT NULL column to a
+    // table with existing rows never fails; the runtime always supplies it.
+    variant: text("variant").default("default").notNull(),
+    source: text("source", {
+      enum: ["scheduled", "manual", "webhook"],
+    })
+      .default("manual")
+      .notNull(),
     status: text("status", {
       enum: [
         "pending",

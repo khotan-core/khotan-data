@@ -41,7 +41,8 @@ interface StoredRun {
   wireId: string | null;
   webhookHandlerId: string | null;
   workflowRunId: string | null;
-  runType: string;
+  variant: string;
+  source: "scheduled" | "manual" | "webhook";
   status: string;
   startedAt: Date;
   completedAt: Date | null;
@@ -599,7 +600,8 @@ function createMockAdapter(): KhotanAdapter {
         wireId: run.wireId ?? null,
         webhookHandlerId: run.webhookHandlerId ?? null,
         workflowRunId: run.workflowRunId ?? null,
-        runType: run.runType,
+        variant: run.variant,
+        source: run.source,
         status: run.status,
         startedAt: new Date(),
         completedAt: null,
@@ -712,7 +714,7 @@ describe("bindWorkflowPlug", () => {
         resource: "products",
         to: "pollinate",
       },
-      runType: "full",
+      variant: "full",
       vars: {},
       plugVarsByName: {
         pollinate: {},
@@ -1277,17 +1279,20 @@ describe("khotan factory", () => {
     it("GET /api/khotan/runs returns paginated log rows", async () => {
       await adapter.insertRun({
         flowId: "flow-1",
-        runType: "manual",
+        variant: "default",
+        source: "manual",
         status: "completed",
       });
       await adapter.insertRun({
         flowId: "flow-1",
-        runType: "manual",
+        variant: "default",
+        source: "manual",
         status: "failed",
       });
       await adapter.insertRun({
         flowId: "flow-1",
-        runType: "delta",
+        variant: "delta",
+        source: "manual",
         status: "running",
       });
 
@@ -1311,12 +1316,14 @@ describe("khotan factory", () => {
     it("GET /api/khotan/webhook-events returns paginated log rows", async () => {
       const { id: runId1 } = await adapter.insertRun({
         flowId: "flow-1",
-        runType: "webhook",
+        variant: "webhook",
+        source: "webhook",
         status: "completed",
       });
       const { id: runId2 } = await adapter.insertRun({
         flowId: "flow-1",
-        runType: "webhook",
+        variant: "webhook",
+        source: "webhook",
         status: "running",
       });
 
@@ -1384,7 +1391,7 @@ describe("khotan factory", () => {
       await flowInstance.init();
       const res = await flowInstance.handler(
         makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
-          runType: "delta",
+          variant: "delta",
           body: { limit: 10 },
         }),
       );
@@ -1392,14 +1399,15 @@ describe("khotan factory", () => {
       expect(res.status).toBe(200);
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          runType: "delta",
+          variant: "delta",
           body: { limit: 10 },
           flow: expect.objectContaining({ id: "flow-1", name: "products" }),
         }),
       );
       expect(adapter.insertRun).toHaveBeenCalledWith({
         flowId: "flow-1",
-        runType: "delta",
+        variant: "delta",
+        source: "manual",
         status: "running",
       });
       expect(adapter.updateRun).toHaveBeenCalledWith(
@@ -1561,7 +1569,7 @@ describe("khotan factory", () => {
       await flowInstance.init();
       const res = await flowInstance.handler(
         makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
-          runType: "full",
+          variant: "full",
         }),
       );
 
@@ -1577,7 +1585,7 @@ describe("khotan factory", () => {
         expect.objectContaining({
           khotanRunId: "run-1",
           khotanInstanceId: expect.any(String),
-          runType: "full",
+          variant: "full",
           flow: expect.objectContaining({
             id: "flow-1",
             name: "products",
@@ -1665,7 +1673,7 @@ describe("khotan factory", () => {
 
       const res = await flowInstance.handler(
         makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
-          runType: "full",
+          variant: "full",
         }),
       );
 
@@ -1759,7 +1767,7 @@ describe("khotan factory", () => {
       });
 
       const res = await relayInstance.handler(
-        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { runType: "full" }),
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { variant: "full" }),
       );
       expect(res.status).toBe(200);
 
@@ -2146,7 +2154,7 @@ describe("khotan factory", () => {
       await flowInstance.init();
       await flowInstance.handler(
         makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
-          runType: "delta",
+          variant: "delta",
         }),
       );
 
@@ -2158,7 +2166,7 @@ describe("khotan factory", () => {
         id: "run-2",
         flowId: "flow-1",
         status: "completed",
-        runType: "delta",
+        variant: "delta",
       });
       expect(run).toHaveBeenCalledTimes(2);
     });
@@ -2189,7 +2197,7 @@ describe("khotan factory", () => {
       });
 
       const data = await flowInstance.flow("products").start({
-        runType: "delta",
+        variant: "delta",
         body: { limit: 5 },
       });
 
@@ -2197,14 +2205,14 @@ describe("khotan factory", () => {
         id: "run-1",
         flowId: "flow-1",
         status: "completed",
-        runType: "delta",
+        variant: "delta",
         extracted: 1,
         transformed: 1,
         updated: 1,
       });
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          runType: "delta",
+          variant: "delta",
           body: { limit: 5 },
           flow: expect.objectContaining({ id: "flow-1", name: "products" }),
         }),

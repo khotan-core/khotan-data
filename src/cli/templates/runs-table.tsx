@@ -18,7 +18,8 @@ import {
 
 interface RunLogItem {
   id: string;
-  runType: string;
+  variant: string;
+  source: "scheduled" | "manual" | "webhook";
   status:
     | "pending"
     | "running"
@@ -466,7 +467,8 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                 <TableHead>Status</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Plug</TableHead>
-                <TableHead>Run Type</TableHead>
+                <TableHead>Variant</TableHead>
+                <TableHead>Source</TableHead>
                 <TableHead>Counts</TableHead>
                 <TableHead>Workflow</TableHead>
                 <TableHead />
@@ -476,7 +478,7 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
               {loading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={9}
                     className="text-sm text-muted-foreground"
                   >
                     Loading runs...
@@ -514,7 +516,10 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                         {item.plugName ?? "-"}
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {item.runType}
+                        {item.variant}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {item.source}
                       </TableCell>
                       <TableCell className="max-w-64 text-xs text-muted-foreground">
                         {formatCounts(item)}
@@ -538,7 +543,7 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                     </TableRow>
                     {expandedRunId === item.id ? (
                       <TableRow>
-                        <TableCell colSpan={8}>
+                        <TableCell colSpan={9}>
                           <RunDetails
                             run={item}
                             streamingEnabled={streamingEnabled}
@@ -553,7 +558,7 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={9}
                     className="text-sm text-muted-foreground"
                   >
                     No runs recorded yet.

@@ -12,6 +12,7 @@
 import type {
   FlowRegistration,
   FlowRunResult,
+  FlowVariant,
   FlowWorkflowContext,
 } from "khotan-data/factory";
 
@@ -30,8 +31,14 @@ export interface RelayConfig {
   to: string;
   /** Logical resource this flow moves, e.g. "products" */
   resource?: string;
-  /** Optional cron schedule used by scheduler integrations */
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
   schedule?: string;
+  /**
+   * Named run modes. Each variant may carry its own `schedule` and
+   * `onError`/`onComplete` hooks. Flow code branches on `ctx.variant`.
+   * Omit to get a single implicit `default` variant (using `schedule`).
+   */
+  variants?: Record<string, FlowVariant>;
   /** Durable workflow that reads from source and writes to destination */
   workflow: RelayWorkflow;
 }
@@ -42,7 +49,9 @@ export function relay(config: RelayConfig): FlowRegistration {
     type: "relay",
     to: config.to,
     resource: config.resource,
-    schedule: config.schedule,
+    ...(config.variants
+      ? { variants: config.variants }
+      : { schedule: config.schedule }),
     workflow: config.workflow as FlowRegistration["workflow"],
   };
 }
@@ -66,7 +75,7 @@ export function relay(config: RelayConfig): FlowRegistration {
 //     flow: ctx.flow.name,
 //     to: ctx.flow.to,
 //     khotanRunId: ctx.khotanRunId,
-//     runType: ctx.runType,
+//     variant: ctx.variant,
 //   });
 //   const shopify = bindWorkflowPlug(shopifyPlug, ctx);
 //   const hubspot = bindWorkflowPlug(hubspotPlug, ctx, "hubspot");

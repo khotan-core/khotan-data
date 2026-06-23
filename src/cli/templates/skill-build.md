@@ -101,7 +101,8 @@ handlers they want, unless already told. Then build only those, lean
 - If they asked for record matching/dedupe → `khotan-mappings`
 
 ```bash
-npx khotan flows trigger <flowName> --run-type full
+npx khotan flows trigger <flowName>        # default variant
+npx khotan flows trigger <flowName> delta  # a specific variant (run mode)
 npx khotan flows runs <flowName>
 ```
 

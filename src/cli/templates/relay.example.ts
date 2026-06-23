@@ -23,7 +23,7 @@ async function forwardProducts(ctx: RelayContext) {
     flow: ctx.flow.name,
     to: ctx.flow.to,
     khotanRunId: ctx.khotanRunId,
-    runType: ctx.runType,
+    variant: ctx.variant,
   });
 
   const sourceResponse = await fetch("https://source.example.com/products", {

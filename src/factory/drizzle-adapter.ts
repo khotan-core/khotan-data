@@ -738,13 +738,8 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           wireId: run.wireId ?? null,
           webhookHandlerId: run.webhookHandlerId ?? null,
           workflowRunId: run.workflowRunId ?? null,
-          runType: run.runType as
-            | "full"
-            | "delta"
-            | "backfill"
-            | "reconcile"
-            | "dry-run"
-            | "webhook",
+          variant: run.variant,
+          source: run.source,
           status: run.status as KhotanRunStatus,
         })
         .returning({ id: khotanRuns.id });

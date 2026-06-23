@@ -119,6 +119,59 @@ export interface BindablePlug {
   ): Promise<T>;
 }
 
+/** How a run was triggered. Distinguishes inbound webhook runs and scheduled
+ *  cron runs from manual/programmatic ones. */
+export type RunSource = "scheduled" | "manual" | "webhook";
+
+export interface FlowHookContext {
+  flow: {
+    id: string;
+    name: string;
+    plugName: string;
+    type: FlowType;
+    resource?: string | null;
+    to?: string | null;
+  };
+  /** The active variant for the finished run. */
+  variant: string;
+}
+
+/** Compact summary of a finished run, passed to variant lifecycle hooks. */
+export interface RunSummary {
+  id: string;
+  status: KhotanTerminalRunStatus;
+  variant: string;
+  source: RunSource;
+  durationMs: number;
+  extracted: number;
+  transformed: number;
+  created: number;
+  updated: number;
+  deleted: number;
+  failed: number;
+  error: string | null;
+}
+
+/** Lifecycle hook invoked when a run reaches a terminal state. Receives the
+ *  flow/variant context and a summary of the finished run. Hook errors are
+ *  caught and logged — they never change the recorded run status. */
+export type FlowHook = (
+  ctx: FlowHookContext,
+  run: RunSummary,
+) => void | Promise<void>;
+
+/** A named run mode for a flow. The variant name *is* the mode — flow code
+ *  branches on `ctx.variant`. Each variant may carry its own `schedule` and
+ *  terminal-state hooks. */
+export interface FlowVariant {
+  /** Optional cron schedule. Variants without a schedule are manual-only. */
+  schedule?: string;
+  /** Invoked when a run for this variant ends `failed` or `partial`. */
+  onError?: FlowHook;
+  /** Invoked when a run for this variant ends successfully. */
+  onComplete?: FlowHook;
+}
+
 export interface FlowRunContext {
   plug: BoundPlug;
   flow: {
@@ -129,11 +182,9 @@ export interface FlowRunContext {
     resource?: string | null;
     to?: string | null;
   };
-  runType: string;
-  /** Optional named variant for this run; lets a flow branch its
-   *  extract/transform/load behavior. Passed via trigger `--variant` or the
-   *  request/start body. Undefined for scheduled (cron) runs. */
-  variant?: string | undefined;
+  /** The active variant for this run. The variant name is the run mode — flow
+   *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
+  variant: string;
   body?: unknown;
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
@@ -149,11 +200,9 @@ export interface FlowWorkflowContext {
     resource?: string | null;
     to?: string | null;
   };
-  runType: string;
-  /** Optional named variant for this run; lets a flow branch its
-   *  extract/transform/load behavior. Passed via trigger `--variant` or the
-   *  request/start body. Undefined for scheduled (cron) runs. */
-  variant?: string | undefined;
+  /** The active variant for this run. The variant name is the run mode — flow
+   *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
+  variant: string;
   body?: unknown;
   vars: Record<string, string>;
   plugVarsByName?: Record<string, Record<string, string>>;
@@ -177,7 +226,14 @@ export interface KhotanRunUpdate {
 export interface FlowRegistration {
   name: string;
   type: FlowType;
+  /** Single cron schedule. Mutually exclusive with `variants`: a flow declares
+   *  either a top-level `schedule` (implicit `default` variant) OR a `variants`
+   *  map, never both. */
   schedule?: string;
+  /** Named run modes for this flow. Each variant may carry its own `schedule`
+   *  and lifecycle hooks. When omitted, the flow is normalized to a single
+   *  `default` variant carrying the top-level `schedule`. */
+  variants?: Record<string, FlowVariant>;
   resource?: string;
   to?: string;
   workflow?(ctx: FlowWorkflowContext): Promise<FlowRunResult | void>;
@@ -557,7 +613,8 @@ export interface KhotanAdapter {
     wireId?: string | null;
     webhookHandlerId?: string | null;
     workflowRunId?: string | null;
-    runType: string;
+    variant: string;
+    source: RunSource;
     status: string;
   }): Promise<{ id: string }>;
   updateRun(
@@ -661,9 +718,11 @@ export interface WireInstance {
 }
 
 export interface FlowStartOptions {
-  runType?: string;
-  /** Optional named variant passed through to the flow context as ctx.variant. */
+  /** Named variant selecting the run mode. Defaults to `default`. Exposed to
+   *  flow code as `ctx.variant`. */
   variant?: string | undefined;
+  /** @deprecated Use `variant`. Accepted as an alias for one minor release. */
+  runType?: string;
   body?: unknown;
 }
 

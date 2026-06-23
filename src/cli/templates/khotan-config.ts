@@ -68,7 +68,7 @@ export default khotanData;
 //
 //   import khotanData from "@/lib/khotan/khotan";
 //   await khotanData.flow("products-inflow", { plugName: "stripe" }).start({
-//     runType: "delta", // or "full"
+//     variant: "delta", // the variant (run mode); defaults to "default"
 //   });
 //
 // `flow(name).start(options)` is the single entry point — there is no

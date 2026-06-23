@@ -12,6 +12,7 @@
 import type {
   FlowRegistration,
   FlowRunResult,
+  FlowVariant,
   FlowWorkflowContext,
 } from "khotan-data/factory";
 
@@ -28,8 +29,14 @@ export interface InflowConfig {
   name: string;
   /** Logical resource this flow feeds, e.g. "products" */
   resource?: string;
-  /** Optional cron schedule used by scheduler integrations */
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
   schedule?: string;
+  /**
+   * Named run modes. Each variant may carry its own `schedule` and
+   * `onError`/`onComplete` hooks. Flow code branches on `ctx.variant`.
+   * Omit to get a single implicit `default` variant (using `schedule`).
+   */
+  variants?: Record<string, FlowVariant>;
   /** Durable workflow that extracts, transforms, and loads records */
   workflow: InflowWorkflow;
 }
@@ -39,7 +46,9 @@ export function inflow(config: InflowConfig): FlowRegistration {
     name: config.name,
     type: "inflow",
     resource: config.resource,
-    schedule: config.schedule,
+    ...(config.variants
+      ? { variants: config.variants }
+      : { schedule: config.schedule }),
     workflow: config.workflow as FlowRegistration["workflow"],
   };
 }
@@ -64,7 +73,7 @@ export function inflow(config: InflowConfig): FlowRegistration {
 //   console.log("Starting inflow", {
 //     flow: ctx.flow.name,
 //     khotanRunId: ctx.khotanRunId,
-//     runType: ctx.runType,
+//     variant: ctx.variant,
 //   });
 //   await sendUpdate({ message: "Starting Shopify products inflow" });
 //   const shopify = bindWorkflowPlug(shopifyPlug, ctx);

@@ -115,25 +115,29 @@ withApiOptions(
 withApiOptions(
   flowsCommand
     .command("trigger")
-    .description("Start a tracked flow run")
+    .description("Start a tracked flow run for a variant (run mode)")
     .argument("<flowNameOrId>", "Flow name or ID")
+    .argument(
+      "[variant]",
+      "Variant to run (e.g. delta, full, healthcheck). Defaults to 'default'.",
+    )
     .option("--plug <plugName>", "Disambiguate by plug name")
     .option(
-      "--run-type <type>",
-      "Run type: full, delta, backfill, reconcile, dry-run",
-      "full",
+      "--variant <name>",
+      "Named variant to run (alternative to the positional argument)",
     )
     .option(
-      "--variant <name>",
-      "Named variant passed to the flow context as ctx.variant",
+      "--run-type <type>",
+      "[deprecated] Alias for --variant; use a variant instead",
     )
     .option("--body <json>", "JSON body passed to the flow context"),
 ).action(
   async (
     flowNameOrId: string,
+    variantArg: string | undefined,
     opts: ApiOptions & {
       plug?: string;
-      runType: string;
+      runType?: string;
       variant?: string;
       body?: string;
     },
@@ -141,8 +145,17 @@ withApiOptions(
     const baseUrl = resolveBaseUrl(opts);
     await checkConnectivity(baseUrl);
     const flow = resolveFlow(await listFlows(baseUrl), flowNameOrId, opts.plug);
-    const requestBody: Record<string, unknown> = { runType: opts.runType };
-    if (opts.variant !== undefined) requestBody["variant"] = opts.variant;
+
+    // Variant resolution priority: positional arg > --variant > deprecated
+    // --run-type. When none is given the server falls back to "default".
+    const variant = variantArg ?? opts.variant;
+    const requestBody: Record<string, unknown> = {};
+    if (variant !== undefined) {
+      requestBody["variant"] = variant;
+    } else if (opts.runType !== undefined) {
+      requestBody["runType"] = opts.runType;
+    }
+
     const body = parseJsonOption(opts.body, "--body");
     if (body !== undefined) requestBody["body"] = body;
 

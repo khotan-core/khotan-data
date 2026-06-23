@@ -25,6 +25,8 @@ import {
   getFlowRunCounters,
   resolveTerminalRunStatus,
   readEncryptedJson,
+  normalizeFlowVariants,
+  DEFAULT_VARIANT,
 } from "./helpers.js";
 import {
   importWorkflowStart,
@@ -53,6 +55,11 @@ import type {
   CatchRegistration,
   PassRegistration,
   VarField,
+  FlowVariant,
+  FlowHook,
+  FlowHookContext,
+  RunSource,
+  RunSummary,
 } from "./types.js";
 import { bindPlugWithVars, khotanRuntimeRegistry } from "./types.js";
 
@@ -198,6 +205,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   }
 
   const registeredFlowNames = new Set<string>();
+  // Normalized variant maps, keyed by `plugName\0flowName\0type`. Computed (and
+  // validated) once at config time so triggering and dispatching can reuse them.
+  const flowVariantsByKey = new Map<string, Record<string, FlowVariant>>();
   for (const plug of plugs) {
     if (!plug.flows) continue;
     for (const flow of plug.flows) {
@@ -207,7 +217,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           `Flow "${flow.name}" references unknown resource: "${flow.resource}"`,
         );
       }
+      // Throws at config time on invalid names or schedule/variants conflict.
+      flowVariantsByKey.set(
+        `${plug.name}\0${flow.name}\0${flow.type}`,
+        normalizeFlowVariants(flow),
+      );
     }
+  }
+
+  function getFlowVariants(
+    plugName: string,
+    flowName: string,
+    flowType: string,
+  ): Record<string, FlowVariant> {
+    return (
+      flowVariantsByKey.get(`${plugName}\0${flowName}\0${flowType}`) ?? {
+        [DEFAULT_VARIANT]: {},
+      }
+    );
   }
 
   const cacheStateByName = new Map<
@@ -944,7 +971,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   async function triggerFlowRun(
     flowId: string,
-    body: unknown,
+    input: unknown,
+    source: RunSource = "manual",
   ): Promise<Response> {
     const flow = await adapter.getFlow(flowId);
     if (
@@ -979,19 +1007,47 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     const requestBody =
-      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    const runType =
-      typeof requestBody["runType"] === "string"
-        ? requestBody["runType"]
-        : "full";
-    const variant =
+      input && typeof input === "object"
+        ? (input as Record<string, unknown>)
+        : {};
+
+    const variants = getFlowVariants(plugName, flowReg.name, flowReg.type);
+
+    // Resolve the variant: explicit `variant`, then deprecated `runType` alias,
+    // then `default` if it exists, else error listing the available variants.
+    let requestedVariant =
       typeof requestBody["variant"] === "string"
         ? requestBody["variant"]
         : undefined;
+    if (requestedVariant === undefined && typeof requestBody["runType"] === "string") {
+      requestedVariant = requestBody["runType"];
+      console.warn(
+        `[khotan] "runType" is deprecated; pass "variant" instead. ` +
+          `Treating runType="${requestedVariant}" as variant="${requestedVariant}".`,
+      );
+    }
+
+    let variant: string;
+    if (requestedVariant !== undefined) {
+      variant = requestedVariant;
+    } else if (DEFAULT_VARIANT in variants) {
+      variant = DEFAULT_VARIANT;
+    } else {
+      return Response.json(
+        {
+          error:
+            `Flow "${flowReg.name}" requires a variant. Available: ${Object.keys(variants).join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const activeVariant: FlowVariant | undefined = variants[variant];
 
     const { id: runId } = await adapter.insertRun({
       flowId,
-      runType,
+      variant,
+      source,
       status: "running",
     });
     const startedAt = Date.now();
@@ -1001,15 +1057,61 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       lastRunStatus: "running" as KhotanTerminalRunStatus,
     });
 
+    const hookContext: FlowHookContext = {
+      flow: {
+        id: flowId,
+        name: flowReg.name,
+        plugName,
+        type: flowReg.type,
+        resource: flowReg.resource ?? null,
+        to: flowReg.to ?? null,
+      },
+      variant,
+    };
+
+    // Invoke the active variant's terminal-state hook. `onComplete` fires on
+    // success, `onError` on `failed`/`partial`. A throwing hook is caught and
+    // logged and never changes the recorded run status.
+    async function runVariantHook(
+      status: KhotanTerminalRunStatus,
+      counters: ReturnType<typeof getFlowRunCounters>,
+      error: string | null,
+      durationMs: number,
+    ): Promise<void> {
+      const hook: FlowHook | undefined =
+        status === "completed"
+          ? activeVariant?.onComplete
+          : status === "failed" || status === "partial"
+            ? activeVariant?.onError
+            : undefined;
+      if (!hook) return;
+
+      const summary: RunSummary = {
+        id: runId,
+        status,
+        variant,
+        source,
+        durationMs,
+        ...counters,
+        error,
+      };
+      try {
+        await hook(hookContext, summary);
+      } catch (err) {
+        kd("flow", `variant hook for "${variant}" threw`, err);
+      }
+    }
+
     async function completeRunOk(result: FlowRunResult | undefined) {
       const completedAt = new Date();
       const counters = getFlowRunCounters(result);
       const status = resolveTerminalRunStatus(result, counters);
+      const durationMs = Date.now() - startedAt;
 
       await adapter.updateRun(runId, {
         status,
         completedAt,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         ...counters,
         error: result?.error ?? null,
         metadata: result?.metadata ?? null,
@@ -1018,6 +1120,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         lastRunAt: completedAt,
         lastRunStatus: status,
       });
+
+      await runVariantHook(status, counters, result?.error ?? null, durationMs);
 
       return { completedAt, counters, status };
     }
@@ -1028,17 +1132,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
         ? "cancelled"
         : "failed";
+      const durationMs = Date.now() - startedAt;
+      const counters = {
+        ...getFlowRunCounters(undefined),
+        failed: status === "failed" ? 1 : 0,
+      };
       await adapter.updateRun(runId, {
         status,
         completedAt,
-        durationMs: Date.now() - startedAt,
-        failed: status === "failed" ? 1 : 0,
+        durationMs,
+        failed: counters.failed,
         error: message,
       });
       await adapter.updateFlowLastRun(flowId, {
         lastRunAt: completedAt,
         lastRunStatus: status,
       });
+      await runVariantHook(status, counters, message, durationMs);
       return message;
     }
 
@@ -1091,7 +1201,6 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const result = await startWorkflow(flowReg.workflow, [
           {
             flow: flowContext,
-            runType,
             variant,
             body: requestBody["body"],
             vars,
@@ -1116,15 +1225,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           flowId,
           workflowRunId,
           status: "running",
-          runType,
           variant,
+          source,
         });
       }
 
       const result = await flowReg.run?.({
         plug: boundPlug,
         flow: flowContext,
-        runType,
         variant,
         body: requestBody["body"],
         vars,
@@ -1139,8 +1247,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         id: runId,
         flowId,
         status,
-        runType,
         variant,
+        source,
         ...counters,
         error: runResult?.error ?? null,
         metadata: runResult?.metadata ?? null,
@@ -1229,127 +1337,147 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return null;
   }
 
-  async function dispatchScheduledFlows(options: {
-    now?: Date;
-    runType?: string;
-  } = {}) {
+  async function dispatchScheduledFlows(options: { now?: Date } = {}) {
     await init();
 
     const now = options.now ?? new Date();
     const tickAt = startOfUtcMinute(now);
-    const runType = options.runType ?? "full";
 
     const registeredFlows = (await adapter.listFlows()).filter((flow) =>
       isRegisteredFlowRecord(flow),
     );
 
-    const scheduledFlows = registeredFlows.filter(
-      (flow) => typeof flow["schedule"] === "string" && flow["schedule"].trim(),
-    );
+    const triggered: Record<string, unknown>[] = [];
+    const skipped: Record<string, unknown>[] = [];
+    let evaluated = 0;
 
-    const triggered: Array<Record<string, unknown>> = [];
-    const skipped: Array<Record<string, unknown>> = [];
-
-    for (const flow of scheduledFlows) {
+    for (const flow of registeredFlows) {
       const flowId = typeof flow["id"] === "string" ? flow["id"] : null;
       const flowName = typeof flow["name"] === "string" ? flow["name"] : null;
       const plugName =
         typeof flow["plugName"] === "string" ? flow["plugName"] : null;
-      const schedule =
-        typeof flow["schedule"] === "string" ? flow["schedule"].trim() : "";
+      const flowType = typeof flow["type"] === "string" ? flow["type"] : null;
 
-      if (!flowId || !flowName || !plugName || !schedule) continue;
+      if (!flowId || !flowName || !plugName || !flowType) continue;
 
-      if (flow["enabled"] === false) {
-        skipped.push({
+      const variants = getFlowVariants(plugName, flowName, flowType);
+
+      // Lazily loaded per-variant baseline source: the flow's run history.
+      let runsForFlow: Record<string, unknown>[] | null = null;
+
+      for (const [variantName, variantConfig] of Object.entries(variants)) {
+        const schedule = variantConfig.schedule?.trim();
+        // Variants without a schedule are manual-only and never auto-fire.
+        if (!schedule) continue;
+
+        evaluated++;
+
+        if (flow["enabled"] === false) {
+          skipped.push({
+            flowId,
+            flowName,
+            plugName,
+            variant: variantName,
+            schedule,
+            reason: "disabled",
+          });
+          continue;
+        }
+
+        runsForFlow ??= await adapter.listRuns(flowId);
+        const lastVariantRun = runsForFlow.find(
+          (run) => run["variant"] === variantName,
+        );
+        const lastTriggered =
+          coerceDate(lastVariantRun?.["startedAt"]) ?? getLastTriggeredAt(flow);
+
+        if (!lastTriggered) {
+          skipped.push({
+            flowId,
+            flowName,
+            plugName,
+            variant: variantName,
+            schedule,
+            reason: "no_baseline",
+          });
+          continue;
+        }
+
+        let overdue: boolean;
+        try {
+          overdue = isFlowOverdue(schedule, lastTriggered, tickAt);
+        } catch (error) {
+          skipped.push({
+            flowId,
+            flowName,
+            plugName,
+            variant: variantName,
+            schedule,
+            reason: "invalid_schedule",
+            detail: getErrorMessage(error),
+          });
+          continue;
+        }
+
+        if (!overdue) {
+          skipped.push({
+            flowId,
+            flowName,
+            plugName,
+            variant: variantName,
+            schedule,
+            reason: "not_due",
+          });
+          continue;
+        }
+
+        const response = await triggerFlowRun(
+          flowId,
+          { variant: variantName },
+          "scheduled",
+        );
+        const payload = (await response.json().catch(() => ({}))) as Record<
+          string,
+          unknown
+        >;
+
+        if (!response.ok) {
+          skipped.push({
+            flowId,
+            flowName,
+            plugName,
+            variant: variantName,
+            schedule,
+            reason: "trigger_failed",
+            status: response.status,
+            detail:
+              typeof payload["error"] === "string"
+                ? payload["error"]
+                : response.statusText,
+          });
+          continue;
+        }
+
+        triggered.push({
           flowId,
           flowName,
           plugName,
+          variant: variantName,
           schedule,
-          reason: "disabled",
+          runId: payload["id"] ?? null,
+          workflowRunId: payload["workflowRunId"] ?? null,
+          status:
+            typeof payload["status"] === "string"
+              ? payload["status"]
+              : "running",
         });
-        continue;
       }
-
-      const lastTriggered = getLastTriggeredAt(flow);
-      if (!lastTriggered) {
-        skipped.push({
-          flowId,
-          flowName,
-          plugName,
-          schedule,
-          reason: "no_baseline",
-        });
-        continue;
-      }
-
-      let overdue: boolean;
-      try {
-        overdue = isFlowOverdue(schedule, lastTriggered, tickAt);
-      } catch (error) {
-        skipped.push({
-          flowId,
-          flowName,
-          plugName,
-          schedule,
-          reason: "invalid_schedule",
-          detail: getErrorMessage(error),
-        });
-        continue;
-      }
-
-      if (!overdue) {
-        skipped.push({
-          flowId,
-          flowName,
-          plugName,
-          schedule,
-          reason: "not_due",
-        });
-        continue;
-      }
-
-      const response = await triggerFlowRun(flowId, { runType });
-      const payload = (await response.json().catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
-
-      if (!response.ok) {
-        skipped.push({
-          flowId,
-          flowName,
-          plugName,
-          schedule,
-          reason: "trigger_failed",
-          status: response.status,
-          detail:
-            typeof payload["error"] === "string"
-              ? payload["error"]
-              : response.statusText,
-        });
-        continue;
-      }
-
-      triggered.push({
-        flowId,
-        flowName,
-        plugName,
-        schedule,
-        runId: payload["id"] ?? null,
-        workflowRunId: payload["workflowRunId"] ?? null,
-        status:
-          typeof payload["status"] === "string"
-            ? payload["status"]
-            : "running",
-      });
     }
 
     return {
       ok: true,
       tickAt: tickAt.toISOString(),
-      runType,
-      evaluated: scheduledFlows.length,
+      evaluated,
       triggered,
       skipped,
     };
@@ -1410,7 +1538,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return {
       async start(startOptions: FlowStartOptions = {}) {
         const flowId = await resolveFlowId(flowNameOrId, selectorOptions);
-        const response = await triggerFlowRun(flowId, startOptions);
+        const response = await triggerFlowRun(flowId, startOptions, "manual");
         const payload = await response.json().catch(() => ({}));
 
         if (!response.ok) {
@@ -1515,7 +1643,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       webhookHandlerId: handlerId,
       wireId: ctx.wireId,
       workflowRunId: null,
-      runType: "webhook",
+      variant: "webhook",
+      source: "webhook",
       status: "running",
     });
 
@@ -2036,16 +2165,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       method: "POST",
       pattern: "cron",
       auth: "cron",
-      handler: async ({ request }) => {
-        let body: Record<string, unknown> = {};
-        try {
-          body = (await request.json()) as Record<string, unknown>;
-        } catch {
-          body = {};
-        }
-
-        const runType = typeof body["runType"] === "string" ? body["runType"] : "full";
-        const result = await dispatchScheduledFlows({ runType });
+      handler: async () => {
+        const result = await dispatchScheduledFlows();
         return Response.json(result);
       },
     },
@@ -2365,8 +2486,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             { status: 400 },
           );
         }
-        const runType = typeof run["runType"] === "string" ? run["runType"] : "full";
-        return triggerFlowRun(flowId, { runType });
+        const variant =
+          typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT;
+        return triggerFlowRun(flowId, { variant }, "manual");
       },
     },
     {
@@ -2376,7 +2498,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       handler: async ({ params, request }) => {
         const flowId = params["flowId"]!;
         const body = await request.json().catch(() => ({}));
-        return triggerFlowRun(flowId, body);
+        return triggerFlowRun(flowId, body, "manual");
       },
     },
     {
