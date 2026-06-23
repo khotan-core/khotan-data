@@ -9,6 +9,7 @@ Skills are installed into consumer projects via the CLI:
 
 ```bash
 npx khotan init --yes          # Installs all skills during setup
+npx khotan init --skills-only  # Installs only skills (skips config + core files)
 npx khotan add skill-setup     # Or install individually
 ```
 

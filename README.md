@@ -23,6 +23,9 @@ npx khotan init
 # Full setup (drizzle + shadcn + config in one go)
 npx khotan init --full
 
+# Skills only (install agent skills; skip config + core files + package install)
+npx khotan init --skills-only
+
 # Add components (reusable building blocks — never create pages)
 npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
 npx khotan add cache     # Durable key/value caches for workflows and relays
