@@ -53,6 +53,14 @@ export default function ConfigPage() {
 }
 ```
 
+### Hub props
+
+`<KhotanHub />` is zero-config. Optional props:
+
+| Prop | Purpose |
+|---|---|
+| `webhookUrl` | Base URL for wire (webhook) callbacks. WirePanel uses it to build the subscription callback URL, e.g. `<KhotanHub webhookUrl="https://your-domain.com" />`. Defaults to the current origin. |
+
 ## Catalog — Blocks (create routes; confirm before adding)
 
 | Block | Add command | Fixed route | Requires |
@@ -96,3 +104,14 @@ The Hub talks to these routes:
 | `GET /api/khotan/wires/:plugName` | Wire status |
 | `POST /api/khotan/wires/:plugName` | Create subscription |
 | `DELETE /api/khotan/wires/:plugName` | Remove subscription |
+
+## Plug Debugger API surface (reference)
+
+The plug debugger (and the `/debug` page blocks) talk to these routes. Requires
+`KHOTAN_DEBUG=1` (force-disabled when `NODE_ENV=production`):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/khotan/debug` | Check if debug mode is active |
+| `GET /api/khotan/debug/:plugName` | Plug metadata + endpoint schemas |
+| `POST /api/khotan/debug/:plugName` | Fire request through the real plug code path |
