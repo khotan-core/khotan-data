@@ -236,8 +236,8 @@ export interface FlowRegistration {
   variants?: Record<string, FlowVariant>;
   resource?: string;
   to?: string;
-  workflow?(ctx: FlowWorkflowContext): Promise<FlowRunResult | void>;
-  run?(ctx: FlowRunContext): Promise<FlowRunResult | void>;
+  workflow?: (ctx: FlowWorkflowContext) => Promise<FlowRunResult | undefined>;
+  run?: (ctx: FlowRunContext) => Promise<FlowRunResult | undefined>;
 }
 
 export interface WireSubscribeContext {
@@ -516,7 +516,10 @@ export interface KhotanAdapter {
     ttlSeconds?: number | null;
   }): Promise<{ id: string }>;
   getCacheByName(name: string): Promise<Record<string, unknown> | null>;
-  getCacheEntry(cacheId: string, key: string): Promise<Record<string, unknown> | null>;
+  getCacheEntry(
+    cacheId: string,
+    key: string,
+  ): Promise<Record<string, unknown> | null>;
   upsertCacheEntry(entry: {
     cacheId: string;
     key: string;
@@ -685,9 +688,7 @@ export interface KhotanAdapter {
  * - The cron dispatcher (`.../cron`) — protected by `CRON_SECRET`.
  * - Debug routes (`.../debug...`) — gated by `KHOTAN_DEBUG` and disabled in production.
  */
-export type KhotanAuthorize = (
-  request: Request,
-) => boolean | Promise<boolean>;
+export type KhotanAuthorize = (request: Request) => boolean | Promise<boolean>;
 
 export interface KhotanConfig {
   adapter: KhotanAdapter;
@@ -876,7 +877,10 @@ export function bindWorkflowPlug(
 // to find runtime helpers from workflow context.
 // ---------------------------------------------------------------------------
 
-export const khotanRuntimeRegistry = new Map<string, KhotanWorkflowRuntimeHelpers>();
+export const khotanRuntimeRegistry = new Map<
+  string,
+  KhotanWorkflowRuntimeHelpers
+>();
 
 function getWorkflowRuntimeHelpers(
   ctx: KhotanWorkflowContextRef,

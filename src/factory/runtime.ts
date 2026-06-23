@@ -143,7 +143,7 @@ const waitUntilReady: Promise<void> = (async () => {
     const mod = (await import(
       /* webpackIgnore: true */ _vercelFunctionsModule
     )) as { waitUntil?: WaitUntilFn };
-    if (typeof mod?.waitUntil === "function") {
+    if (typeof mod.waitUntil === "function") {
       _resolvedWaitUntil = mod.waitUntil;
     }
   } catch {
@@ -174,7 +174,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         "silence this warning. This will throw in production.",
     );
   }
-  const authorizeHook = authorize === undefined || authorize === false ? null : authorize;
+  const authorizeHook =
+    authorize === undefined || authorize === false ? null : authorize;
 
   if (!(config.secret ?? process.env["KHOTAN_SECRET"])) {
     console.warn(
@@ -256,12 +257,18 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         `Cache "${cache.name}" references unknown plug: "${normalizedScope.plug}"`,
       );
     }
-    if (normalizedScope?.resource && !resourceNames.has(normalizedScope.resource)) {
+    if (
+      normalizedScope?.resource &&
+      !resourceNames.has(normalizedScope.resource)
+    ) {
       throw new Error(
         `Cache "${cache.name}" references unknown resource: "${normalizedScope.resource}"`,
       );
     }
-    if (normalizedScope?.flow && !registeredFlowNames.has(normalizedScope.flow)) {
+    if (
+      normalizedScope?.flow &&
+      !registeredFlowNames.has(normalizedScope.flow)
+    ) {
       throw new Error(
         `Cache "${cache.name}" references unknown flow: "${normalizedScope.flow}"`,
       );
@@ -569,7 +576,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   async function resolveCacheState(cacheName: string) {
     await init();
     const cacheState = cacheStateByName.get(cacheName);
-    if (!cacheState || !cacheState.id) {
+    if (!cacheState?.id) {
       throw new Error(`Cache "${cacheName}" is not registered`);
     }
     return cacheState;
@@ -720,9 +727,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       resourceId: params.resourceId,
       limit,
       offset,
-      ...(params.search?.trim()
-        ? { search: params.search.trim() }
-        : {}),
+      ...(params.search?.trim() ? { search: params.search.trim() } : {}),
     });
 
     return buildMappingPage({
@@ -1019,7 +1024,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       typeof requestBody["variant"] === "string"
         ? requestBody["variant"]
         : undefined;
-    if (requestedVariant === undefined && typeof requestBody["runType"] === "string") {
+    if (
+      requestedVariant === undefined &&
+      typeof requestBody["runType"] === "string"
+    ) {
       requestedVariant = requestBody["runType"];
       console.warn(
         `[khotan] "runType" is deprecated; pass "variant" instead. ` +
@@ -1035,8 +1043,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     } else {
       return Response.json(
         {
-          error:
-            `Flow "${flowReg.name}" requires a variant. Available: ${Object.keys(variants).join(", ")}`,
+          error: `Flow "${flowReg.name}" requires a variant. Available: ${Object.keys(variants).join(", ")}`,
         },
         { status: 400 },
       );
@@ -1160,10 +1167,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         .then(async (value) => {
           await completeRunOk(toFlowRunResult(value));
         })
-        .catch(async (error) => {
+        .catch(async (error: unknown) => {
           await completeRunFailed(error);
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           kd("flow", `Failed to reconcile workflow run ${runId}`, error);
         });
     }
@@ -1266,7 +1273,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   // Cron scheduling
   // -------------------------------------------------------------------------
 
-  function isFlowOverdue(schedule: string, lastRunAt: Date, now: Date): boolean {
+  function isFlowOverdue(
+    schedule: string,
+    lastRunAt: Date,
+    now: Date,
+  ): boolean {
     const elapsedMs = now.getTime() - lastRunAt.getTime();
     if (elapsedMs <= 0) return false;
 
@@ -1539,12 +1550,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       async start(startOptions: FlowStartOptions = {}) {
         const flowId = await resolveFlowId(flowNameOrId, selectorOptions);
         const response = await triggerFlowRun(flowId, startOptions, "manual");
-        const payload = await response.json().catch(() => ({}));
+        const payload: unknown = await response.json().catch(() => ({}));
 
         if (!response.ok) {
           const message =
             payload && typeof payload === "object" && "error" in payload
-              ? String((payload as { error: unknown }).error)
+              ? String(payload.error)
               : `Failed to start flow "${flowNameOrId}"`;
           throw new Error(message);
         }
@@ -1565,9 +1576,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     if (!run) return null;
 
     const workflowRunId =
-      typeof run["workflowRunId"] === "string"
-        ? run["workflowRunId"]
-        : null;
+      typeof run["workflowRunId"] === "string" ? run["workflowRunId"] : null;
 
     if (!workflowRunId) {
       return { ...run, workflowStatus: null };
@@ -1710,9 +1719,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       auth: "authorize",
       handler: async ({ params }) => {
         try {
-          const entry = await readCacheEntry(params["cacheName"]!, params["key"]!);
+          const entry = await readCacheEntry(
+            params["cacheName"]!,
+            params["key"]!,
+          );
           if (!entry) {
-            return Response.json({ error: "Cache entry not found" }, { status: 404 });
+            return Response.json(
+              { error: "Cache entry not found" },
+              { status: 404 },
+            );
           }
           return Response.json({
             cache: params["cacheName"],
@@ -1721,7 +1736,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             expiresAt: entry.expiresAt,
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Invalid cache request";
+          const message =
+            error instanceof Error ? error.message : "Invalid cache request";
           return Response.json({ error: message }, { status: 400 });
         }
       },
@@ -1755,7 +1771,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
         const fields = plugReg.vars ?? plugReg.plug.varFields ?? [];
         const hasConfigured = await hasVars(plugName).catch(() => false);
-        const rawEndpoints = plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
+        const rawEndpoints =
+          plugReg.plug.endpoints ?? plugReg.endpoints ?? null;
 
         let varValues: Record<string, string> = {};
         if (hasConfigured || Object.keys(getDefaultVars(plugName)).length > 0) {
@@ -1860,7 +1877,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           handlers.map(async (handler) => {
             const handlerId = handler["id"];
             if (typeof handlerId !== "string") return handler;
-            const latestRun = await adapter.getLatestWebhookHandlerRun(handlerId);
+            const latestRun =
+              await adapter.getLatestWebhookHandlerRun(handlerId);
             return {
               ...handler,
               events:
@@ -1943,7 +1961,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       auth: "authorize",
       handler: async ({ url }) => {
         const limit = Math.min(
-          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          Math.max(
+            Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20,
+            1,
+          ),
           100,
         );
         const offset = Math.max(
@@ -1988,7 +2009,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const getRun = await importWorkflowGetRun();
         const workflowRun = getRun(workflowRunId);
         const streamOptions: { startIndex?: number; namespace?: string } = {};
-        if (typeof parsedStartIndex === "number" && Number.isFinite(parsedStartIndex)) {
+        if (
+          typeof parsedStartIndex === "number" &&
+          Number.isFinite(parsedStartIndex)
+        ) {
           streamOptions.startIndex = parsedStartIndex;
         }
         if (namespace) streamOptions.namespace = namespace;
@@ -2028,7 +2052,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       auth: "authorize",
       handler: async ({ url }) => {
         const limit = Math.min(
-          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          Math.max(
+            Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20,
+            1,
+          ),
           100,
         );
         const offset = Math.max(
@@ -2068,18 +2095,28 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const resourceId = params["resourceId"]!;
         const resource = await getRegisteredResourceById(resourceId);
         if (!resource) {
-          return Response.json({ error: "Resource not found" }, { status: 404 });
+          return Response.json(
+            { error: "Resource not found" },
+            { status: 404 },
+          );
         }
 
         const limit = Math.min(
-          Math.max(Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1),
+          Math.max(
+            Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20,
+            1,
+          ),
           100,
         );
         const offset = Math.max(
           Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0,
           0,
         );
-        const search = url.searchParams.get("search")?.trim() || undefined;
+        const trimmedSearch = url.searchParams.get("search")?.trim();
+        const search =
+          trimmedSearch !== undefined && trimmedSearch !== ""
+            ? trimmedSearch
+            : undefined;
         const wantsMappingPage =
           url.searchParams.has("limit") ||
           url.searchParams.has("offset") ||
@@ -2111,7 +2148,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           typeof resource["name"] !== "string" ||
           !resourceNames.has(resource["name"])
         ) {
-          return Response.json({ error: "Resource not found" }, { status: 404 });
+          return Response.json(
+            { error: "Resource not found" },
+            { status: 404 },
+          );
         }
         const flows = await adapter.getResourceFlows(resourceId);
         return Response.json({ ...decorateResourceRecord(resource), flows });
@@ -2139,10 +2179,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       handler: async ({ params, request }) => {
         const cacheName = params["cacheName"]!;
         const key = params["key"]!;
-        const body = (await request.json().catch(() => ({}))) as { value?: unknown };
+        const body = (await request.json().catch(() => ({}))) as {
+          value?: unknown;
+        };
 
         if (!("value" in body)) {
-          return Response.json({ error: "Cache writes require a value" }, { status: 400 });
+          return Response.json(
+            { error: "Cache writes require a value" },
+            { status: 400 },
+          );
         }
 
         try {
@@ -2156,7 +2201,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             expiresAt: entry?.expiresAt ?? null,
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Invalid cache payload";
+          const message =
+            error instanceof Error ? error.message : "Invalid cache payload";
           return Response.json({ error: message }, { status: 400 });
         }
       },
@@ -2280,8 +2326,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         }
 
         const body = (await request.json()) as {
-          method: string;
-          path: string;
+          method?: string;
+          path?: string;
           body?: unknown;
           params?: Record<string, string>;
           headers?: Record<string, string>;
@@ -2298,8 +2344,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             ? (updates: Record<string, string>) =>
                 setVars(plugName, { ...vars, ...updates })
             : undefined;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const opts: any = { vars };
+          const opts: {
+            params?: Record<string, unknown>;
+            headers?: Record<string, string>;
+            vars?: Record<string, string>;
+            body?: unknown;
+            _setVars?: (updates: Record<string, string>) => Promise<void>;
+            _skipHooks?: boolean;
+          } = { vars };
           if (_setVars) opts._setVars = _setVars;
           if (body.params) opts.params = body.params;
           if (body.headers) opts.headers = body.headers;
@@ -2419,7 +2471,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           await setVars(plugName, vars);
           return Response.json({ ok: true });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           return Response.json({ error: message }, { status: 500 });
         }
       },
@@ -2497,7 +2550,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       auth: "authorize",
       handler: async ({ params, request }) => {
         const flowId = params["flowId"]!;
-        const body = await request.json().catch(() => ({}));
+        const body: unknown = await request.json().catch(() => ({}));
         return triggerFlowRun(flowId, body, "manual");
       },
     },
@@ -2521,7 +2574,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const record = await wire(plugName).create(body.callbackUrl);
           return Response.json({ wire: record }, { status: 201 });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: create failed:`, message);
           if (error && typeof error === "object" && "body" in error) {
             kd("wire", `${plugName}: response body:`, error.body);
@@ -2537,11 +2591,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       handler: async ({ request }) => {
         const body = (await request.json()) as
           | { resourceId: string; connectValue: string | string[] }
-          | { resourceId: string; plugName: string; ref: string };
+          | { resourceId: string; plugName: string; ref: string }
+          | null;
         if (
           !body ||
           typeof body !== "object" ||
-          typeof body["resourceId"] !== "string"
+          typeof body.resourceId !== "string"
         ) {
           return Response.json(
             {
@@ -2702,10 +2757,13 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       auth: "authorize",
       handler: async ({ params }) => {
         try {
-          await createCacheInstance(params["cacheName"]!).delete(params["key"]!);
+          await createCacheInstance(params["cacheName"]!).delete(
+            params["key"]!,
+          );
           return new Response(null, { status: 204 });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Invalid cache request";
+          const message =
+            error instanceof Error ? error.message : "Invalid cache request";
           return Response.json({ error: message }, { status: 400 });
         }
       },
@@ -2743,7 +2801,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           await wire(plugName).delete(body.wireId);
           return new Response(null, { status: 204 });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
           return Response.json({ error: message }, { status: 500 });
         }
@@ -2782,9 +2841,19 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     // The route patterns start from the first khotan-managed keyword.
     // Find where khotan routes begin by looking for a known first-segment keyword.
     const knownFirstSegments = new Set([
-      "plugs", "flows", "resources", "caches", "mappings", "runs",
-      "wires", "webhook-handlers", "webhook-events", "variables",
-      "cron", "webhook", "debug",
+      "plugs",
+      "flows",
+      "resources",
+      "caches",
+      "mappings",
+      "runs",
+      "wires",
+      "webhook-handlers",
+      "webhook-events",
+      "variables",
+      "cron",
+      "webhook",
+      "debug",
     ]);
 
     let routeStartIdx = -1;
@@ -2858,7 +2927,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         break;
     }
 
-    return route.handler({ request, params, url, searchParams: url.searchParams });
+    return route.handler({
+      request,
+      params,
+      url,
+      searchParams: url.searchParams,
+    });
   }
 
   // -------------------------------------------------------------------------

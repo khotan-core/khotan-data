@@ -1,11 +1,6 @@
 import { Command } from "commander";
 import { cliFetch } from "../cli-auth.js";
-import {
-  output,
-  fail,
-  resolvePort,
-  checkConnectivity,
-} from "../cli-api.js";
+import { output, fail, resolvePort, checkConnectivity } from "../cli-api.js";
 
 interface VariablesResponse {
   fields: {
@@ -34,7 +29,9 @@ function redactSecrets(
   if (showSecrets) return values;
   const redacted: Record<string, string> = {};
   const secretKeys = new Set(
-    fields.filter((f) => f.secret || f.type === "password").map((f) => f.key),
+    fields
+      .filter((f) => (f.secret ?? false) || f.type === "password")
+      .map((f) => f.key),
   );
   for (const [key, value] of Object.entries(values)) {
     redacted[key] = secretKeys.has(key) ? "••••••••" : value;
@@ -50,7 +47,10 @@ export const varsCommand = new Command("vars")
   .option("--base-path <path>", "API base path", "/api/khotan")
   .option("--list", "List all plugs and their variable state")
   .option("--json <json>", "Variable payload for set (JSON object)")
-  .option("--show-secrets", "Show secret values in plaintext (redacted by default)")
+  .option(
+    "--show-secrets",
+    "Show secret values in plaintext (redacted by default)",
+  )
   .action(
     async (
       plugName: string | undefined,
@@ -62,9 +62,14 @@ export const varsCommand = new Command("vars")
         json?: string;
         showSecrets?: boolean;
       },
+      command: Command,
     ) => {
-      const port = resolvePort(opts.port);
-      const baseUrl = `http://localhost:${port}${opts.basePath}`;
+      // `--port` may be parsed onto the parent `plug` command (commander routes
+      // it there when it precedes the `vars` subcommand), so merge globals
+      // rather than reading only this subcommand's own `opts.port`.
+      const { port: portFlag } = command.optsWithGlobals<{ port?: string }>();
+      const port = resolvePort(portFlag);
+      const baseUrl = `http://localhost:${String(port)}${opts.basePath}`;
       const showSecrets = opts.showSecrets ?? false;
 
       await checkConnectivity(baseUrl);
@@ -86,13 +91,9 @@ export const varsCommand = new Command("vars")
             const data = (await res.json()) as VariablesResponse;
             return {
               plugName: plug.name,
-              configured: data.configured ?? false,
-              fields: data.fields ?? [],
-              values: redactSecrets(
-                data.fields ?? [],
-                data.values ?? {},
-                showSecrets,
-              ),
+              configured: data.configured,
+              fields: data.fields,
+              values: redactSecrets(data.fields, data.values, showSecrets),
             };
           }),
         );
@@ -118,13 +119,9 @@ export const varsCommand = new Command("vars")
         output({
           ok: true,
           plugName,
-          configured: data.configured ?? false,
-          fields: data.fields ?? [],
-          values: redactSecrets(
-            data.fields ?? [],
-            data.values ?? {},
-            showSecrets,
-          ),
+          configured: data.configured,
+          fields: data.fields,
+          values: redactSecrets(data.fields, data.values, showSecrets),
         });
         return;
       }

@@ -1129,6 +1129,84 @@ describe("CLI", { timeout: 30_000 }, () => {
     });
   });
 
+  describe("plug vars command", () => {
+    async function startServer() {
+      const requestedPaths: string[] = [];
+      const server = createServer((req, res) => {
+        const url = new URL(req.url ?? "", "http://localhost");
+        requestedPaths.push(url.pathname);
+
+        if (url.pathname === "/api/khotan/plugs") {
+          sendJson(res, 200, [{ name: "stripe" }]);
+          return;
+        }
+        if (url.pathname === "/api/khotan/variables/stripe") {
+          sendJson(res, 200, {
+            configured: true,
+            fields: [{ name: "apiKey", secret: false }],
+            values: { apiKey: "sk_test_123" },
+          });
+          return;
+        }
+        sendJson(res, 404, { error: "not_found" });
+      });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const port = (server.address() as AddressInfo).port;
+      return {
+        port,
+        close: () =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+        getRequestedPaths: () => requestedPaths,
+      };
+    }
+
+    // Regression: --port placed on the parent `plug` command (before the `vars`
+    // subcommand) was dropped, so the request fell back to port 3000 instead of
+    // the supplied port. optsWithGlobals() in the vars action now honors it.
+    it("honors --port when supplied on the parent plug command", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["plug", "--port", String(api.port), "vars", "stripe", "show"],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          plugName: string;
+          values: Record<string, string>;
+        };
+        expect(data.ok).toBe(true);
+        expect(data.plugName).toBe("stripe");
+        expect(data.values.apiKey).toBe("sk_test_123");
+        expect(api.getRequestedPaths()).toContain(
+          "/api/khotan/variables/stripe",
+        );
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("honors --port when supplied on the vars subcommand itself", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["plug", "vars", "stripe", "show", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as { ok: boolean };
+        expect(data.ok).toBe(true);
+        expect(api.getRequestedPaths()).toContain(
+          "/api/khotan/variables/stripe",
+        );
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
   describe("workflow integration scaffolding", () => {
     it("updates existing next.config.ts when adding catch", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
