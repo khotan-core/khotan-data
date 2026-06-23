@@ -39,7 +39,8 @@ async function forwardProducts(ctx: RelayContext) {
   const previousRecords =
     (await snapshotCache.get<Array<Record<string, unknown>>>("latest")) ?? [];
 
-  await snapshotCache.set("latest", records, { ttl: "6h" });
+  // TTL is configured on the cache definition (CacheRegistration.ttl), not per set().
+  await snapshotCache.set("latest", records);
 
   for (const record of records) {
     await fetch("https://destination.example.com/products", {

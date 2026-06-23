@@ -84,7 +84,7 @@ export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler);
 
 // Start a flow through Khotan so run tracking + Workflow IDs are recorded
 await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
-  runType: "delta",
+  variant: "delta",
 });
 ```
 

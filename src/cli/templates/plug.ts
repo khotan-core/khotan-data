@@ -11,7 +11,6 @@
 // Debug logger — set KHOTAN_DEBUG=1 to see trace output
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const _khotanDebug =
   typeof process !== "undefined" && process.env?.KHOTAN_DEBUG;
 function kd(scope: string, ...args: unknown[]) {
