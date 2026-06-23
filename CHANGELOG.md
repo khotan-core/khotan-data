@@ -1,5 +1,38 @@
 # khotan-data
 
+## 0.9.0
+
+### Minor Changes
+
+- a5366a2: feat(cli): add `init --skills-only` to install agent skills without scaffolding core files
+
+  `npx khotan init --skills-only` installs only the agent skill set, skipping `khotan.config.ts`, the `khotan.ts` factory, the catch-all route, and the package install. Useful in polyrepo setups where the khotan-data runtime lives elsewhere and a separate location only hosts the skills. The flag is mutually exclusive with `--full`.
+
+- c3e2720: feat(plug): form-encoded token bodies, vars-aware auth, and per-environment baseUrl
+
+  Three improvements to the generated `plug.ts` client, addressing connector friction:
+  - **`tokenExchange` honors pre-encoded token bodies.** A `string` or `URLSearchParams` body from `buildTokenRequest` is now sent verbatim with the `Content-Type` you set, so OAuth2 endpoints requiring `application/x-www-form-urlencoded` (`grant_type=client_credentials`) work without hand-rolling an `AuthStrategy`. Plain object bodies are still JSON-encoded as before.
+  - **Auth strategies receive the plug's bound vars.** `AuthStrategy.apply(headers, vars?)` and `custom((headers, vars) => …)` now get the decrypted plug variables for the run, so a custom strategy can read credentials without lazy-importing the factory.
+  - **`baseUrl` can be a function of vars.** Pass `baseUrl: (vars) => …` for per-environment / per-tenant hosts resolved at request time. Because the debug/probe route binds the same vars, it targets the same host a flow would — closing the probe/flow divergence. A static `string` baseUrl is unchanged.
+
+- 4be27ec: feat(flows): add a `skipped` counter to flow run results, and allow a request body on plug `delete`
+
+  Flow runs now track a `skipped` counter alongside created/updated/deleted/failed, giving delta-sync's most common outcome (records unchanged) a home; it threads through `FlowRunResult`, the `khotan_runs` table, `RunSummary`, the adapter, and the Slack notifier payload, and is treated as a neutral outcome that never drives partial/failed status. Bound plugs may now pass a request `body` on `delete`, unblocking batch soft-delete via `DELETE` (the plug template already forwarded it — only the type signatures forbade it).
+
+### Patch Changes
+
+- 13f67f5: docs(skill-frontend): document Hub `webhookUrl` prop and the Plug Debugger debug HTTP API
+
+  Folds two previously-undocumented reference facts into the generated `khotan-frontend` skill so it stays the single source of truth for the UI surface: the optional `<KhotanHub webhookUrl="..." />` prop, and the `GET/POST /api/khotan/debug[/:plugName]` endpoints used by the plug debugger. Lets downstream starters drop forked `khotan-dashboard` skills without losing reference detail.
+
+- fix(cli): honor `--port` on the `khotan plug vars` subcommand
+
+  `khotan plug vars <plug> --port N` (and `khotan plug --port N vars …`) ignored the flag and fell back to port 3000, because commander binds `--port` to whichever of the parent `plug` / child `vars` command parses it while the `vars` action only read its own `opts.port`. The action now uses `optsWithGlobals()`, so the flag is honored in either position.
+
+- d5ac73f: fix(scaffold): generated example files compile and lint clean out of the box
+
+  `relay.example.ts` called `cache.set(key, value, { ttl })` with a third argument the `CacheInstance.set` signature doesn't accept (TTL is configured on the cache definition, not per call), so the scaffolded file failed `tsc`. Removed the stray argument. Also dropped an unused `eslint-disable` directive in the `plug.ts` template, and corrected the stale `start({ runType })` example in the README to `start({ variant })`.
+
 ## 0.8.0
 
 ### Minor Changes
