@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { cliFetch } from "../cli-auth.js";
 import {
   output,
   fail,

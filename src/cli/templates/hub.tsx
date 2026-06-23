@@ -423,9 +423,7 @@ export function KhotanHub({
                             disabled={runningFlowId !== null}
                             onClick={() => runFlow(flow.id, flow.name)}
                           >
-                            {runningFlowId === flow.id
-                              ? "Running…"
-                              : "Run now"}
+                            {runningFlowId === flow.id ? "Running…" : "Run now"}
                           </Button>
                         </TableCell>
                       </TableRow>

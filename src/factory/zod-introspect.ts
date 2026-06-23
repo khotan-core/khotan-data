@@ -4,22 +4,55 @@
 // across Zod 3 and 4.
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeZodSchema(schema: any): Record<string, unknown> | null {
-  if (!schema) return null;
+// Loosely-typed view of Zod's private internals. The shapes of `_def`/`def`
+// vary across Zod 3 and 4, so every field is optional/unknown and narrowed at
+// the use site with runtime `typeof` checks.
+interface ZodDefLike {
+  typeName?: unknown;
+  type?: unknown;
+  innerType?: unknown;
+  element?: unknown;
+  shape?: unknown;
+  values?: unknown;
+  entries?: unknown;
+}
+
+interface ZodLike {
+  _def?: ZodDefLike;
+  def?: ZodDefLike;
+  shape?: unknown;
+}
+
+function asZodLike(value: unknown): ZodLike | null {
+  return typeof value === "object" && value !== null ? value : null;
+}
+
+function zodTypeName(def: ZodDefLike | undefined): string {
+  if (typeof def?.typeName === "string") return def.typeName;
+  if (typeof def?.type === "string") {
+    return `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`;
+  }
+  return "";
+}
+
+function zodInner(def: ZodDefLike | undefined): unknown {
+  return (
+    def?.innerType ??
+    def?.element ??
+    (typeof def?.type === "object" ? def.type : null) ??
+    null
+  );
+}
+
+export function serializeZodSchema(
+  schema: unknown,
+): Record<string, unknown> | null {
+  const zod = asZodLike(schema);
+  if (!zod) return null;
   try {
-    const def = schema?._def ?? schema?.def ?? null;
-    const rawTypeName: string =
-      typeof def?.typeName === "string"
-        ? def.typeName
-        : typeof def?.type === "string"
-          ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
-          : "";
-    const inner =
-      def?.innerType ??
-      def?.element ??
-      (typeof def?.type === "object" ? def.type : null) ??
-      null;
+    const def = zod._def ?? zod.def ?? undefined;
+    const rawTypeName = zodTypeName(def);
+    const inner = zodInner(def);
 
     if (
       (rawTypeName === "ZodOptional" || rawTypeName === "ZodNullable") &&
@@ -29,10 +62,12 @@ export function serializeZodSchema(schema: any): Record<string, unknown> | null 
     }
 
     const shape =
-      typeof schema.shape === "function"
-        ? schema.shape()
-        : (schema.shape ??
-          (typeof def?.shape === "function" ? def.shape() : def?.shape));
+      typeof zod.shape === "function"
+        ? (zod.shape as () => unknown)()
+        : (zod.shape ??
+          (typeof def?.shape === "function"
+            ? (def.shape as () => unknown)()
+            : def?.shape));
     if (shape && typeof shape === "object") {
       const result: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(shape)) {
@@ -57,21 +92,14 @@ export function serializeZodSchema(schema: any): Record<string, unknown> | null 
   return null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeZodField(field: any): string | Record<string, unknown> {
-  const def = field?._def ?? field?.def ?? null;
+export function serializeZodField(
+  field: unknown,
+): string | Record<string, unknown> {
+  const zod = asZodLike(field);
+  const def = zod?._def ?? zod?.def ?? undefined;
   if (!def) return "unknown";
-  const typeName: string =
-    typeof def.typeName === "string"
-      ? def.typeName
-      : typeof def.type === "string"
-        ? `Zod${def.type.charAt(0).toUpperCase()}${def.type.slice(1)}`
-        : "";
-  const inner =
-    def.innerType ??
-    def.element ??
-    (typeof def.type === "object" ? def.type : null) ??
-    null;
+  const typeName = zodTypeName(def);
+  const inner = zodInner(def);
 
   if (typeName === "ZodOptional" && inner) {
     const serialized = serializeZodField(inner);
@@ -102,13 +130,13 @@ export function serializeZodField(field: any): string | Record<string, unknown> 
   }
 
   if (typeName === "ZodEnum") {
-    const values = Array.isArray(def.values)
-      ? def.values
+    const values: unknown[] = Array.isArray(def.values)
+      ? (def.values as unknown[])
       : def.entries && typeof def.entries === "object"
         ? Object.values(def.entries)
         : [];
     if (values.length > 0) {
-      return values.map((v: string) => `"${v}"`).join(" | ");
+      return values.map((v) => `"${String(v)}"`).join(" | ");
     }
   }
 

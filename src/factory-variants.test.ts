@@ -60,7 +60,9 @@ function createMockAdapter() {
 
   const adapter: KhotanAdapter = {
     async upsertPlug(plug) {
-      const existing = [...plugStore.values()].find((p) => p.name === plug.name);
+      const existing = [...plugStore.values()].find(
+        (p) => p.name === plug.name,
+      );
       if (existing) return { id: existing.id };
       const id = `plug-${++plugCounter}`;
       plugStore.set(id, { id, name: plug.name });
@@ -288,7 +290,9 @@ describe("trigger variant resolution", () => {
       authorize: false,
       plugs: [makePlug([{ name: "items-inflow", type: "inflow", run }])],
     });
-    const result = await instance.flow("items-inflow").start({ variant: "delta" });
+    const result = await instance
+      .flow("items-inflow")
+      .start({ variant: "delta" });
     expect(result["variant"]).toBe("delta");
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({ variant: "delta" }),
@@ -328,7 +332,9 @@ describe("trigger variant resolution", () => {
       authorize: false,
       plugs: [makePlug([{ name: "items-inflow", type: "inflow", run }])],
     });
-    const result = await instance.flow("items-inflow").start({ runType: "delta" });
+    const result = await instance
+      .flow("items-inflow")
+      .start({ runType: "delta" });
     expect(result["variant"]).toBe("delta");
     expect([...runStore.values()][0]?.variant).toBe("delta");
     expect(warn).toHaveBeenCalledWith(
@@ -398,7 +404,10 @@ describe("variant lifecycle hooks", () => {
         ]),
       ],
     });
-    await instance.flow("items-inflow").start().catch(() => {});
+    await instance
+      .flow("items-inflow")
+      .start()
+      .catch(() => {});
     expect(onComplete).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledTimes(1);
     const [, summary] = onError.mock.calls[0]!;
@@ -522,7 +531,9 @@ describe("cron dispatcher per-variant scheduling", () => {
     expect(triggeredVariants).not.toContain("backfill");
     // Only the scheduled variant is evaluated; manual-only is skipped entirely.
     expect(body.evaluated).toBe(1);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ variant: "tick" }));
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "tick" }),
+    );
     instance.dispose();
   });
 });
@@ -543,7 +554,15 @@ describe("slackNotifier", () => {
   it("POSTs a message describing the run to the webhook URL", async () => {
     const hook = slackNotifier("https://hooks.slack.test/abc");
     await hook(
-      { flow: { id: "f1", name: "items-inflow", plugName: "acme", type: "inflow" }, variant: "delta" },
+      {
+        flow: {
+          id: "f1",
+          name: "items-inflow",
+          plugName: "acme",
+          type: "inflow",
+        },
+        variant: "delta",
+      },
       {
         id: "run-1",
         status: "failed",

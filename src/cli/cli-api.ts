@@ -89,7 +89,7 @@ export function resolveBaseUrl(opts: {
   port?: string;
   basePath: string;
 }): string {
-  return `http://localhost:${resolvePort(opts.port)}${opts.basePath}`;
+  return `http://localhost:${String(resolvePort(opts.port))}${opts.basePath}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,8 @@ export async function fetchJson<T>(
     if (res.status === 401) fail("unauthorized", unauthorizedHint());
     fail(
       "request_failed",
-      data.error ?? `Request to ${url} failed with status ${res.status}`,
+      data.error ??
+        `Request to ${url} failed with status ${String(res.status)}`,
     );
   }
 
@@ -184,7 +185,7 @@ export function resolveWebhookOrigin(originFlag: string | undefined): string {
     env["KHOTAN_WEBHOOK_URL"] ??
     env["NGROK_URL"] ??
     env["NEXT_PUBLIC_APP_URL"] ??
-    `http://localhost:${resolvePort(undefined)}`;
+    `http://localhost:${String(resolvePort(undefined))}`;
   return origin.replace(/\/$/, "");
 }
 

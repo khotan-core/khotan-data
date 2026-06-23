@@ -4,11 +4,11 @@ import { process } from "./debug.js";
 // Cron parsing
 // ---------------------------------------------------------------------------
 
-type CronFieldSpec = {
+interface CronFieldSpec {
   min: number;
   max: number;
   aliases?: Record<string, number>;
-};
+}
 
 const CRON_MONTH_ALIASES: Record<string, number> = {
   jan: 1,
@@ -42,7 +42,7 @@ export function parseCronValue(token: string, spec: CronFieldSpec): number {
   }
 
   if (spec.aliases?.[normalized] !== undefined) {
-    return spec.aliases[normalized]!;
+    return spec.aliases[normalized];
   }
 
   const parsed = Number.parseInt(normalized, 10);
@@ -56,7 +56,7 @@ export function parseCronValue(token: string, spec: CronFieldSpec): number {
 
   if (parsed < spec.min || parsed > spec.max) {
     throw new Error(
-      `Cron value "${token}" is out of range ${spec.min}-${spec.max}`,
+      `Cron value "${token}" is out of range ${String(spec.min)}-${String(spec.max)}`,
     );
   }
 
@@ -182,7 +182,7 @@ export function isCronRequestAuthorized(request: Request): boolean {
  */
 export function isDebugEnabled(): boolean {
   return (
-    Boolean(process?.env?.["KHOTAN_DEBUG"]) &&
-    process?.env?.["NODE_ENV"] !== "production"
+    Boolean(process.env["KHOTAN_DEBUG"]) &&
+    process.env["NODE_ENV"] !== "production"
   );
 }

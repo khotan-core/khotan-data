@@ -4,9 +4,8 @@ import type { KhotanRunUpdate } from "./types.js";
 // Workflow integration — dynamic import of workflow/api
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type WorkflowStartFn = (
-  workflowFn: (...args: any[]) => any,
+  workflowFn: (...args: never[]) => unknown,
   args: unknown[],
 ) => Promise<unknown>;
 
@@ -121,7 +120,9 @@ export function getWorkflowRunId(result: unknown): string | null {
   return null;
 }
 
-export function getWorkflowReturnValue(result: unknown): Promise<unknown> | null {
+export function getWorkflowReturnValue(
+  result: unknown,
+): Promise<unknown> | null {
   if (!result || typeof result !== "object" || !("returnValue" in result)) {
     return null;
   }

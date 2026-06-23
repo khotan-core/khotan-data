@@ -51,7 +51,11 @@ export type {
   KhotanInstance,
 } from "./factory/types.js";
 
-export { bindWorkflowPlug, khotanCache, khotanMappings } from "./factory/types.js";
+export {
+  bindWorkflowPlug,
+  khotanCache,
+  khotanMappings,
+} from "./factory/types.js";
 export { deriveCliToken } from "./factory/cli-auth.js";
 export { drizzleAdapter } from "./factory/drizzle-adapter.js";
 export {

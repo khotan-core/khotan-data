@@ -53,7 +53,7 @@ export const wireCommand = new Command("wire")
       },
     ) => {
       const port = resolvePort(opts.port);
-      const baseUrl = `http://localhost:${port}${opts.basePath}`;
+      const baseUrl = `http://localhost:${String(port)}${opts.basePath}`;
 
       await checkConnectivity(baseUrl);
 

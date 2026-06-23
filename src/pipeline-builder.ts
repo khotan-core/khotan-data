@@ -191,7 +191,7 @@ export class Pipeline<TCurrent extends DataRecord = DataRecord> {
           this.#emit({
             type: "pipeline:cancelled",
             timestamp: new Date(),
-            data: { name: this.#name, reason: signal.reason },
+            data: { name: this.#name, reason: signal.reason as unknown },
           });
           break;
         }

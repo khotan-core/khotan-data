@@ -227,9 +227,7 @@ describe("plug vars secret redaction", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           configured: true,
-          fields: [
-            { key: "token", label: "Token", type: "password" },
-          ],
+          fields: [{ key: "token", label: "Token", type: "password" }],
           values: { token: "tok_abc123" },
         }),
       );

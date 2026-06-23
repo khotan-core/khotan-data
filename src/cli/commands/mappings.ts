@@ -51,8 +51,9 @@ async function resolveResource(
   return match;
 }
 
-export const mappingsCommand = new Command("mappings")
-  .description("List, lookup, and mutate mappings via the running Khotan API");
+export const mappingsCommand = new Command("mappings").description(
+  "List, lookup, and mutate mappings via the running Khotan API",
+);
 
 withApiOptions(
   mappingsCommand
@@ -113,7 +114,8 @@ withApiOptions(
     },
   ) => {
     const usingConnectValue = typeof opts.connectValue === "string";
-    const usingPlugRef = typeof opts.plug === "string" || typeof opts.ref === "string";
+    const usingPlugRef =
+      typeof opts.plug === "string" || typeof opts.ref === "string";
 
     if (!usingConnectValue && !usingPlugRef) {
       fail(
@@ -183,16 +185,19 @@ withApiOptions(
     const resource = await resolveResource(baseUrl, resourceNameOrId);
     const refs = parseJsonObjectOption(opts.refs, "--refs");
     const metadata = parseJsonObjectOption(opts.metadata, "--metadata");
-    const mapping = await fetchJson<Record<string, unknown>>(`${baseUrl}/mappings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        resourceId: resource.id,
-        connectValue: opts.connectValue,
-        refs,
-        metadata,
-      }),
-    });
+    const mapping = await fetchJson<Record<string, unknown>>(
+      `${baseUrl}/mappings`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resourceId: resource.id,
+          connectValue: opts.connectValue,
+          refs,
+          metadata,
+        }),
+      },
+    );
 
     output({ ok: true, action: "upsert", resource, mapping });
   },
@@ -261,7 +266,7 @@ withApiOptions(
     fail(
       "request_failed",
       data.error ??
-        `Delete request failed for mapping "${mappingId}" with status ${res.status}.`,
+        `Delete request failed for mapping "${mappingId}" with status ${String(res.status)}.`,
     );
   }
 

@@ -12,7 +12,7 @@ import {
   installPackages,
   installShadcnComponents,
 } from "../deps.js";
-import { getComponent, getTemplateContent, isMultiFile } from "../registry.js";
+import { getComponent, isMultiFile } from "../registry.js";
 import { installSkills, type SkillDefinition } from "../agent-detect.js";
 import { resolveOutputDir } from "../cli-api.js";
 
@@ -393,7 +393,7 @@ export const SKILL_COMPONENTS = [
   "skill-frontend",
 ];
 
-function scaffoldAgentSkills(cwd: string, autoYes: boolean = false): number {
+function scaffoldAgentSkills(cwd: string, autoYes = false): number {
   const skills: SkillDefinition[] = [];
 
   for (const name of SKILL_COMPONENTS) {

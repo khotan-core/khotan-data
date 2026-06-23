@@ -1,7 +1,6 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
-import prompts from "prompts";
 import { getComponent, isMultiFile } from "../registry.js";
 import {
   resolveDrizzleSchemaDir,
@@ -76,9 +75,7 @@ export function runGenerate(
       singleFile.globValue,
     );
     if (updated) {
-      console.log(
-        `✓ Updated ${relConfig}: schema → "${singleFile.globValue}"`,
-      );
+      console.log(`✓ Updated ${relConfig}: schema → "${singleFile.globValue}"`);
     } else {
       console.warn(
         `⚠ Could not update ${relConfig} automatically. Set schema to "${singleFile.globValue}" manually.`,

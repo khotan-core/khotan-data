@@ -33,6 +33,7 @@ export default tseslint.config(
       "node_modules/",
       "coverage/",
       "*.config.*",
+      "vitest.integration.ts",
       "**/*.test.ts",
       "**/*.spec.ts",
       "src/cli/templates/**",

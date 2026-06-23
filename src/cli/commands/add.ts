@@ -1,7 +1,6 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prompts from "prompts";
 import {
   getEntry,
@@ -26,7 +25,7 @@ import {
 } from "../deps.js";
 import { installSkills, type SkillDefinition } from "../agent-detect.js";
 import { ensureWorkflowNextConfig } from "../next-config.js";
-import { loadConfigOutputDir, resolveOutputDir } from "../cli-api.js";
+import { loadConfigOutputDir } from "../cli-api.js";
 
 function hasSrcLayout(cwd: string): boolean {
   return fs.existsSync(path.join(cwd, "src", "app"));
@@ -469,7 +468,9 @@ export const addCommand = new Command("add")
         // Conventional fallback when no drizzle.config.ts is detected. Never
         // fall back to the factory `outputDir`, whose `khotan.ts` collides with
         // the factory config file of the same name.
-        const fallbackSchemaDir = hasSrcLayout(cwd) ? "src/db/schema" : "db/schema";
+        const fallbackSchemaDir = hasSrcLayout(cwd)
+          ? "src/db/schema"
+          : "db/schema";
 
         if (schemaDir) {
           outputDir = path.resolve(cwd, schemaDir);
@@ -490,7 +491,12 @@ export const addCommand = new Command("add")
           );
 
           const schemaPath = response.schemaPath as string | undefined;
-          outputDir = path.resolve(cwd, schemaPath || fallbackSchemaDir);
+          // Fall back to the default dir when the prompt response is empty or unset.
+          const resolvedSchemaPath =
+            schemaPath && schemaPath.length > 0
+              ? schemaPath
+              : fallbackSchemaDir;
+          outputDir = path.resolve(cwd, resolvedSchemaPath);
         } else {
           outputDir = path.resolve(cwd, fallbackSchemaDir);
           console.log(
@@ -504,7 +510,11 @@ export const addCommand = new Command("add")
       // Safety net: the schema template's filename is `khotan.ts`, the same as
       // the factory config. Refuse to ever write the schema over it.
       if (componentName === "schema") {
-        const factoryConfigPath = path.resolve(cwd, config.outputDir, "khotan.ts");
+        const factoryConfigPath = path.resolve(
+          cwd,
+          config.outputDir,
+          "khotan.ts",
+        );
         if (path.resolve(outputPath) === factoryConfigPath) {
           console.error(
             `✗ Refusing to write the Drizzle schema over the factory config (${path.relative(cwd, factoryConfigPath)}).`,
@@ -512,7 +522,9 @@ export const addCommand = new Command("add")
           console.error(
             `  Add a drizzle.config.ts with a schema dir (e.g. schema: "./src/db/schema/*") and re-run,`,
           );
-          console.error(`  or run \`npx khotan init --full\` to scaffold Drizzle.`);
+          console.error(
+            `  or run \`npx khotan init --full\` to scaffold Drizzle.`,
+          );
           process.exit(1);
         }
       }

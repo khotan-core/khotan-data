@@ -14,7 +14,9 @@ import type {
 // Small utility functions shared across factory modules
 // ---------------------------------------------------------------------------
 
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -89,14 +91,16 @@ export function normalizeFlowVariants(
   const normalized: Record<string, FlowVariant> = {};
   for (const [name, config] of Object.entries(flow.variants!)) {
     if (typeof name !== "string" || !name.trim()) {
-      throw new Error(`Flow "${flow.name}" declares a variant with an empty name`);
+      throw new Error(
+        `Flow "${flow.name}" declares a variant with an empty name`,
+      );
     }
     if (name !== name.trim()) {
       throw new Error(
         `Flow "${flow.name}" variant name "${name}" must not have leading/trailing whitespace`,
       );
     }
-    normalized[name] = config ?? {};
+    normalized[name] = config;
   }
   return normalized;
 }
@@ -111,11 +115,17 @@ export function extractEventTypes(body: Record<string, unknown>): string[] {
   return [];
 }
 
-export function serializeConnectField(connectField: ResourceConnectField): string {
-  return Array.isArray(connectField) ? JSON.stringify(connectField) : connectField;
+export function serializeConnectField(
+  connectField: ResourceConnectField,
+): string {
+  return Array.isArray(connectField)
+    ? JSON.stringify(connectField)
+    : connectField;
 }
 
-export function deserializeConnectField(connectField: unknown): ResourceConnectField {
+export function deserializeConnectField(
+  connectField: unknown,
+): ResourceConnectField {
   if (Array.isArray(connectField)) {
     return connectField as [string, ...string[]];
   }
@@ -187,7 +197,9 @@ export function validateResourcePlugs(
     );
   }
 
-  for (const [plugName, declaration] of Object.entries(resource.mapping.plugs)) {
+  for (const [plugName, declaration] of Object.entries(
+    resource.mapping.plugs,
+  )) {
     if (!plugNames.has(plugName)) {
       throw new Error(
         `Resource "${resource.name}" references unknown plug: "${plugName}"`,
@@ -202,8 +214,8 @@ export function validateResourcePlugs(
     const keys = Object.keys(declaration);
     if (
       keys.length !== 1 ||
-      typeof declaration["uniqueIdentifier"] !== "string" ||
-      !declaration["uniqueIdentifier"].trim()
+      typeof declaration.uniqueIdentifier !== "string" ||
+      !declaration.uniqueIdentifier.trim()
     ) {
       throw new Error(
         `Resource "${resource.name}" must declare exactly one uniqueIdentifier for plug "${plugName}"`,
@@ -255,7 +267,9 @@ export function parseCacheTtlSeconds(
   }
 
   if (typeof ttl !== "string") {
-    throw new Error(`Cache "${cacheName}" must declare ttl as a string or number`);
+    throw new Error(
+      `Cache "${cacheName}" must declare ttl as a string or number`,
+    );
   }
 
   const normalized = ttl.trim().toLowerCase();
@@ -310,7 +324,10 @@ export function coerceCacheEntryRecord(
   };
 }
 
-export function isCacheEntryExpired(entry: CacheEntryRecord, now = new Date()): boolean {
+export function isCacheEntryExpired(
+  entry: CacheEntryRecord,
+  now = new Date(),
+): boolean {
   return entry.expiresAt !== null && entry.expiresAt.getTime() <= now.getTime();
 }
 

@@ -46,7 +46,9 @@ function readSecretFromEnvFile(filePath: string): string | null {
  * Resolves `KHOTAN_SECRET` from the process environment, then `.env.local`,
  * then `.env` in the current working directory. Returns null when unset.
  */
-export function resolveKhotanSecret(cwd: string = process.cwd()): string | null {
+export function resolveKhotanSecret(
+  cwd: string = process.cwd(),
+): string | null {
   const fromEnv = process.env["KHOTAN_SECRET"]?.trim();
   if (fromEnv) return fromEnv;
   return (

@@ -2,19 +2,14 @@ import { Command } from "commander";
 import { inferShape, diffSchemas, type SerializedSchema } from "../compare.js";
 import { varsCommand } from "./plug-vars.js";
 import { cliFetch, unauthorizedHint } from "../cli-auth.js";
-import {
-  output,
-  fail,
-  resolvePort,
-  checkConnectivity,
-} from "../cli-api.js";
+import { output, fail, resolvePort, checkConnectivity } from "../cli-api.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}b`;
+  if (bytes < 1024) return `${String(bytes)}b`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}kb`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}mb`;
 }
@@ -97,7 +92,7 @@ export const plugCommand = new Command("plug")
       },
     ) => {
       const port = resolvePort(opts.port);
-      const baseUrl = `http://localhost:${port}${opts.basePath}`;
+      const baseUrl = `http://localhost:${String(port)}${opts.basePath}`;
 
       // --list mode: uses /plugs management route, not debug
       if (opts.list) {
@@ -271,7 +266,8 @@ export const plugCommand = new Command("plug")
         | undefined;
       const matchedEndpointName = debugEndpoint?.name ?? opts.endpoint ?? null;
 
-      const responseStatus = (debugData["status"] as number) ?? debugRes.status;
+      const responseStatus =
+        (debugData["status"] as number | undefined) ?? debugRes.status;
       const isError = responseStatus >= 400;
 
       const result: Record<string, unknown> = {
@@ -285,7 +281,8 @@ export const plugCommand = new Command("plug")
         response: {
           status: responseStatus,
           statusText:
-            (debugData["statusText"] as string) ?? debugRes.statusText,
+            (debugData["statusText"] as string | undefined) ??
+            debugRes.statusText,
           timing: debugData["timing"] ?? null,
           size,
           headers: debugData["headers"] ?? null,
@@ -308,7 +305,7 @@ export const plugCommand = new Command("plug")
         } else if (isError) {
           result["comparison"] = null;
           result["comparisonNote"] =
-            `Response status ${responseStatus} — comparison skipped (schemas describe success responses).`;
+            `Response status ${String(responseStatus)} — comparison skipped (schemas describe success responses).`;
         } else {
           // Fetch endpoint metadata if we don't have it yet
           if (!allEndpoints) {

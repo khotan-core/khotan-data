@@ -456,7 +456,10 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           metadata: mapping.metadata ?? null,
         })
         .onConflictDoUpdate({
-          target: [khotanMappingsTable.resourceId, khotanMappingsTable.connectValue],
+          target: [
+            khotanMappingsTable.resourceId,
+            khotanMappingsTable.connectValue,
+          ],
           set: {
             refs: sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`,
             metadata: mapping.metadata ?? null,
@@ -507,7 +510,9 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
     },
 
     async deleteMapping(id) {
-      await db.delete(khotanMappingsTable).where(eq(khotanMappingsTable.id, id));
+      await db
+        .delete(khotanMappingsTable)
+        .where(eq(khotanMappingsTable.id, id));
     },
 
     async lookupMapping(params) {
@@ -811,7 +816,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           throw error;
         }
 
-        const legacyResult = await db.execute(sql`
+        const legacyResult = (await db.execute(sql`
           select
             "id",
             null::text as "wire_id",
@@ -825,12 +830,12 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           order by "received_at" desc
           limit ${limit + 1}
           offset ${offset}
-        `);
+        `)) as Record<string, unknown>[] | { rows: Record<string, unknown>[] };
 
         const rawRows: Record<string, unknown>[] = Array.isArray(legacyResult)
-          ? (legacyResult as Record<string, unknown>[])
+          ? legacyResult
           : "rows" in legacyResult && Array.isArray(legacyResult.rows)
-            ? (legacyResult.rows as Record<string, unknown>[])
+            ? legacyResult.rows
             : [];
 
         rows = rawRows.map((row) => ({

@@ -275,9 +275,12 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     upsertCache: vi.fn(async (cache) => {
-      const existing = [...cacheStore.values()].find((c) => c.name === cache.name);
+      const existing = [...cacheStore.values()].find(
+        (c) => c.name === cache.name,
+      );
       if (existing) {
-        existing.scope = (cache.scope as Record<string, unknown> | null) ?? null;
+        existing.scope =
+          (cache.scope as Record<string, unknown> | null) ?? null;
         existing.ttlSeconds = cache.ttlSeconds ?? null;
         return { id: existing.id };
       }
@@ -292,7 +295,9 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     getCacheByName: vi.fn(async (name: string) => {
-      return [...cacheStore.values()].find((cache) => cache.name === name) ?? null;
+      return (
+        [...cacheStore.values()].find((cache) => cache.name === name) ?? null
+      );
     }),
 
     getCacheEntry: vi.fn(async (cacheId: string, key: string) => {
@@ -424,20 +429,18 @@ function createMockAdapter(): KhotanAdapter {
       mappingStore.delete(id);
     }),
 
-    lookupMapping: vi.fn(
-      async (params) => {
-        const found = [...mappingStore.values()].find((m) => {
-          if (m.resourceId !== params.resourceId) {
-            return false;
-          }
-          if ("connectValue" in params) {
-            return m.connectValue === params.connectValue;
-          }
-          return m.refs[params.plugName] === params.ref;
-        });
-        return found ?? null;
-      },
-    ),
+    lookupMapping: vi.fn(async (params) => {
+      const found = [...mappingStore.values()].find((m) => {
+        if (m.resourceId !== params.resourceId) {
+          return false;
+        }
+        if ("connectValue" in params) {
+          return m.connectValue === params.connectValue;
+        }
+        return m.refs[params.plugName] === params.ref;
+      });
+      return found ?? null;
+    }),
 
     updateFlowResourceId: vi.fn(async (flowId: string, resourceId: string) => {
       const flow = flowStore.get(flowId);
@@ -476,7 +479,9 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     upsertWire: vi.fn(async ({ plugId }: { plugId: string }) => {
-      const existing = [...wireStore.values()].find((wire) => wire.plugId === plugId);
+      const existing = [...wireStore.values()].find(
+        (wire) => wire.plugId === plugId,
+      );
       if (existing) {
         return { id: existing.id };
       }
@@ -502,7 +507,9 @@ function createMockAdapter(): KhotanAdapter {
     }),
 
     getPlugWire: vi.fn(async (plugId: string) => {
-      return [...wireStore.values()].find((wire) => wire.plugId === plugId) ?? null;
+      return (
+        [...wireStore.values()].find((wire) => wire.plugId === plugId) ?? null
+      );
     }),
 
     getWire: vi.fn(async (wireId: string) => {
@@ -588,7 +595,8 @@ function createMockAdapter(): KhotanAdapter {
       return (
         [...runStore.values()]
           .filter((run) => run.webhookHandlerId === handlerId)
-          .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0] ?? null
+          .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0] ??
+        null
       );
     }),
 
@@ -684,18 +692,20 @@ async function waitForBackgroundTasks(): Promise<void> {
 
 describe("bindWorkflowPlug", () => {
   it("reuses workflow-scoped vars for subsequent destination plug requests", async () => {
-    const post = vi.fn(async (_path: string, options?: Record<string, unknown>) => {
-      const vars = (options?.["vars"] ?? {}) as Record<string, string>;
-      const setVars = options?.["_setVars"] as
-        | ((updates: Record<string, string>) => Promise<void>)
-        | undefined;
+    const post = vi.fn(
+      async (_path: string, options?: Record<string, unknown>) => {
+        const vars = (options?.["vars"] ?? {}) as Record<string, string>;
+        const setVars = options?.["_setVars"] as
+          | ((updates: Record<string, string>) => Promise<void>)
+          | undefined;
 
-      if (!vars["_token"]) {
-        await setVars?.({ _token: "token-1" });
-      }
+        if (!vars["_token"]) {
+          await setVars?.({ _token: "token-1" });
+        }
 
-      return { ok: true };
-    });
+        return { ok: true };
+      },
+    );
 
     const plug = {
       get: vi.fn(),
@@ -818,7 +828,10 @@ describe("khotan factory", () => {
         khotan({
           adapter,
           plugs: [],
-          caches: [{ name: "products-snapshot" }, { name: "products-snapshot" }],
+          caches: [
+            { name: "products-snapshot" },
+            { name: "products-snapshot" },
+          ],
         }),
       ).toThrow('Duplicate cache name: "products-snapshot"');
     });
@@ -855,7 +868,9 @@ describe("khotan factory", () => {
             },
           ],
         }),
-      ).toThrow('Cache "products-snapshot" references unknown flow: "missing-flow"');
+      ).toThrow(
+        'Cache "products-snapshot" references unknown flow: "missing-flow"',
+      );
     });
 
     it("accepts flow with valid resource reference", () => {
@@ -1090,7 +1105,11 @@ describe("khotan factory", () => {
         caches: [
           {
             name: "cin7-products-snapshot",
-            scope: { plug: "cin7", resource: "products", flow: "relay-products" },
+            scope: {
+              plug: "cin7",
+              resource: "products",
+              flow: "relay-products",
+            },
             ttl: "6h",
           },
         ],
@@ -1118,14 +1137,22 @@ describe("khotan factory", () => {
         caches: [{ name: "products-snapshot" }],
       });
 
-      await instance.cache("products-snapshot").set("all-products", { count: 2 });
+      await instance
+        .cache("products-snapshot")
+        .set("all-products", { count: 2 });
       await expect(
-        instance.cache("products-snapshot").get<{ count: number }>("all-products"),
+        instance
+          .cache("products-snapshot")
+          .get<{ count: number }>("all-products"),
       ).resolves.toEqual({ count: 2 });
 
-      await instance.cache("products-snapshot").set("all-products", { count: 3 });
+      await instance
+        .cache("products-snapshot")
+        .set("all-products", { count: 3 });
       await expect(
-        instance.cache("products-snapshot").get<{ count: number }>("all-products"),
+        instance
+          .cache("products-snapshot")
+          .get<{ count: number }>("all-products"),
       ).resolves.toEqual({ count: 3 });
 
       await instance.cache("products-snapshot").delete("all-products");
@@ -1244,9 +1271,13 @@ describe("khotan factory", () => {
       });
 
       const createRes = await cacheInstance.handler(
-        makeRequest("/api/khotan/caches/products-snapshot/all-products", "POST", {
-          value: { count: 4 },
-        }),
+        makeRequest(
+          "/api/khotan/caches/products-snapshot/all-products",
+          "POST",
+          {
+            value: { count: 4 },
+          },
+        ),
       );
       expect(createRes.status).toBe(200);
       await expect(createRes.json()).resolves.toMatchObject({
@@ -1266,7 +1297,10 @@ describe("khotan factory", () => {
       });
 
       const deleteRes = await cacheInstance.handler(
-        makeRequest("/api/khotan/caches/products-snapshot/all-products", "DELETE"),
+        makeRequest(
+          "/api/khotan/caches/products-snapshot/all-products",
+          "DELETE",
+        ),
       );
       expect(deleteRes.status).toBe(204);
 
@@ -1697,9 +1731,7 @@ describe("khotan factory", () => {
 
     it("relay workflows can read and bust cache entries through khotanCache()", async () => {
       let returnValue: Promise<unknown> | undefined;
-      const workflow = vi.fn(async (ctx: {
-        khotanInstanceId: string;
-      }) => {
+      const workflow = vi.fn(async (ctx: { khotanInstanceId: string }) => {
         const cache = khotanCache(ctx, "cin7-products-snapshot");
         const before = await cache.get("all-products");
         expect(before).toBeNull();
@@ -1767,7 +1799,9 @@ describe("khotan factory", () => {
       });
 
       const res = await relayInstance.handler(
-        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { variant: "full" }),
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          variant: "full",
+        }),
       );
       expect(res.status).toBe(200);
 
@@ -1781,15 +1815,14 @@ describe("khotan factory", () => {
     });
 
     it("pass workflows can write dedupe markers through khotanCache()", async () => {
-      const passWorkflow = vi.fn(async (ctx: {
-        eventType: string;
-        khotanInstanceId: string;
-      }) => {
-        await khotanCache(ctx, "webhook-dedupe").set(
-          `event:${String(ctx.eventType)}:evt-1`,
-          { seen: true },
-        );
-      });
+      const passWorkflow = vi.fn(
+        async (ctx: { eventType: string; khotanInstanceId: string }) => {
+          await khotanCache(ctx, "webhook-dedupe").set(
+            `event:${String(ctx.eventType)}:evt-1`,
+            { seen: true },
+          );
+        },
+      );
       __setWorkflowStartForTests(
         vi.fn(async (workflowFn, args) => ({
           runId: "workflow-run-1",
@@ -2410,9 +2443,13 @@ describe("khotan factory", () => {
           ],
         });
 
-        const first = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const first = await flowInstance.handler(
+          makeRequest("/api/khotan/cron"),
+        );
         expect(first.status).toBe(200);
-        const second = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const second = await flowInstance.handler(
+          makeRequest("/api/khotan/cron"),
+        );
         expect(second.status).toBe(200);
         const data = await second.json();
         expect(data.triggered).toHaveLength(0);
@@ -2462,7 +2499,9 @@ describe("khotan factory", () => {
           ],
         });
 
-        const denied = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const denied = await flowInstance.handler(
+          makeRequest("/api/khotan/cron"),
+        );
         expect(denied.status).toBe(401);
 
         const allowed = await flowInstance.handler(
@@ -2641,7 +2680,9 @@ describe("khotan factory", () => {
           lastRunStatus: "completed",
         });
 
-        const first = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const first = await flowInstance.handler(
+          makeRequest("/api/khotan/cron"),
+        );
         const firstData = await first.json();
         expect(firstData.skipped).toEqual(
           expect.arrayContaining([
@@ -2652,7 +2693,9 @@ describe("khotan factory", () => {
           ]),
         );
 
-        const second = await flowInstance.handler(makeRequest("/api/khotan/cron"));
+        const second = await flowInstance.handler(
+          makeRequest("/api/khotan/cron"),
+        );
         const secondData = await second.json();
         expect(secondData.triggered).toHaveLength(0);
         expect(secondData.skipped).toEqual(
@@ -2991,7 +3034,9 @@ describe("khotan factory", () => {
       );
 
       const res = await instance.handler(
-        makeRequest("/api/khotan/resources/resource-1/mappings?limit=1&search=green"),
+        makeRequest(
+          "/api/khotan/resources/resource-1/mappings?limit=1&search=green",
+        ),
       );
       expect(res.status).toBe(200);
       const data = await res.json();
@@ -4164,7 +4209,9 @@ describe("CLI auth token (dev-only HMAC bypass)", () => {
     });
 
     const stale = Date.now() - 120_000;
-    const res = await instance.handler(tokenRequest(await cliHeader(SECRET, stale)));
+    const res = await instance.handler(
+      tokenRequest(await cliHeader(SECRET, stale)),
+    );
     expect(res.status).toBe(401);
   });
 
