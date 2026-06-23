@@ -1,5 +1,50 @@
 # khotan-data
 
+## 0.8.0
+
+### Minor Changes
+
+- 2c6d788: Add flow variants: named run modes with per-variant schedules and lifecycle hooks.
+
+  A flow may now declare a `variants` map (`{ schedule?, onError?, onComplete? }`),
+  where the variant **name** is the run mode. Flow code branches on `ctx.variant`
+  (e.g. `"delta"`, `"full"`, `"healthcheck"`). The cron dispatcher schedules each
+  flow × variant by that variant's `schedule`; variants without a schedule are
+  manual-only. Per-variant `onError`/`onComplete` hooks fire on terminal run
+  states, with a batteries-included `slackNotifier(webhookUrl)` helper exported
+  from `khotan-data/factory`.
+
+  Triggering selects a variant: `flow(name).start({ variant })`, the flow-run API
+  body `{ variant }`, and the CLI (`khotan flows trigger <flow> <variant>` or
+  `--variant`).
+
+  **BREAKING — `runType` → `variant`:**
+  - `ctx.runType` is removed from the flow run context; use `ctx.variant`.
+  - `--run-type` (CLI) and `{ runType }` (API / `start`) are accepted as
+    **deprecated aliases** that map to `variant` for one minor release.
+  - The `khotan_runs.run_type` enum column is replaced by `variant` (text — the
+    run mode) plus `source` (text — `scheduled` | `manual` | `webhook`).
+
+  **Migration.** Consumers run `npx khotan migrate` (or `--push`). The new
+  `variant` column ships with a server default (`'default'`) so the generated
+  `ADD COLUMN ... NOT NULL` applies safely to tables with existing rows. The
+  auto-generated migration is crash-safe, but it backfills old rows with
+  `'default'`/`'manual'` rather than their original `run_type`. To preserve the
+  exact historical run modes, apply this data-preserving SQL instead:
+
+  ```sql
+  ALTER TABLE "khotan_runs" ADD COLUMN "variant" text;
+  ALTER TABLE "khotan_runs" ADD COLUMN "source" text NOT NULL DEFAULT 'manual';
+  UPDATE "khotan_runs" SET "variant" = "run_type";
+  UPDATE "khotan_runs" SET "source" = CASE WHEN "run_type" = 'webhook' THEN 'webhook' ELSE 'scheduled' END;
+  ALTER TABLE "khotan_runs" ALTER COLUMN "variant" SET NOT NULL;
+  ALTER TABLE "khotan_runs" DROP COLUMN "run_type";
+  ```
+
+  A flow that declares no `variants` keeps working unchanged: it is normalized to a
+  single implicit `default` variant carrying the top-level `schedule`, so
+  `ctx.variant === "default"`.
+
 ## 0.7.0
 
 ### Minor Changes
