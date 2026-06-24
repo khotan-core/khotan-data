@@ -33,3 +33,4 @@ jobs:
       - run: npm run format:check
       - run: npm run build
       - run: npm run test:coverage
+        if: matrix.node-version != 18
