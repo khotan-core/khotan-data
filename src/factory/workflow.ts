@@ -25,39 +25,58 @@ export type WorkflowGetWritableFn = <T = unknown>(options?: {
   namespace?: string;
 }) => WritableStream<T>;
 
+export interface WorkflowRuntimeConfig {
+  start?: WorkflowStartFn | null;
+  getRun?: WorkflowGetRunFn | null;
+  getWritable?: WorkflowGetWritableFn | null;
+}
+
 let _workflowStart: WorkflowStartFn | null = null;
 let _workflowGetRun: WorkflowGetRunFn | null = null;
 let _workflowGetWritable: WorkflowGetWritableFn | null = null;
 
+export function configureWorkflowRuntime(runtime: WorkflowRuntimeConfig): void {
+  if ("start" in runtime) {
+    _workflowStart = runtime.start ?? null;
+  }
+  if ("getRun" in runtime) {
+    _workflowGetRun = runtime.getRun ?? null;
+  }
+  if ("getWritable" in runtime) {
+    _workflowGetWritable = runtime.getWritable ?? null;
+  }
+}
+
 export function __setWorkflowStartForTests(
   start: WorkflowStartFn | null,
 ): void {
-  _workflowStart = start;
+  configureWorkflowRuntime({ start });
 }
 
 export function __setWorkflowGetRunForTests(
   getRun: WorkflowGetRunFn | null,
 ): void {
-  _workflowGetRun = getRun;
+  configureWorkflowRuntime({ getRun });
 }
 
 export function __setWorkflowGetWritableForTests(
   getWritable: WorkflowGetWritableFn | null,
 ): void {
-  _workflowGetWritable = getWritable;
+  configureWorkflowRuntime({ getWritable });
 }
 
 export async function importWorkflowStart(): Promise<WorkflowStartFn> {
   if (_workflowStart) return _workflowStart;
   try {
-    const mod = (await import(/* webpackIgnore: true */ "workflow/api")) as {
+    const mod = (await import("workflow/api")) as {
       start: WorkflowStartFn;
     };
     _workflowStart = mod.start;
     return _workflowStart;
-  } catch {
+  } catch (cause) {
     throw new Error(
       "Failed to import workflow/api. Install Vercel Workflow: npm install workflow",
+      { cause },
     );
   }
 }
@@ -65,14 +84,15 @@ export async function importWorkflowStart(): Promise<WorkflowStartFn> {
 export async function importWorkflowGetRun(): Promise<WorkflowGetRunFn> {
   if (_workflowGetRun) return _workflowGetRun;
   try {
-    const mod = (await import(/* webpackIgnore: true */ "workflow/api")) as {
+    const mod = (await import("workflow/api")) as {
       getRun: WorkflowGetRunFn;
     };
     _workflowGetRun = mod.getRun;
     return _workflowGetRun;
-  } catch {
+  } catch (cause) {
     throw new Error(
       "Failed to import workflow/api. Install Vercel Workflow: npm install workflow",
+      { cause },
     );
   }
 }
@@ -80,14 +100,15 @@ export async function importWorkflowGetRun(): Promise<WorkflowGetRunFn> {
 async function importWorkflowGetWritable(): Promise<WorkflowGetWritableFn> {
   if (_workflowGetWritable) return _workflowGetWritable;
   try {
-    const mod = (await import(/* webpackIgnore: true */ "workflow")) as {
+    const mod = (await import("workflow")) as {
       getWritable: WorkflowGetWritableFn;
     };
     _workflowGetWritable = mod.getWritable;
     return _workflowGetWritable;
-  } catch {
+  } catch (cause) {
     throw new Error(
       "Failed to import workflow. Install Vercel Workflow: npm install workflow",
+      { cause },
     );
   }
 }

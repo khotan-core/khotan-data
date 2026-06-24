@@ -53,6 +53,12 @@ export type {
 
 // Runtime helpers exported for workflow consumers
 export { bindWorkflowPlug, khotanCache, khotanMappings } from "./types.js";
+export type {
+  WorkflowGetRunFn,
+  WorkflowGetWritableFn,
+  WorkflowRuntimeConfig,
+  WorkflowStartFn,
+} from "./workflow.js";
 
 // CLI auth (deriveCliToken is used by the CLI package)
 export { deriveCliToken } from "./cli-auth.js";
@@ -62,6 +68,7 @@ export { drizzleAdapter } from "./drizzle-adapter.js";
 
 // Workflow test seams + sendUpdate
 export {
+  configureWorkflowRuntime,
   __setWorkflowStartForTests,
   __setWorkflowGetRunForTests,
   __setWorkflowGetWritableForTests,

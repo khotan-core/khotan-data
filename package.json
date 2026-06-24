@@ -1,6 +1,6 @@
 {
   "name": "khotan-data",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Data sync, ETL, and webhook primitives for Next.js + Drizzle + Postgres. shadcn for data plumbing.",
   "type": "module",
   "main": "./dist/index.cjs",

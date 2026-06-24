@@ -4,9 +4,11 @@ import {
   __setWorkflowGetWritableForTests,
   __setWorkflowStartForTests,
   bindWorkflowPlug,
+  configureWorkflowRuntime,
   khotanCache,
   khotan,
   deriveCliToken,
+  sendUpdate,
   toNextJsHandler,
   type KhotanAdapter,
   type PlugRegistration,
@@ -792,6 +794,31 @@ describe("khotan factory", () => {
     __setWorkflowStartForTests(null);
     __setWorkflowGetRunForTests(null);
     __setWorkflowGetWritableForTests(null);
+  });
+
+  it("uses configured workflow runtime helpers for stream updates", async () => {
+    const chunks: string[] = [];
+    const getWritable = vi.fn((options?: { namespace?: string }) => {
+      expect(options).toEqual({ namespace: "relay" });
+      return new WritableStream<string>({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      });
+    });
+
+    configureWorkflowRuntime({ getWritable });
+
+    await sendUpdate("relayed products", { namespace: "relay" });
+
+    expect(getWritable).toHaveBeenCalledTimes(1);
+    expect(chunks).toHaveLength(1);
+    const payload = JSON.parse(chunks[0]!) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      type: "log",
+      message: "relayed products",
+    });
+    expect(typeof payload["timestamp"]).toBe("string");
   });
 
   describe("registration validation", () => {
