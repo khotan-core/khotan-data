@@ -70,6 +70,10 @@ export default defineConfig([
         path.resolve(templatesDir, "api-state.tsx"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "date-time.tsx"),
+        path.resolve(templatesDir, "date-time.tsx"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "hub.tsx"),
         path.resolve(templatesDir, "hub.tsx"),
       );

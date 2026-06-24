@@ -19,6 +19,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { khotanFetch, ApiErrorState } from "./api-state";
+import { formatLocalTime } from "./date-time";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -199,13 +200,7 @@ const WEBHOOK_TYPE_LABEL: Record<WebhookType, string> = {
 };
 
 function formatTime(value: string | null | undefined): string {
-  if (!value) return "Never";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatLocalTime(value);
 }
 
 function normalizeRuns(value: unknown): RunRecord[] {
