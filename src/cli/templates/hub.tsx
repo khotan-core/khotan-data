@@ -55,6 +55,9 @@ interface Flow {
     | "cancelled"
     | null;
   plugName: string | null;
+  to?: string | null;
+  destinationPlugId?: string | null;
+  destinationPlugName?: string | null;
 }
 
 interface WebhookHandler {
@@ -262,7 +265,11 @@ export function KhotanHub({
     ? plugs.find((p) => p.id === selectedPlugId)
     : null;
   const plugFlows = selectedPlugId
-    ? flows.filter((flow) => flow.plugId === selectedPlugId)
+    ? flows.filter(
+        (flow) =>
+          flow.plugId === selectedPlugId ||
+          (flow.type === "relay" && flow.destinationPlugId === selectedPlugId),
+      )
     : [];
 
   return (
@@ -373,6 +380,7 @@ export function KhotanHub({
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Type</TableHead>
+                      <TableHead>Association</TableHead>
                       <TableHead>Schedule</TableHead>
                       <TableHead>Last Run</TableHead>
                       <TableHead>Enabled</TableHead>
@@ -391,6 +399,13 @@ export function KhotanHub({
                           >
                             {flow.type}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {flow.plugId === selectedPlug.id
+                            ? flow.destinationPlugName
+                              ? `to ${flow.destinationPlugName}`
+                              : "registered here"
+                            : `from ${flow.plugName ?? "source"}`}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {flow.schedule ?? "—"}
