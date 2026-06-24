@@ -50,6 +50,7 @@ import type {
   CacheEntryRecord,
   CacheRegistration,
   ResourceRegistration,
+  FlowRegistration,
   PlugRegistration,
   WebhookRegistration,
   CatchRegistration,
