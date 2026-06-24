@@ -18,30 +18,30 @@ Scaffold components into your Next.js + Drizzle project:
 
 ```bash
 # Initialize khotan config
-npx khotan init
+npx khotan-data init
 
 # Full setup (drizzle + shadcn + config in one go)
-npx khotan init --full
+npx khotan-data init --full
 
 # Skills only (install agent skills; skip config + core files + package install)
-npx khotan init --skills-only
+npx khotan-data init --skills-only
 
 # Add components (reusable building blocks — never create pages)
-npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
-npx khotan add cache     # Durable key/value caches for workflows and relays
-npx khotan add plug      # Fetch wrapper with auth, retry, pagination
-npx khotan add inflow    # Workflow-backed flow for pulling data in
-npx khotan add outflow   # Workflow-backed flow for pushing data out
-npx khotan add relay     # Workflow-backed flow for moving data between plugs
-npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
+npx khotan-data add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
+npx khotan-data add cache     # Durable key/value caches for workflows and relays
+npx khotan-data add plug      # Fetch wrapper with auth, retry, pagination
+npx khotan-data add inflow    # Workflow-backed flow for pulling data in
+npx khotan-data add outflow   # Workflow-backed flow for pushing data out
+npx khotan-data add relay     # Workflow-backed flow for moving data between plugs
+npx khotan-data add hub       # Dashboard UI + API route + config (requires shadcn)
 
 # Add blocks (sample pages composed from components)
-npx khotan add config-page-1   # /config page that renders the KhotanHub dashboard
+npx khotan-data add config-page-1   # /config page that renders the KhotanHub dashboard
 
 # Options
-npx khotan add schema --force   # Overwrite existing files without prompting
-npx khotan add hub --yes        # Non-interactive mode: auto-accept all prompts
-npx khotan generate --force     # Regenerate schema (prompts before overwriting by default)
+npx khotan-data add schema --force   # Overwrite existing files without prompting
+npx khotan-data add hub --yes        # Non-interactive mode: auto-accept all prompts
+npx khotan-data generate --force     # Regenerate schema (prompts before overwriting by default)
 ```
 
 ## Factory (Runtime Engine)

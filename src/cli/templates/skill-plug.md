@@ -32,7 +32,7 @@ with `khotan-probe` before building flows.
 ## Scaffold
 
 ```bash
-npx khotan add plug --yes
+npx khotan-data add plug --yes
 ```
 
 Creates `{outputDir}/plugs/plug.ts` (the Plug runtime) and `plug.example.ts` (typed contract example).
@@ -203,9 +203,9 @@ const data = await myPlug.get("/items", { vars: { apiKey: "..." } });
 Use `khotan plug` to test plugs against the running dev server. `khotan probe` remains as a legacy alias:
 
 ```bash
-npx khotan plug myPlug --info                    # See endpoints
-npx khotan plug myPlug GET /products             # Fire request
-npx khotan plug myPlug --endpoint listProducts --compare  # Check schema
+npx khotan-data plug myPlug --info                    # See endpoints
+npx khotan-data plug myPlug GET /products             # Fire request
+npx khotan-data plug myPlug --endpoint listProducts --compare  # Check schema
 ```
 
 Set `KHOTAN_DEBUG=1` for verbose `[khotan:auth]` and `[khotan:request]` console logs.
@@ -215,8 +215,8 @@ Set `KHOTAN_DEBUG=1` for verbose `[khotan:auth]` and `[khotan:request]` console 
 1. Create the plug file and auth/hook setup.
 2. Add a small set of typed endpoints directly on the plug (`listProducts`, `getProduct`, etc).
 3. Run the app with `KHOTAN_DEBUG=1`.
-4. Use `npx khotan plug myPlug --info` to confirm the endpoints are visible to the debugger.
-5. Use `npx khotan plug myPlug --endpoint listProducts --compare` against the live API.
+4. Use `npx khotan-data plug myPlug --info` to confirm the endpoints are visible to the debugger.
+5. Use `npx khotan-data plug myPlug --endpoint listProducts --compare` against the live API.
 6. Tighten schemas until the compare output matches the real payload shape you care about.
 7. Only then build inflows, relays, outflows, or webhook handlers on top of those endpoints.
 
@@ -227,10 +227,10 @@ The package does not paginate or delta-sync for you automatically inside user fl
 Use the CLI to inspect and update stored plug variables:
 
 ```bash
-npx khotan plug vars --list
-npx khotan plug vars myPlug
-npx khotan plug vars myPlug set --json '{"apiKey":"secret","orgId":"org_live"}'
-npx khotan plug vars myPlug clear
+npx khotan-data plug vars --list
+npx khotan-data plug vars myPlug
+npx khotan-data plug vars myPlug set --json '{"apiKey":"secret","orgId":"org_live"}'
+npx khotan-data plug vars myPlug clear
 ```
 
 Variable reads mask `secret` fields automatically. Hub and CLI both talk to the same `/api/khotan/variables/*` routes.

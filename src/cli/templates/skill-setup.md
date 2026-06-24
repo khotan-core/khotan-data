@@ -22,15 +22,15 @@ frontend) start from `khotan-build`, which points here for Phase 0.
 
 ```bash
 npm install khotan-data
-npx khotan init
-npx khotan add schema --yes
-npx khotan migrate
-npx khotan add plug --yes
+npx khotan-data init
+npx khotan-data add schema --yes
+npx khotan-data migrate
+npx khotan-data add plug --yes
 ```
 
 ## What Init Creates
 
-`npx khotan init` scaffolds three files (never overwrites existing):
+`npx khotan-data init` scaffolds three files (never overwrites existing):
 
 | File | Purpose |
 |------|---------|
@@ -38,7 +38,7 @@ npx khotan add plug --yes
 | `{outputDir}/khotan.ts` | Factory config — register plugs, resources, adapter |
 | `src/app/api/khotan/[...all]/route.ts` | Catch-all API route |
 
-Use `npx khotan init --full` for greenfield projects — also installs drizzle-orm, postgres, drizzle-kit, and shadcn.
+Use `npx khotan-data init --full` for greenfield projects — also installs drizzle-orm, postgres, drizzle-kit, and shadcn.
 
 ## Factory Config Pattern
 
@@ -85,9 +85,9 @@ export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(khotanData.hand
 ## Database Setup
 
 ```bash
-npx khotan add schema --yes   # Scaffolds Drizzle table definitions
-npx khotan migrate             # Generates + applies migrations (needs DATABASE_URL)
-npx khotan migrate --push      # Or push directly without migration files
+npx khotan-data add schema --yes   # Scaffolds Drizzle table definitions
+npx khotan-data migrate             # Generates + applies migrations (needs DATABASE_URL)
+npx khotan-data migrate --push      # Or push directly without migration files
 ```
 
 Tables created: `khotan_plugs`, `khotan_resources`, `khotan_flows`, `khotan_wires`, `khotan_runs`, `khotan_mappings`.
@@ -174,7 +174,7 @@ communicates over `/.well-known/workflow/*`. If your app has a `middleware.ts`
 (or `proxy.ts`) whose `matcher` captures these paths, durable runs **silently
 fail** — steps never get invoked and runs hang.
 
-`npx khotan init` detects a middleware/proxy file and warns when it may
+`npx khotan-data init` detects a middleware/proxy file and warns when it may
 intercept these paths. Exclude them from the matcher:
 
 ```typescript
@@ -202,7 +202,7 @@ Vercel Workflow also requires AI Gateway OIDC — run `vercel link` and
 
 Flow triggering, HTTP trigger routes, and the Vercel cron dispatcher live in the
 `khotan-flow` skill. The short version: start flows with
-`khotanData.flow(name).start()` server-side, or `npx khotan flows trigger <name>`
+`khotanData.flow(name).start()` server-side, or `npx khotan-data flows trigger <name>`
 in dev — never call the workflow function directly.
 
 ## Verify Setup

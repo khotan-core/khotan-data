@@ -72,7 +72,7 @@ export function detectSingleFileSchema(projectRoot: string): {
   return {
     configPath: config.configPath,
     currentValue: schemaValue,
-    globValue: `${prefix}${dir}/*`,
+    globValue: `${prefix}${dir}/*.ts`,
   };
 }
 

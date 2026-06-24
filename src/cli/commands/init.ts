@@ -111,7 +111,7 @@ export function scaffoldDrizzleSetup(cwd: string): StepResult {
       `\n` +
       `export default defineConfig({\n` +
       `  dialect: "postgresql",\n` +
-      `  schema: "./${schemaDirRel}/*",\n` +
+      `  schema: "./${schemaDirRel}/*.ts",\n` +
       `  out: "./drizzle",\n` +
       `  dbCredentials: {\n` +
       `    url: process.env.DATABASE_URL!,\n` +
@@ -530,8 +530,12 @@ export const initCommand = new Command("init")
       if (allFiles.length > 0 || coreFiles.length > 0) {
         console.log("\nNext steps:");
         console.log("  1. Update the db import in your khotan config file");
-        console.log("  2. Run `npx khotan add plug` to add the HTTP client");
-        console.log("  3. Run `npx khotan migrate` to create database tables");
+        console.log(
+          "  2. Run `npx khotan-data add plug` to add the HTTP client",
+        );
+        console.log(
+          "  3. Run `npx khotan-data migrate` to create database tables",
+        );
       }
     },
   );

@@ -26,7 +26,8 @@ interface ResourceRecord {
 function withApiOptions(command: Command): Command {
   return command
     .option("--port <port>", "Dev server port")
-    .option("--base-path <path>", "API base path", "/api/khotan");
+    .option("--base-path <path>", "API base path", "/api/khotan")
+    .option("--json", "Output JSON (default)");
 }
 
 async function listResources(baseUrl: string): Promise<ResourceRecord[]> {

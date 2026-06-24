@@ -56,8 +56,8 @@ top-level subdirectory with its own `package.json` and `npm i khotan-data`.
 
 - Root `README.md` indexing the apps + one-time setup (create a Neon DB, set
   `DATABASE_URL`, set `KHOTAN_SANDBOX_URL` defaulting to
-  `https://data.khotan.com/api/sandbox`, run `npx khotan migrate`).
-- Per app: standard `npx khotan init --full` layout, plug `baseUrl` from env
+  `https://data.khotan.com/api/sandbox`, run `npx khotan-data migrate`).
+- Per app: standard `npx khotan-data init --full` layout, plug `baseUrl` from env
   (sandbox URL), committed `.env.example`.
 
 ### The five apps

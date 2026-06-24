@@ -40,12 +40,12 @@ is the value mappings are keyed on.
 Inspect and mutate mappings against the running dev server:
 
 ```bash
-npx khotan mappings list <resource> --search <term> --limit 20 --offset 0
-npx khotan mappings lookup <resource> --connect-value <value>
-npx khotan mappings lookup <resource> --plug <plugName> --ref <ref>
-npx khotan mappings upsert <resource> --connect-value <value> --refs '{"shopify":"123","hubspot":"abc"}'
-npx khotan mappings update <mappingId> --resource <resource> --connect-value <value> --refs '{...}'
-npx khotan mappings delete <mappingId>
+npx khotan-data mappings list <resource> --search <term> --limit 20 --offset 0
+npx khotan-data mappings lookup <resource> --connect-value <value>
+npx khotan-data mappings lookup <resource> --plug <plugName> --ref <ref>
+npx khotan-data mappings upsert <resource> --connect-value <value> --refs '{"shopify":"123","hubspot":"abc"}'
+npx khotan-data mappings update <mappingId> --resource <resource> --connect-value <value> --refs '{...}'
+npx khotan-data mappings delete <mappingId>
 ```
 
 - `upsert` creates/updates by canonical connect value (the idempotent path).
@@ -72,8 +72,8 @@ This keeps upserts idempotent across full/delta/backfill runs.
 A searchable browser is available — but do not add UI/routes without user
 consent (see `khotan-frontend`):
 
-- Component: `npx khotan add mapping-browser --yes`
-- Page block at `/mappings`: `npx khotan add mappings-page-1 --yes`
+- Component: `npx khotan-data add mapping-browser --yes`
+- Page block at `/mappings`: `npx khotan-data add mappings-page-1 --yes`
 
 ## Related
 

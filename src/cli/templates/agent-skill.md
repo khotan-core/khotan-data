@@ -27,34 +27,34 @@ request/response shapes of the service **before** building any flows on top.
 
 ### List all plugs
 ```bash
-npx khotan plug --list
+npx khotan-data plug --list
 ```
 Returns: `{ ok, plugs: [{ name, baseUrl, authType, varsConfigured }] }`
 
 ### Show plug info and endpoints
 ```bash
-npx khotan plug <plugName> --info
+npx khotan-data plug <plugName> --info
 ```
 Returns: `{ ok, plug: { name, baseUrl, authType, vars, endpoints } }`
 
 ### Fire a request through a plug
 ```bash
-npx khotan plug <plugName> GET /products
-npx khotan plug <plugName> POST /subscriptions --body '{"url":"https://example.com"}'
-npx khotan plug <plugName> GET /products --params '{"limit":"10"}'
-npx khotan plug <plugName> GET /products --headers '{"X-Custom":"value"}'
+npx khotan-data plug <plugName> GET /products
+npx khotan-data plug <plugName> POST /subscriptions --body '{"url":"https://example.com"}'
+npx khotan-data plug <plugName> GET /products --params '{"limit":"10"}'
+npx khotan-data plug <plugName> GET /products --headers '{"X-Custom":"value"}'
 ```
 Returns: `{ ok, request, response: { status, timing, size, body }, matchedEndpoint }`
 
 ### Fire via named endpoint
 ```bash
-npx khotan plug <plugName> --endpoint listProducts
+npx khotan-data plug <plugName> --endpoint listProducts
 ```
 Resolves method and path from the endpoint definition automatically.
 
 ### Compare response against schema
 ```bash
-npx khotan plug <plugName> --endpoint listProducts --compare
+npx khotan-data plug <plugName> --endpoint listProducts --compare
 ```
 Returns: `{ ..., comparison: { match, expected, actual, mismatches } }`
 

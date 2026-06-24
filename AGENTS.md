@@ -8,9 +8,9 @@ This package ships agent skills that teach coding agents how to use khotan-data.
 Skills are installed into consumer projects via the CLI:
 
 ```bash
-npx khotan init --yes          # Installs all skills during setup
-npx khotan init --skills-only  # Installs only skills (skips config + core files)
-npx khotan add skill-setup     # Or install individually
+npx khotan-data init --yes          # Installs all skills during setup
+npx khotan-data init --skills-only  # Installs only skills (skips config + core files)
+npx khotan-data add skill-setup     # Or install individually
 ```
 
 The installer auto-detects which coding agents are present (Cursor, Claude Code, Codex, Copilot, Kiro, Roo) and installs to all detected agent directories. It also places an `AGENTS.md` router at the project root.

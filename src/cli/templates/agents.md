@@ -22,12 +22,12 @@ whole workflow and points to the focused skills below at each step.
 ## Quick Reference
 
 ```bash
-npx khotan init              # Initialize project
-npx khotan add plug --yes    # Add HTTP client component
-npx khotan add hub --yes     # Add dashboard UI
-npx khotan generate          # Scaffold Drizzle schema
-npx khotan migrate           # Apply database migrations
-npx khotan plug --list       # Debug: list registered plugs
+npx khotan-data init              # Initialize project
+npx khotan-data add plug --yes    # Add HTTP client component
+npx khotan-data add hub --yes     # Add dashboard UI
+npx khotan-data generate          # Scaffold Drizzle schema
+npx khotan-data migrate           # Apply database migrations
+npx khotan-data plug --list       # Debug: list registered plugs
 ```
 
 ## Key Files

@@ -34,10 +34,10 @@ of `khotan-build`. Treat it as a **catalog you present**, not an install script.
 
 | Component | Add command | Renders |
 |---|---|---|
-| `hub` | `npx khotan add hub --yes` | `<KhotanHub />` — plug cards, flow table, enable/disable, per-flow "Run now", VarPanel, WirePanel |
-| `plug-debugger` | `npx khotan add plug-debugger --yes` | Postman-like tester for plug requests (needs `KHOTAN_DEBUG=1`) |
-| `logs` | `npx khotan add logs --yes` | Runs + webhook-event tables |
-| `mapping-browser` | `npx khotan add mapping-browser --yes` | Searchable mappings list/create/edit/delete |
+| `hub` | `npx khotan-data add hub --yes` | `<KhotanHub />` — plug cards, flow table, enable/disable, per-flow "Run now", VarPanel, WirePanel |
+| `plug-debugger` | `npx khotan-data add plug-debugger --yes` | Postman-like tester for plug requests (needs `KHOTAN_DEBUG=1`) |
+| `logs` | `npx khotan-data add logs --yes` | Runs + webhook-event tables |
+| `mapping-browser` | `npx khotan-data add mapping-browser --yes` | Searchable mappings list/create/edit/delete |
 
 Mounting a component (you choose the location):
 
@@ -65,11 +65,11 @@ export default function ConfigPage() {
 
 | Block | Add command | Fixed route | Requires |
 |---|---|---|---|
-| `config-page-1` | `npx khotan add config-page-1 --yes` | `/config` | `hub` |
-| `debug-page-1` | `npx khotan add debug-page-1 --yes` | `/debug`, `/debug/[plugName]` | `plug-debugger`, `KHOTAN_DEBUG=1` |
-| `logs-page-1` | `npx khotan add logs-page-1 --yes` | `/logs` | `logs` |
-| `mappings-page-1` | `npx khotan add mappings-page-1 --yes` | `/mappings` | `mapping-browser` |
-| `graph` | `npx khotan add graph --yes` | `/graph` | `@xyflow/react` |
+| `config-page-1` | `npx khotan-data add config-page-1 --yes` | `/config` | `hub` |
+| `debug-page-1` | `npx khotan-data add debug-page-1 --yes` | `/debug`, `/debug/[plugName]` | `plug-debugger`, `KHOTAN_DEBUG=1` |
+| `logs-page-1` | `npx khotan-data add logs-page-1 --yes` | `/logs` | `logs` |
+| `mappings-page-1` | `npx khotan-data add mappings-page-1 --yes` | `/mappings` | `mapping-browser` |
+| `graph` | `npx khotan-data add graph --yes` | `/graph` | `@xyflow/react` |
 
 ## shadcn prerequisites
 

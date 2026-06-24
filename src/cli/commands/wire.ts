@@ -27,6 +27,7 @@ export const wireCommand = new Command("wire")
   .argument("[action]", "Action: info | connect | disconnect")
   .option("--port <port>", "Dev server port")
   .option("--base-path <path>", "API base path", "/api/khotan")
+  .option("--json", "Output JSON (default)")
   .option(
     "--list",
     "List configured plugs and whether they currently have a wire",
