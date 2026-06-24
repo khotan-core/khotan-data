@@ -14,7 +14,9 @@ export function getLocalTimeZone(): string | undefined {
   }
 }
 
-function parseDate(value: Exclude<DateTimeInput, null | undefined>): Date | null {
+function parseDate(
+  value: Exclude<DateTimeInput, null | undefined>,
+): Date | null {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
