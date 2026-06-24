@@ -5,6 +5,7 @@ import { khotanFetch, ApiErrorState } from "./api-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatLocalDateTime } from "./date-time";
 import {
   Table,
   TableBody,
@@ -54,15 +55,6 @@ const statusVariant = {
   failed: "destructive",
   cancelled: "outline",
 } as const;
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d{3}Z$/, " UTC");
-}
 
 function formatHandler(item: WebhookEventItem): string {
   if (!item.handlerName) return "Unknown";
@@ -161,7 +153,7 @@ export function KhotanWebhookEventsTable({
                 data.items.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="text-sm text-muted-foreground">
-                      {formatDateTime(item.receivedAt)}
+                      {formatLocalDateTime(item.receivedAt)}
                     </TableCell>
                     <TableCell className="font-medium">
                       {item.eventType}

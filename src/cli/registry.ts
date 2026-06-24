@@ -112,6 +112,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "components",
       },
       {
+        templatePath: path.resolve(__dirname, "templates", "date-time.tsx"),
+        outputFile: "date-time.tsx",
+        outputBase: "components",
+      },
+      {
         templatePath: path.resolve(__dirname, "templates", "wire-panel.tsx"),
         outputFile: "wire.tsx",
         outputBase: "components",
@@ -168,6 +173,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "components",
       },
       {
+        templatePath: path.resolve(__dirname, "templates", "date-time.tsx"),
+        outputFile: "date-time.tsx",
+        outputBase: "components",
+      },
+      {
         templatePath: path.resolve(__dirname, "templates", "hub.tsx"),
         outputFile: "hub.tsx",
         outputBase: "components",
@@ -195,6 +205,11 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       {
         templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
         outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "date-time.tsx"),
+        outputFile: "date-time.tsx",
         outputBase: "components",
       },
       {
@@ -559,6 +574,11 @@ const BLOCKS: Record<string, ComponentEntry> = {
       {
         templatePath: path.resolve(__dirname, "templates", "api-state.tsx"),
         outputFile: "api-state.tsx",
+        outputBase: "components",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "date-time.tsx"),
+        outputFile: "date-time.tsx",
         outputBase: "components",
       },
       {

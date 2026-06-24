@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { formatLocalDateTime, formatLocalTime } from "./date-time";
 import {
   Table,
   TableBody,
@@ -73,16 +74,6 @@ const statusLabel = {
   cancelled: "cancelled",
 } as const;
 
-function formatDateTime(value: string | null): string {
-  if (!value) return "Never";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d{3}Z$/, " UTC");
-}
-
 function formatSource(item: RunLogItem): string {
   if (!item.sourceName) return "Unknown";
   if (item.sourceType !== "webhook" || !item.sourceKind) return item.sourceName;
@@ -111,7 +102,7 @@ function formatStreamLine(line: string): string {
     const parsedDate = parsed.timestamp ? new Date(parsed.timestamp) : null;
     const prefix =
       parsedDate && !Number.isNaN(parsedDate.getTime())
-        ? `[${parsedDate.toISOString().slice(11, 19)} UTC] `
+        ? `[${formatLocalTime(parsedDate, { includeSeconds: true })}] `
         : "";
     const type = parsed.type ? `${parsed.type}: ` : "";
     return `${prefix}${type}${parsed.message ?? line}`;
@@ -291,7 +282,9 @@ function RunDetails({
           ) : null}
           <div className="text-xs text-muted-foreground">
             Last updated:{" "}
-            {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
+            {lastUpdatedAt
+              ? formatLocalDateTime(lastUpdatedAt)
+              : "Not loaded yet"}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -414,7 +407,9 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
           </p>
           <p className="text-xs text-muted-foreground">
             Last updated:{" "}
-            {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "Not loaded yet"}
+            {lastUpdatedAt
+              ? formatLocalDateTime(lastUpdatedAt)
+              : "Not loaded yet"}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -489,10 +484,10 @@ export function KhotanRunsTable({ pageSize = 10 }: { pageSize?: number } = {}) {
                   <Fragment key={item.id}>
                     <TableRow>
                       <TableCell className="text-sm text-muted-foreground">
-                        <div>{formatDateTime(item.startedAt)}</div>
+                        <div>{formatLocalDateTime(item.startedAt)}</div>
                         <div className="text-xs">
                           {item.completedAt
-                            ? `completed ${formatDateTime(item.completedAt)}`
+                            ? `completed ${formatLocalDateTime(item.completedAt)}`
                             : "in progress"}
                         </div>
                       </TableCell>
