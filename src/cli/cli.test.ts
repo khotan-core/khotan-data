@@ -1304,7 +1304,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       const result = run("add hub --force", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 4 files");
+      expect(result.output).toContain("Created 5 files");
 
       expect(
         fs.existsSync(
@@ -1314,6 +1314,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(
         fs.existsSync(
           path.join(tmpDir, "src", "components", "khotan", "wire.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "src", "components", "khotan", "date-time.tsx"),
         ),
       ).toBe(true);
       expect(
@@ -1363,6 +1368,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
       expect(
         fs.existsSync(path.join(tmpDir, "components", "khotan", "wire.tsx")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "date-time.tsx"),
+        ),
       ).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "khotan", "khotan.ts"))).toBe(
         true,
@@ -1538,6 +1548,53 @@ describe("CLI", { timeout: 30_000 }, () => {
     });
   });
 
+  describe("add logs", () => {
+    it("scaffolds local timezone formatter with log tables", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "components.json"),
+        JSON.stringify({}),
+      );
+      const uiDir = path.join(tmpDir, "components", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      for (const c of ["card", "table", "badge", "button"]) {
+        fs.writeFileSync(path.join(uiDir, `${c}.tsx`), "");
+      }
+
+      run("init", tmpDir);
+      const result = run("add logs --force", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 5 files");
+
+      const dateTimePath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "date-time.tsx",
+      );
+      const runsTablePath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "runs-table.tsx",
+      );
+      const webhookEventsPath = path.join(
+        tmpDir,
+        "components",
+        "khotan",
+        "webhook-events-table.tsx",
+      );
+
+      expect(fs.existsSync(dateTimePath)).toBe(true);
+      expect(fs.readFileSync(runsTablePath, "utf-8")).toContain(
+        'from "./date-time"',
+      );
+      expect(fs.readFileSync(webhookEventsPath, "utf-8")).toContain(
+        'from "./date-time"',
+      );
+    });
+  });
+
   describe("add config-page-1 (block)", () => {
     function preScaffoldHub(dir: string, srcLayout: boolean): void {
       const hubDir = srcLayout
@@ -1552,6 +1609,9 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(hubDir, "wire.tsx"),
         "export function WirePanel() {}",
       );
+      fs.writeFileSync(path.join(hubDir, "api-state.tsx"), "export {}");
+      fs.writeFileSync(path.join(hubDir, "date-time.tsx"), "export {}");
+      fs.writeFileSync(path.join(hubDir, "var-panel.tsx"), "export {}");
     }
 
     it("scaffolds config/page.tsx in src layout", () => {
@@ -1643,7 +1703,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       run("init", tmpDir);
       const result = run("add graph --force", tmpDir);
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("Created 3 files");
+      expect(result.output).toContain("Created 4 files");
 
       const componentPath = path.join(
         tmpDir,
@@ -1652,9 +1712,17 @@ describe("CLI", { timeout: 30_000 }, () => {
         "khotan",
         "topology-canvas.tsx",
       );
+      const dateTimePath = path.join(
+        tmpDir,
+        "src",
+        "components",
+        "khotan",
+        "date-time.tsx",
+      );
       const pagePath = path.join(tmpDir, "src", "app", "graph", "page.tsx");
 
       expect(fs.existsSync(componentPath)).toBe(true);
+      expect(fs.existsSync(dateTimePath)).toBe(true);
       expect(fs.existsSync(pagePath)).toBe(true);
 
       const component = fs.readFileSync(componentPath, "utf-8");
@@ -1690,6 +1758,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(
         fs.existsSync(
           path.join(tmpDir, "components", "khotan", "topology-canvas.tsx"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "components", "khotan", "date-time.tsx"),
         ),
       ).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "app", "graph", "page.tsx"))).toBe(

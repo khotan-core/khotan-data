@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { khotanFetch, ApiErrorState } from "./api-state";
+import { formatLocalDateTime } from "./date-time";
 
 // ============================================================================
 // Wire Panel — UI for managing webhook subscriptions
@@ -203,7 +204,7 @@ export function WirePanel({
               </p>
               <p>
                 <span className="font-medium">Created:</span>{" "}
-                {new Date(wire!.createdAt).toLocaleString()}
+                {formatLocalDateTime(wire!.createdAt)}
               </p>
             </div>
             <Button
