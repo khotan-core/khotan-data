@@ -1277,6 +1277,70 @@ describe("khotan factory", () => {
       expect(data.flows).toHaveLength(1);
     });
 
+    it("surfaces relay flows on their destination plug", async () => {
+      const relayInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "fresh-uat",
+            plug: { baseUrl: "https://fresh.example", authType: "bearer" },
+            flows: [
+              {
+                name: "fresh-products-relay",
+                type: "relay",
+                to: "invoice-agent",
+              },
+            ],
+          },
+          {
+            name: "invoice-agent",
+            plug: { baseUrl: "https://invoice.example", authType: "bearer" },
+          },
+        ],
+      });
+
+      await relayInstance.init();
+
+      const plugsRes = await relayInstance.handler(
+        makeRequest("/api/khotan/plugs"),
+      );
+      expect(plugsRes.status).toBe(200);
+      const plugsData = (await plugsRes.json()) as Record<string, unknown>[];
+      expect(
+        plugsData.find((plug) => plug["name"] === "fresh-uat"),
+      ).toMatchObject({ flowCount: 1 });
+      expect(
+        plugsData.find((plug) => plug["name"] === "invoice-agent"),
+      ).toMatchObject({ flowCount: 1 });
+
+      const flowsRes = await relayInstance.handler(
+        makeRequest("/api/khotan/flows"),
+      );
+      expect(flowsRes.status).toBe(200);
+      const flowsData = (await flowsRes.json()) as Record<string, unknown>[];
+      expect(flowsData[0]).toMatchObject({
+        name: "fresh-products-relay",
+        type: "relay",
+        plugName: "fresh-uat",
+        to: "invoice-agent",
+        destinationPlugId: "plug-2",
+        destinationPlugName: "invoice-agent",
+      });
+
+      const destinationRes = await relayInstance.handler(
+        makeRequest("/api/khotan/plugs/plug-2"),
+      );
+      expect(destinationRes.status).toBe(200);
+      const destinationData = (await destinationRes.json()) as {
+        flows: Record<string, unknown>[];
+      };
+      expect(destinationData.flows).toHaveLength(1);
+      expect(destinationData.flows[0]).toMatchObject({
+        name: "fresh-products-relay",
+        destinationPlugId: "plug-2",
+      });
+    });
+
     it("GET /api/khotan/plugs/:id returns 404 for unknown plug", async () => {
       const res = await instance.handler(
         makeRequest("/api/khotan/plugs/nonexistent"),

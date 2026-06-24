@@ -50,6 +50,7 @@ import type {
   CacheEntryRecord,
   CacheRegistration,
   ResourceRegistration,
+  FlowRegistration,
   PlugRegistration,
   WebhookRegistration,
   CatchRegistration,
@@ -302,6 +303,82 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         `${flow["plugName"]}\0${flow["name"]}\0${flow["type"]}`,
       )
     );
+  }
+
+  function getRegisteredFlowConfig(
+    flow: Record<string, unknown>,
+  ): FlowRegistration | null {
+    const plugName = flow["plugName"];
+    const flowName = flow["name"];
+    const flowType = flow["type"];
+    if (
+      typeof plugName !== "string" ||
+      typeof flowName !== "string" ||
+      typeof flowType !== "string"
+    ) {
+      return null;
+    }
+
+    const plug = plugs.find((candidate) => candidate.name === plugName);
+    return (
+      plug?.flows?.find(
+        (candidate) =>
+          candidate.name === flowName && candidate.type === flowType,
+      ) ?? null
+    );
+  }
+
+  function enrichRegisteredFlowRecord(
+    flow: Record<string, unknown>,
+    plugRows: Record<string, unknown>[],
+  ): Record<string, unknown> {
+    const flowConfig = getRegisteredFlowConfig(flow);
+    const to = flowConfig?.to ?? null;
+    const destinationPlug =
+      typeof to === "string"
+        ? (plugRows.find((plug) => plug["name"] === to) ?? null)
+        : null;
+
+    return {
+      ...flow,
+      to,
+      destinationPlugId: destinationPlug?.["id"] ?? null,
+      destinationPlugName: destinationPlug?.["name"] ?? to,
+    };
+  }
+
+  async function listRegisteredFlowRecords(
+    plugRows?: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    const [flows, allPlugRows] = await Promise.all([
+      adapter.listFlows(),
+      plugRows ? Promise.resolve(plugRows) : adapter.listPlugs(),
+    ]);
+
+    return flows
+      .filter((flow) => isRegisteredFlowRecord(flow))
+      .map((flow) => enrichRegisteredFlowRecord(flow, allPlugRows));
+  }
+
+  function isFlowAssociatedWithPlug(
+    flow: Record<string, unknown>,
+    plugId: string,
+  ): boolean {
+    if (flow["plugId"] === plugId) return true;
+    return flow["type"] === "relay" && flow["destinationPlugId"] === plugId;
+  }
+
+  function countAssociatedFlows(
+    flows: Record<string, unknown>[],
+    plugId: string,
+  ): number {
+    const flowIds = new Set<string>();
+    for (const flow of flows) {
+      if (!isFlowAssociatedWithPlug(flow, plugId)) continue;
+      const flowId = flow["id"];
+      if (typeof flowId === "string") flowIds.add(flowId);
+    }
+    return flowIds.size;
   }
 
   function getWebhookHandlersForPlug(
@@ -1902,6 +1979,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const filtered = data.filter(
           (p) => typeof p["name"] === "string" && plugNames.has(p["name"]),
         );
+        const registeredFlows = await listRegisteredFlowRecords(data);
         const withVarState = await Promise.all(
           filtered.map(async (plug) => {
             const pName = plug["name"] as string;
@@ -1911,7 +1989,14 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             } catch {
               varsConfigured = false;
             }
-            return { ...plug, varsConfigured };
+            return {
+              ...plug,
+              flowCount:
+                typeof plug["id"] === "string"
+                  ? countAssociatedFlows(registeredFlows, plug["id"])
+                  : plug["flowCount"],
+              varsConfigured,
+            };
           }),
         );
         return Response.json(withVarState);
@@ -1931,7 +2016,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         ) {
           return Response.json({ error: "Plug not found" }, { status: 404 });
         }
-        const flows = await adapter.getPlugFlows(plugId);
+        const flows = (await listRegisteredFlowRecords()).filter((flow) =>
+          isFlowAssociatedWithPlug(flow, plugId),
+        );
         return Response.json({ ...plug, flows });
       },
     },
@@ -1940,9 +2027,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       pattern: "flows",
       auth: "authorize",
       handler: async () => {
-        const data = await adapter.listFlows();
-        const filtered = data.filter((f) => isRegisteredFlowRecord(f));
-        return Response.json(filtered);
+        return Response.json(await listRegisteredFlowRecords());
       },
     },
     {
