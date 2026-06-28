@@ -5,6 +5,7 @@ import {
   __setWorkflowStartForTests,
   bindWorkflowPlug,
   khotanCache,
+  khotanRuntimeRegistry,
   khotan,
   deriveCliToken,
   toNextJsHandler,
@@ -792,6 +793,12 @@ describe("khotan factory", () => {
     __setWorkflowStartForTests(null);
     __setWorkflowGetRunForTests(null);
     __setWorkflowGetWritableForTests(null);
+  });
+
+  afterEach(() => {
+    // Prevent runtime-helper registrations from leaking between tests, since the
+    // deterministic instance id can be shared across configs with the same identity.
+    khotanRuntimeRegistry.clear();
   });
 
   describe("registration validation", () => {
@@ -1957,6 +1964,116 @@ describe("khotan factory", () => {
       await expect(
         relayInstance.cache("cin7-products-snapshot").get("all-products"),
       ).resolves.toBeNull();
+    });
+
+    it("resolves khotanCache() across isolates via the deterministic instance id", async () => {
+      // Capture the khotanInstanceId serialized into the workflow context when a
+      // flow is started, modelling the original process.
+      let capturedInstanceId: string | undefined;
+      const startWorkflow = vi.fn(async (_workflowFn, args) => {
+        capturedInstanceId = args[0].khotanInstanceId as string;
+        return { runId: "workflow-run-1", returnValue: Promise.resolve(undefined) };
+      });
+      __setWorkflowStartForTests(startWorkflow);
+
+      const config = {
+        adapter,
+        plugs: [
+          {
+            name: "cin7",
+            plug: {
+              baseUrl: "https://api.cin7.com",
+              authType: "basic",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [
+              {
+                name: "products-relay",
+                type: "relay" as const,
+                to: "pollinate",
+                workflow: vi.fn(async () => undefined),
+              },
+            ],
+          },
+          {
+            name: "pollinate",
+            plug: {
+              baseUrl: "https://api.pollinate.tech",
+              authType: "custom",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+        caches: [
+          { name: "cin7-products-snapshot", scope: { plug: "cin7" } },
+        ],
+      };
+
+      // Instance A: original process. Start a flow to capture the serialized id.
+      const instanceA = khotan(config);
+      const res = await instanceA.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { variant: "full" }),
+      );
+      expect(res.status).toBe(200);
+      expect(capturedInstanceId).toBeDefined();
+      const capturedId = capturedInstanceId as string;
+
+      // Simulate the step isolate: the original process is gone (clear the
+      // registry), then the flow module is re-imported, re-running khotan(config).
+      khotanRuntimeRegistry.clear();
+      const instanceB = khotan(config);
+      expect(instanceB).toBeDefined();
+
+      // The re-imported instance must have registered under the SAME id so the
+      // serialized context id still resolves.
+      const cache = khotanCache(
+        { khotanInstanceId: capturedId },
+        "cin7-products-snapshot",
+      );
+      await cache.set("all-products", { skus: ["SKU-1", "SKU-2"] });
+      const after = await cache.get<{ skus: string[] }>("all-products");
+      expect(after?.skus).toEqual(["SKU-1", "SKU-2"]);
+      await cache.delete("all-products");
+      await expect(cache.get("all-products")).resolves.toBeNull();
+    });
+
+    it("falls back to the sole registered instance on a registry miss", async () => {
+      khotanRuntimeRegistry.clear();
+
+      khotan({
+        adapter,
+        plugs: [
+          {
+            name: "cin7",
+            plug: {
+              baseUrl: "https://api.cin7.com",
+              authType: "basic",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+          },
+        ],
+        caches: [{ name: "cin7-products-snapshot", scope: { plug: "cin7" } }],
+      });
+
+      const cache = khotanCache(
+        { khotanInstanceId: "cfg_doesnotexist" },
+        "cin7-products-snapshot",
+      );
+      await cache.set("k", { v: 1 });
+      await expect(cache.get<{ v: number }>("k")).resolves.toEqual({ v: 1 });
+      await cache.delete("k");
     });
 
     it("pass workflows can write dedupe markers through khotanCache()", async () => {

@@ -892,13 +892,23 @@ export const khotanRuntimeRegistry = new Map<
 function getWorkflowRuntimeHelpers(
   ctx: KhotanWorkflowContextRef,
 ): KhotanWorkflowRuntimeHelpers {
+  // Fast path: exact match on the serialized instance id.
   const helpers = khotanRuntimeRegistry.get(ctx.khotanInstanceId);
-  if (!helpers) {
-    throw new Error(
-      `Khotan runtime helpers for instance "${ctx.khotanInstanceId}" are not registered`,
-    );
+  if (helpers) {
+    return helpers;
   }
-  return helpers;
+
+  // Defense-in-depth: if exactly one instance is registered, it must be the one
+  // the workflow context refers to (the id may differ across isolates if the
+  // config identity changed). Resolve to it rather than throwing.
+  if (khotanRuntimeRegistry.size === 1) {
+    return khotanRuntimeRegistry.values().next().value!;
+  }
+
+  throw new Error(
+    `Khotan runtime helpers for instance "${ctx.khotanInstanceId}" are not registered ` +
+      `(${String(khotanRuntimeRegistry.size)} instance(s) registered, none matched)`,
+  );
 }
 
 export function khotanCache(
