@@ -57,9 +57,16 @@ export {
   khotanMappings,
   khotanRuntimeRegistry,
 } from "./factory/types.js";
+export type {
+  WorkflowGetRunFn,
+  WorkflowGetWritableFn,
+  WorkflowRuntimeConfig,
+  WorkflowStartFn,
+} from "./factory/workflow.js";
 export { deriveCliToken } from "./factory/cli-auth.js";
 export { drizzleAdapter } from "./factory/drizzle-adapter.js";
 export {
+  configureWorkflowRuntime,
   __setWorkflowStartForTests,
   __setWorkflowGetRunForTests,
   __setWorkflowGetWritableForTests,
