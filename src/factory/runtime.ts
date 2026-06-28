@@ -156,9 +156,58 @@ const waitUntilReady: Promise<void> = (async () => {
 // khotan factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Derive a deterministic instance id from the stable, serializable identity of a
+ * config. Workflow steps run in a fresh isolate where the flow module is
+ * re-imported and `khotan(config)` runs again; deriving the id from config
+ * identity (rather than a per-process random uuid) ensures the re-imported module
+ * lands on the same registry key so runtime helpers resolve across isolates.
+ *
+ * Only stable string identity is used (plug/flow/cache/resource names) — never
+ * `adapter`/`authorize`/`secret`, which are non-serializable, per-process, or not
+ * identity. Lists are sorted for order-independence. A tiny inline FNV-1a hash is
+ * used instead of `node:crypto` so this works in any runtime with zero imports.
+ */
+function deriveInstanceId(config: KhotanConfig): string {
+  const { plugs, resources = [], caches = [] } = config;
+  const plugNames = plugs.map((p) => p.name).sort();
+  const flowNames = plugs
+    .flatMap((p) => (p.flows ?? []).map((f) => f.name))
+    .sort();
+  const cacheNames = caches.map((c) => c.name).sort();
+  const resourceNames = resources.map((r) => r.name).sort();
+
+  const identity = JSON.stringify({
+    plugs: plugNames,
+    flows: flowNames,
+    caches: cacheNames,
+    resources: resourceNames,
+  });
+
+  // If there is no identity at all (degenerate config with no names), fall back
+  // to a random id so behavior is never worse than before.
+  if (
+    plugNames.length === 0 &&
+    flowNames.length === 0 &&
+    cacheNames.length === 0 &&
+    resourceNames.length === 0
+  ) {
+    return crypto.randomUUID();
+  }
+
+  // FNV-1a 32-bit hash — pure, deterministic, no imports, runtime-agnostic.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < identity.length; i++) {
+    hash ^= identity.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, "0");
+  return `cfg_${hex}`;
+}
+
 export function khotan(config: KhotanConfig): KhotanInstance {
   const { adapter, plugs, resources = [], caches = [], authorize } = config;
-  const instanceId = crypto.randomUUID();
+  const instanceId = deriveInstanceId(config);
 
   if (authorize === undefined) {
     if (process.env["NODE_ENV"] === "production") {
