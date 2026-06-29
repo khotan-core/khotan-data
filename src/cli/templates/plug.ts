@@ -39,6 +39,11 @@ export class PlugError extends Error {
 // Auth strategies
 // ---------------------------------------------------------------------------
 
+export interface QueryParamAuth {
+  name: string;
+  value: string;
+}
+
 export interface AuthStrategy {
   type: string;
   /** Mutate the outgoing request headers. Receives the plug's bound vars
@@ -47,6 +52,7 @@ export interface AuthStrategy {
   apply(headers: Headers, vars?: Record<string, string>): void | Promise<void>;
   onUnauthorized?: () => void | Promise<void>;
   baseUrl?: string;
+  queryParam?: QueryParamAuth;
 }
 
 export function bearer(
@@ -85,7 +91,7 @@ export function apiKey(
       }
     },
     ...(location === "query" ? { queryParam: { name, value } } : {}),
-  } as AuthStrategy & { queryParam?: { name: string; value: string } };
+  };
 }
 
 export function custom(
@@ -431,10 +437,8 @@ export interface PlugHooks<Vars = Record<string, string>> {
 
 export interface EndpointSchema {
   parse(data: unknown): unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _def?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  shape?: any;
+  _def?: unknown;
+  shape?: Record<string, unknown>;
 }
 
 export interface EndpointDef {
@@ -478,6 +482,17 @@ export interface RequestOptions {
   _setVars?: (updates: Record<string, string>) => Promise<void>;
   /** @internal Skip hooks for this request (used to prevent recursion in beforeRequest) */
   _skipHooks?: boolean;
+}
+
+export interface BatchPostOptions<TRecord = unknown> {
+  /** Records per POST body. Defaults to 100. */
+  batchSize?: number;
+  /** Number of batches to post in parallel. Defaults to 1. */
+  concurrency?: number;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** Shape each request body. Defaults to sending the batch array directly. */
+  buildBody?: (records: TRecord[], batchIndex: number) => unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +553,45 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     return this.request<T>("POST", path, options);
   }
 
+  async batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord>,
+  ): Promise<TResponse[]> {
+    const batchSize = options?.batchSize ?? 100;
+    const concurrency = options?.concurrency ?? 1;
+    if (batchSize < 1) throw new Error("batchSize must be at least 1");
+    if (concurrency < 1) throw new Error("concurrency must be at least 1");
+    if (records.length === 0) return [];
+
+    const batches: TRecord[][] = [];
+    for (let i = 0; i < records.length; i += batchSize) {
+      batches.push(records.slice(i, i + batchSize));
+    }
+
+    const results: TResponse[] = new Array<TResponse>(batches.length);
+    let next = 0;
+
+    const worker = async () => {
+      while (next < batches.length) {
+        const index = next++;
+        const batch = batches[index]!;
+        results[index] = await this.post<TResponse>(path, {
+          body: options?.buildBody ? options.buildBody(batch, index) : batch,
+          headers: options?.headers,
+          signal: options?.signal,
+        });
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, batches.length) }, () =>
+        worker(),
+      ),
+    );
+    return results;
+  }
+
   async put<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>("PUT", path, options);
   }
@@ -581,15 +635,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
       await this.config.auth.apply(headers, options?.vars);
     }
 
-    const authWithQuery = this.config.auth as AuthStrategy & {
-      queryParam?: { name: string; value: string };
-    };
-    if (authWithQuery?.queryParam) {
+    const queryParam = this.config.auth?.queryParam;
+    if (queryParam) {
       const u = new URL(url);
-      u.searchParams.set(
-        authWithQuery.queryParam.name,
-        authWithQuery.queryParam.value,
-      );
+      u.searchParams.set(queryParam.name, queryParam.value);
       return this._fetchWithAuthRetry<T>(
         method,
         u.toString(),

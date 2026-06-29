@@ -131,7 +131,7 @@ function createMockAdapter() {
         failed: 0,
         skipped: 0,
         error: null,
-        metadata: null,
+        metadata: run.metadata ?? null,
       });
       return { id };
     },

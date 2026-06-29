@@ -13,6 +13,7 @@ export type {
   KhotanTerminalRunStatus,
   FlowRunResult,
   BoundPlug,
+  BatchPostOptions,
   BindablePlug,
   FlowRunContext,
   FlowWorkflowContext,
@@ -68,6 +69,21 @@ export type {
 
 // Runtime helpers exported for workflow consumers
 export { bindWorkflowPlug, khotanCache, khotanMappings } from "./types.js";
+export {
+  contentHash,
+  createCursorHelper,
+  deltaSkip,
+  detectChanges,
+  stableStringify,
+} from "./load.js";
+export type {
+  ChangeDetectionOptions,
+  ChangeDetectionResult,
+  CursorHelper,
+  DeltaKey,
+  DeltaSkipOptions,
+  DeltaSkipResult,
+} from "./load.js";
 export type {
   WorkflowGetRunFn,
   WorkflowGetWritableFn,
