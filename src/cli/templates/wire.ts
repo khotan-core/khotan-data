@@ -29,19 +29,42 @@ export interface BoundPlug {
   ): Promise<T>;
   post<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
+  batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: {
+      batchSize?: number;
+      concurrency?: number;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+      buildBody?: (records: TRecord[], batchIndex: number) => unknown;
+    },
+  ): Promise<TResponse[]>;
   put<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   patch<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   delete<T>(
     path: string,
-    options?: { headers?: Record<string, string> },
+    options?: { headers?: Record<string, string>; signal?: AbortSignal },
   ): Promise<T>;
 }
 
