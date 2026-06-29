@@ -4,13 +4,18 @@ import {
   __setWorkflowGetWritableForTests,
   __setWorkflowStartForTests,
   bindWorkflowPlug,
+  catchEvent,
   configureWorkflowRuntime,
+  inflow,
   khotanCache,
   khotanRuntimeRegistry,
   khotan,
+  outflow,
+  relay,
   deriveCliToken,
   sendUpdate,
   toNextJsHandler,
+  wire,
   type KhotanAdapter,
   type KhotanConfig,
   type PlugRegistration,
@@ -2479,6 +2484,7 @@ describe("khotan factory", () => {
     it("creates and deletes manual wires without subscription hooks", async () => {
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "cin7",
@@ -2522,6 +2528,7 @@ describe("khotan factory", () => {
       const slackUnsubscribe = vi.fn(async () => undefined);
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2590,6 +2597,7 @@ describe("khotan factory", () => {
       const slackUnsubscribe = vi.fn(async () => undefined);
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2666,6 +2674,7 @@ describe("khotan factory", () => {
       });
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2729,6 +2738,7 @@ describe("khotan factory", () => {
 
       const instance = khotan({
         adapter,
+        authorize: false,
         secret: "test-secret",
         plugs: [
           {
@@ -2775,6 +2785,7 @@ describe("khotan factory", () => {
       const slackRenew = vi.fn(async () => ({ remoteId: "slack-sub-2" }));
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2836,6 +2847,7 @@ describe("khotan factory", () => {
       const graphRenew = vi.fn(async () => ({ remoteId: "graph-sub-2" }));
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2906,6 +2918,7 @@ describe("khotan factory", () => {
       });
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2977,6 +2990,7 @@ describe("khotan factory", () => {
 
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "shopify",
@@ -5595,5 +5609,94 @@ describe("toNextJsHandler", () => {
     const res = await handlers.PATCH(req);
     expect(res.status).toBe(200);
     expect(mockHandler).toHaveBeenCalledWith(req);
+  });
+});
+
+describe("factory scaffold builders", () => {
+  it("builds flow registrations with normalized flow types", () => {
+    const inflowWorkflow = vi.fn(async (ctx: { flow: { type: "inflow" } }) => {
+      expect(ctx.flow.type).toBe("inflow");
+      return { extracted: 1 };
+    });
+    const outflowWorkflow = vi.fn(
+      async (ctx: { body?: { dryRun: boolean } }) => {
+        if (ctx.body?.dryRun) return { skipped: 1 };
+        return { created: 1 };
+      },
+    );
+    const relayWorkflow = vi.fn(async () => ({ transformed: 1 }));
+
+    const inflowRegistration = inflow({
+      name: "products-in",
+      resource: "products",
+      schedule: "0 * * * *",
+      workflow: inflowWorkflow,
+    });
+    const outflowRegistration = outflow<{ dryRun: boolean }>({
+      name: "products-out",
+      resource: "products",
+      variants: { full: {} },
+      workflow: outflowWorkflow,
+    });
+    const relayRegistration = relay({
+      name: "products-relay",
+      to: "hubspot",
+      workflow: relayWorkflow,
+    });
+
+    expect(inflowRegistration).toMatchObject({
+      name: "products-in",
+      type: "inflow",
+      resource: "products",
+      schedule: "0 * * * *",
+    });
+    expect(outflowRegistration).toMatchObject({
+      name: "products-out",
+      type: "outflow",
+      resource: "products",
+      variants: { full: {} },
+    });
+    expect(relayRegistration).toMatchObject({
+      name: "products-relay",
+      type: "relay",
+      to: "hubspot",
+    });
+    expect(inflowRegistration.workflow).toBe(inflowWorkflow);
+    expect(outflowRegistration.workflow).toBe(outflowWorkflow);
+    expect(relayRegistration.workflow).toBe(relayWorkflow);
+  });
+
+  it("builds webhook registrations from catchEvent and wire", async () => {
+    const catchRegistration = catchEvent<{ id: string }>({
+      name: "orders",
+      events: ["order.created"],
+      async workflow(ctx) {
+        expect(ctx.event.id).toBe("evt_1");
+      },
+    });
+    const wireRegistration = wire({
+      events: ["order.created"],
+      async onSubscribe() {
+        return { remoteId: "remote_1" };
+      },
+      async onUnsubscribe() {},
+    });
+
+    await catchRegistration.workflow({
+      event: { id: "evt_1" },
+      eventType: "order.created",
+      headers: {},
+      khotanRunId: "run_1",
+      khotanInstanceId: "instance_1",
+    });
+
+    expect(catchRegistration).toMatchObject({
+      type: "catch",
+      name: "orders",
+      events: ["order.created"],
+    });
+    expect(await wireRegistration.onSubscribe({} as never)).toEqual({
+      remoteId: "remote_1",
+    });
   });
 });

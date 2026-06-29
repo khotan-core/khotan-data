@@ -61,6 +61,16 @@
         "default": "./dist/factory.cjs"
       }
     },
+    "./next": {
+      "import": {
+        "types": "./dist/next.d.ts",
+        "default": "./dist/next.js"
+      },
+      "require": {
+        "types": "./dist/next.d.cts",
+        "default": "./dist/next.cjs"
+      }
+    },
     "./plug": {
       "import": {
         "types": "./dist/plug-client.d.ts",

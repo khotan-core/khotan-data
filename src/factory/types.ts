@@ -217,7 +217,7 @@ export interface FlowVariant {
   onComplete?: FlowHook;
 }
 
-export interface FlowRunContext {
+export interface FlowRunContext<TBody = unknown> {
   plug: BoundPlug;
   flow: {
     id: string;
@@ -230,7 +230,7 @@ export interface FlowRunContext {
   /** The active variant for this run. The variant name is the run mode — flow
    *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
   variant: string;
-  body?: unknown;
+  body?: TBody;
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
   cache(cacheName: string): CacheInstance;
@@ -244,7 +244,7 @@ export interface FlowRunContext {
   finalize(result?: FlowRunResult): Promise<void>;
 }
 
-export interface FlowWorkflowContext {
+export interface FlowWorkflowContext<TBody = unknown> {
   flow: {
     id: string;
     name: string;
@@ -256,7 +256,7 @@ export interface FlowWorkflowContext {
   /** The active variant for this run. The variant name is the run mode — flow
    *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
   variant: string;
-  body?: unknown;
+  body?: TBody;
   vars: Record<string, string>;
   plugVarsByName?: Record<string, Record<string, string>>;
   khotanRunId: string;
@@ -276,7 +276,7 @@ export interface KhotanRunUpdate {
   metadata?: Record<string, unknown>;
 }
 
-export interface FlowRegistration {
+export interface FlowRegistration<TBody = unknown> {
   name: string;
   type: FlowType;
   /** Single cron schedule. Mutually exclusive with `variants`: a flow declares
@@ -289,8 +289,10 @@ export interface FlowRegistration {
   variants?: Record<string, FlowVariant>;
   resource?: string;
   to?: string;
-  workflow?: (ctx: FlowWorkflowContext) => Promise<FlowRunResult | undefined>;
-  run?: (ctx: FlowRunContext) => Promise<FlowRunResult | undefined>;
+  workflow?: (
+    ctx: FlowWorkflowContext<TBody>,
+  ) => Promise<FlowRunResult | undefined>;
+  run?(ctx: FlowRunContext<TBody>): Promise<FlowRunResult | undefined>;
 }
 
 export interface WireSubscribeContext {
@@ -844,27 +846,30 @@ export interface WireInstance {
   get(): Promise<Record<string, unknown> | null>;
 }
 
-export interface FlowStartOptions {
+export interface FlowStartOptions<TBody = unknown> {
   /** Named variant selecting the run mode. Defaults to `default`. Exposed to
    *  flow code as `ctx.variant`. */
   variant?: string | undefined;
   /** @deprecated Use `variant`. Accepted as an alias for one minor release. */
   runType?: string;
-  body?: unknown;
+  body?: TBody;
 }
 
 export interface FlowSelectorOptions {
   plugName?: string;
 }
 
-export interface FlowInstance {
-  start(options?: FlowStartOptions): Promise<Record<string, unknown>>;
+export interface FlowInstance<TBody = unknown> {
+  start(options?: FlowStartOptions<TBody>): Promise<Record<string, unknown>>;
 }
 
 export interface KhotanInstance {
   handler: KhotanHandler;
   init(): Promise<void>;
-  flow(flowNameOrId: string, options?: FlowSelectorOptions): FlowInstance;
+  flow<TBody = unknown>(
+    flowNameOrId: string,
+    options?: FlowSelectorOptions,
+  ): FlowInstance<TBody>;
   wire(plugName: string): WireInstance;
   cache(cacheName: string): CacheInstance;
   mapping(resourceName: string): MappingInstance;
@@ -926,6 +931,166 @@ export interface KhotanInstance {
    * unbounded growth of the registry.
    */
   dispose(): void;
+}
+
+export type InflowContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & { type: "inflow" };
+};
+
+export type OutflowContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & { type: "outflow" };
+};
+
+export type RelayContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & {
+    type: "relay";
+    to?: string | null;
+  };
+};
+
+export type InflowWorkflow<TBody = unknown> = (
+  ctx: InflowContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+export type OutflowWorkflow<TBody = unknown> = (
+  ctx: OutflowContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+export type RelayWorkflow<TBody = unknown> = (
+  ctx: RelayContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+type DurableFlowWorkflow<TBody> = NonNullable<
+  FlowRegistration<TBody>["workflow"]
+>;
+
+export interface InflowConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Logical resource this flow feeds, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that extracts, transforms, and loads records */
+  workflow: InflowWorkflow<TBody>;
+}
+
+export interface OutflowConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Logical resource this flow publishes, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that reads app data and writes it to the plug */
+  workflow: OutflowWorkflow<TBody>;
+}
+
+export interface RelayConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Name of the destination plug/system for humans and future tooling */
+  to: string;
+  /** Logical resource this flow moves, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that reads from source and writes to destination */
+  workflow: RelayWorkflow<TBody>;
+}
+
+export interface CatchConfig<
+  TSchema extends WebhookEventSchema<unknown> | undefined =
+    | WebhookEventSchema<unknown>
+    | undefined,
+> {
+  /** Unique name for this catch handler (used for DB tracking and Hub display) */
+  name: string;
+  /** Event types this catch should receive */
+  events?: string[];
+  /** Optional schema that validates and types ctx.event for the workflow */
+  schema?: TSchema;
+  /** Workflow function that processes the event */
+  workflow: (
+    ctx: CatchWorkflowContext<WebhookEventFromSchema<TSchema>>,
+  ) => Promise<void>;
+}
+
+export type WireConfig = WireRegistration;
+
+export function inflow<TBody = unknown>(
+  config: InflowConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "inflow",
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function outflow<TBody = unknown>(
+  config: OutflowConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "outflow",
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function relay<TBody = unknown>(
+  config: RelayConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "relay",
+    to: config.to,
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function catchEvent<
+  TSchema extends WebhookEventSchema<unknown> | undefined = undefined,
+>(config: CatchConfig<TSchema>): CatchRegistration<TSchema> {
+  const registration: CatchRegistration<TSchema> = {
+    type: "catch",
+    name: config.name,
+    workflow: config.workflow,
+  };
+  if (config.events !== undefined) registration.events = config.events;
+  if (config.schema !== undefined) registration.schema = config.schema;
+  return registration;
+}
+
+export function wire(config: WireConfig): WireRegistration {
+  return config;
 }
 
 // ---------------------------------------------------------------------------

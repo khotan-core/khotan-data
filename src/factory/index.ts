@@ -24,6 +24,17 @@ export type {
   FlowHook,
   FlowVariant,
   FlowRegistration,
+  InflowContext,
+  OutflowContext,
+  RelayContext,
+  InflowWorkflow,
+  OutflowWorkflow,
+  RelayWorkflow,
+  InflowConfig,
+  OutflowConfig,
+  RelayConfig,
+  CatchConfig,
+  WireConfig,
   WireSubscribeContext,
   WireUnsubscribeContext,
   WireVerifyContext,
@@ -73,7 +84,17 @@ export type {
 } from "./ingest.js";
 
 // Runtime helpers exported for workflow consumers
-export { bindWorkflowPlug, khotanCache, khotanMappings } from "./types.js";
+export {
+  inflow,
+  outflow,
+  relay,
+  catchEvent,
+  wire,
+  bindWorkflowPlug,
+  khotanCache,
+  khotanMappings,
+} from "./types.js";
+export type { NextJsRequest, NextJsRouteHandlers } from "./runtime.js";
 export {
   contentHash,
   createCursorHelper,
