@@ -94,9 +94,7 @@ function wireAuthHook(cwd: string, outputDir: string): boolean {
 
   const content = fs.readFileSync(khotanConfigPath, "utf-8");
   const hasAuthImport =
-    /^import \{ authorizeKhotanRequest \} from "@\/lib\/auth";$/m.test(
-      content,
-    );
+    /^import \{ authorizeKhotanRequest \} from "@\/lib\/auth";$/m.test(content);
   const hasWiredAuthorize =
     /^\s*authorize\s*:\s*authorizeKhotanRequest\s*,?$/m.test(content);
   if (hasAuthImport && hasWiredAuthorize) {
@@ -116,7 +114,8 @@ function wireAuthHook(cwd: string, outputDir: string): boolean {
   if (!hasAuthImport && updated.includes(factoryImport)) {
     updated = updated.replace(
       factoryImport,
-      (match) => `${match}import { authorizeKhotanRequest } from "@/lib/auth";\n`,
+      (match) =>
+        `${match}import { authorizeKhotanRequest } from "@/lib/auth";\n`,
     );
   } else if (!hasAuthImport) {
     updated = `import { authorizeKhotanRequest } from "@/lib/auth";\n${updated}`;
@@ -137,7 +136,9 @@ function wireAuthHook(cwd: string, outputDir: string): boolean {
   }
 
   fs.writeFileSync(khotanConfigPath, updated, "utf-8");
-  console.log(`✓ Wired authorize hook in ${path.relative(cwd, khotanConfigPath)}`);
+  console.log(
+    `✓ Wired authorize hook in ${path.relative(cwd, khotanConfigPath)}`,
+  );
   return true;
 }
 

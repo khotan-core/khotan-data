@@ -44,5 +44,7 @@ export async function authorizeKhotanRequest(
   if (allowedEmails.length === 0) return true;
 
   const email = session.user.email;
-  return typeof email === "string" && allowedEmails.includes(email.toLowerCase());
+  return (
+    typeof email === "string" && allowedEmails.includes(email.toLowerCase())
+  );
 }

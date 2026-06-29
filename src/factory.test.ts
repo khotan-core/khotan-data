@@ -4418,7 +4418,9 @@ describe("authorize hook", () => {
     const instance = khotan({ adapter, plugs: [makePlug()] });
     const res = await instance.handler(makeRequest("/api/khotan/plugs"));
     expect(res.status).toBe(401);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("No `authorize`"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("No `authorize`"),
+    );
     warn.mockRestore();
   });
 
