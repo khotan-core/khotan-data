@@ -51,6 +51,57 @@ export const stripePlug = plug({
 });
 ```
 
+## Pagination
+
+Use `paginate()` in flows when the API has a predictable next-page shape. You can set a default strategy on the plug, pass one per call, or use an inline inspector for APIs that do not fit a reusable helper.
+
+```typescript
+for await (const products of myPlug.paginate("/products", {
+  params: { limit: 100 },
+  getItems: (res) => res["data"] as Array<{ id: string }>,
+  hasMore: (res) =>
+    Boolean((res["links"] as { next?: string | null }).next),
+  getNext: (res) =>
+    (res["links"] as { next?: string | null }).next,
+  interPageDelayMs: 350,
+})) {
+  // sync this page
+}
+```
+
+Built-in strategies cover common API shapes:
+
+```typescript
+import {
+  envelopePagination,
+  jsonApiPagination,
+  linkPagination,
+} from "./plug";
+
+const api = plug({
+  baseUrl: "https://api.example.com",
+  pagination: linkPagination({ linksPath: "links.next", dataPath: "data" }),
+});
+
+await api.paginate("/orders", {
+  pagination: jsonApiPagination({
+    pageParam: "page[number]",
+    lastPagePath: "meta.page.lastPage",
+  }),
+});
+
+await api.paginate("/products", {
+  params: { limit: 100 },
+  pagination: envelopePagination({
+    itemsPath: "items",
+    hasMorePath: "hasMore",
+    offsetParam: "offset",
+  }),
+});
+```
+
+`getNext` may return an absolute URL, a relative URL, or params to merge into the next request. `interPageDelayMs` waits between page requests for APIs that require courtesy delays.
+
 ## Auth Strategies
 
 | Function | Usage |
@@ -196,6 +247,25 @@ const created = await myPlug.post("/products", { body: { name: "Widget" } });
 
 // With vars (factory injects these automatically in wire/debug contexts)
 const data = await myPlug.get("/items", { vars: { apiKey: "..." } });
+```
+
+## Body-Level Throttles
+
+Some APIs return HTTP 200 with a body that means "slow down". Add `shouldRetry(response, body)` to reuse the normal retry attempts and backoff settings for those cases.
+
+```typescript
+const shopify = plug({
+  baseUrl: "https://example.myshopify.com/admin/api/2025-01",
+  retry: { attempts: 5, backoff: 500 },
+  shouldRetry: (_response, body) => {
+    const throttle = (body as {
+      extensions?: {
+        cost?: { throttleStatus?: { currentlyAvailable?: number } };
+      };
+    }).extensions?.cost?.throttleStatus?.currentlyAvailable;
+    return throttle !== undefined && throttle < 50;
+  },
+});
 ```
 
 ## Debugging

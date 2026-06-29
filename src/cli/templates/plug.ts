@@ -281,11 +281,23 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
 
 export interface PaginationStrategy {
   type: string;
-  getNextParams(
+  getNextParams?(
     response: Record<string, unknown>,
     currentParams: Record<string, unknown>,
   ): Record<string, unknown> | null;
+  getNext?(
+    response: Record<string, unknown>,
+    currentParams: Record<string, unknown>,
+    items: unknown[],
+  ): PaginationNext;
   getDataPath(): string;
+  getItems?(response: Record<string, unknown>): unknown[];
+  hasMore?(
+    response: Record<string, unknown>,
+    items: unknown[],
+    currentParams: Record<string, unknown>,
+  ): boolean;
+  interPageDelayMs?: number;
 }
 
 function getByPath(obj: Record<string, unknown>, path: string): unknown {
@@ -295,6 +307,28 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
     }
     return undefined;
   }, obj);
+}
+
+export type PaginationNext =
+  | string
+  | URL
+  | Record<string, unknown>
+  | null
+  | undefined;
+
+export interface PaginationInspector<T = unknown> {
+  getItems(response: Record<string, unknown>): T[];
+  hasMore?(
+    response: Record<string, unknown>,
+    items: T[],
+    currentParams: Record<string, unknown>,
+  ): boolean;
+  getNext?(
+    response: Record<string, unknown>,
+    currentParams: Record<string, unknown>,
+    items: T[],
+  ): PaginationNext;
+  interPageDelayMs?: number;
 }
 
 export function cursorPagination(config: {
@@ -365,6 +399,136 @@ export function keysetPagination(config: {
     getDataPath() {
       return config.dataPath;
     },
+  };
+}
+
+export function linkPagination(config: {
+  linksPath: string;
+  dataPath: string;
+  hasMorePath?: string;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  return {
+    type: "link",
+    getNext(response) {
+      const next = getByPath(response, config.linksPath);
+      return typeof next === "string" && next.length > 0 ? next : null;
+    },
+    hasMore(response) {
+      if (config.hasMorePath) {
+        return Boolean(getByPath(response, config.hasMorePath));
+      }
+      const next = getByPath(response, config.linksPath);
+      return typeof next === "string" && next.length > 0;
+    },
+    getDataPath() {
+      return config.dataPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
+  };
+}
+
+export function jsonApiPagination(config: {
+  dataPath?: string;
+  pageParam?: string;
+  currentPagePath?: string;
+  lastPagePath?: string;
+  nextPath?: string;
+  firstPage?: number;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  const dataPath = config.dataPath ?? "data";
+  const pageParam = config.pageParam ?? "page[number]";
+  const firstPage = config.firstPage ?? 1;
+  return {
+    type: "json-api",
+    getNext(response, currentParams) {
+      const next = config.nextPath
+        ? getByPath(response, config.nextPath)
+        : undefined;
+      if (typeof next === "string" && next.length > 0) return next;
+
+      const lastPage =
+        config.lastPagePath !== undefined
+          ? Number(getByPath(response, config.lastPagePath))
+          : Number.NaN;
+      const currentPage =
+        config.currentPagePath !== undefined
+          ? Number(getByPath(response, config.currentPagePath))
+          : Number(currentParams[pageParam] ?? firstPage);
+
+      if (!Number.isFinite(lastPage) || !Number.isFinite(currentPage)) {
+        return null;
+      }
+      if (currentPage >= lastPage) return null;
+      return { [pageParam]: currentPage + 1 };
+    },
+    getDataPath() {
+      return dataPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
+  };
+}
+
+export function envelopePagination(config: {
+  itemsPath: string;
+  hasMorePath?: string;
+  nextPath?: string;
+  nextOffsetPath?: string;
+  offsetParam?: string;
+  limitParam?: string;
+  pageSize?: number;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  const offsetParam = config.offsetParam ?? "offset";
+  const limitParam = config.limitParam ?? "limit";
+  return {
+    type: "envelope",
+    hasMore(response) {
+      if (config.hasMorePath) {
+        return Boolean(getByPath(response, config.hasMorePath));
+      }
+      if (config.nextPath) {
+        return Boolean(getByPath(response, config.nextPath));
+      }
+      if (config.nextOffsetPath) {
+        return Boolean(getByPath(response, config.nextOffsetPath));
+      }
+      return false;
+    },
+    getNext(response, currentParams, items) {
+      if (config.nextPath) {
+        const next = getByPath(response, config.nextPath);
+        if (typeof next === "string" && next.length > 0) return next;
+      }
+
+      if (config.nextOffsetPath) {
+        const nextOffset = getByPath(response, config.nextOffsetPath);
+        if (nextOffset != null && nextOffset !== "") {
+          return { [offsetParam]: nextOffset };
+        }
+      }
+
+      if (
+        config.hasMorePath &&
+        !Boolean(getByPath(response, config.hasMorePath))
+      ) {
+        return null;
+      }
+
+      const currentOffset = Number(currentParams[offsetParam] ?? 0);
+      const pageSize = Number(
+        config.pageSize ?? currentParams[limitParam] ?? items.length,
+      );
+      if (!Number.isFinite(currentOffset) || !Number.isFinite(pageSize)) {
+        return null;
+      }
+      return { [offsetParam]: currentOffset + pageSize };
+    },
+    getDataPath() {
+      return config.itemsPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
   };
 }
 
@@ -463,6 +627,10 @@ export interface PlugConfig<V extends readonly VarField[] = VarField[]> {
   timeout?: number;
   defaultHeaders?: Record<string, string>;
   pagination?: PaginationStrategy;
+  shouldRetry?: (
+    response: Response,
+    body: unknown,
+  ) => boolean | Promise<boolean>;
   hooks?: PlugHooks<VarsRecord<V>>;
   parsers?: Record<string, (text: string) => unknown>;
 }
@@ -478,6 +646,15 @@ export interface RequestOptions {
   _setVars?: (updates: Record<string, string>) => Promise<void>;
   /** @internal Skip hooks for this request (used to prevent recursion in beforeRequest) */
   _skipHooks?: boolean;
+}
+
+export interface PaginateOptions<T = unknown> extends RequestOptions {
+  pagination?: PaginationStrategy;
+  strategy?: PaginationStrategy;
+  getItems?: PaginationInspector<T>["getItems"];
+  hasMore?: PaginationInspector<T>["hasMore"];
+  getNext?: PaginationInspector<T>["getNext"];
+  interPageDelayMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -603,35 +780,71 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 
   async *paginate<T>(
     path: string,
-    options?: RequestOptions,
+    options?: PaginateOptions<T>,
   ): AsyncIterable<T[]> {
-    const pagination = this.config.pagination;
+    const {
+      pagination: optionPagination,
+      strategy,
+      getItems,
+      hasMore,
+      getNext,
+      interPageDelayMs,
+      ...requestOptions
+    } = options ?? {};
+    const inlinePagination: PaginationInspector<T> | undefined = getItems
+      ? { getItems, hasMore, getNext, interPageDelayMs }
+      : undefined;
+    const pagination =
+      inlinePagination ??
+      optionPagination ??
+      strategy ??
+      this.config.pagination;
     if (!pagination) {
       throw new Error(
         "Pagination strategy must be configured to use paginate()",
       );
     }
 
-    let currentParams: Record<string, unknown> = { ...options?.params };
+    let currentPath = path;
+    let currentParams: Record<string, unknown> = { ...requestOptions.params };
 
     while (true) {
       const response = await this.request<Record<string, unknown>>(
         "GET",
-        path,
-        { ...options, params: currentParams },
+        currentPath,
+        { ...requestOptions, params: currentParams },
       );
 
-      const data = getByPath(response, pagination.getDataPath()) as
-        | T[]
-        | undefined;
+      const data = (
+        "getItems" in pagination && pagination.getItems
+          ? pagination.getItems(response)
+          : getByPath(response, pagination.getDataPath())
+      ) as T[] | undefined;
       if (!data || data.length === 0) break;
 
       yield data;
 
-      const nextParams = pagination.getNextParams(response, currentParams);
-      if (!nextParams) break;
+      const shouldContinue =
+        !pagination.hasMore ||
+        pagination.hasMore(response, data, currentParams);
+      if (!shouldContinue) break;
 
-      currentParams = { ...currentParams, ...nextParams };
+      const next =
+        pagination.getNext?.(response, currentParams, data) ??
+        pagination.getNextParams?.(response, currentParams);
+      if (!next) break;
+
+      if (typeof next === "string" || next instanceof URL) {
+        currentPath = next.toString();
+        currentParams = {};
+      } else {
+        currentParams = { ...currentParams, ...next };
+      }
+
+      const delay = pagination.interPageDelayMs;
+      if (delay && delay > 0) {
+        await sleep(delay);
+      }
     }
   }
 
@@ -649,8 +862,11 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     params?: Record<string, unknown>,
   ): string {
     const trimmedBase = base.replace(/\/+$/, "");
+    const isAbsolute = /^[a-z][a-z\d+\-.]*:\/\//i.test(path);
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
-    const url = new URL(`${trimmedBase}${cleanPath}`);
+    const url = isAbsolute
+      ? new URL(path)
+      : new URL(`${trimmedBase}${cleanPath}`);
 
     if (params) {
       for (const [key, value] of Object.entries(params)) {
@@ -808,20 +1024,69 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
         }
 
         const contentType = response.headers.get("Content-Type") ?? "";
+        const retryResponse = response.clone();
         if (contentType.includes("application/json")) {
-          return (await response.json()) as T;
+          const parsed = (await response.json()) as T;
+          if (
+            retryConfig &&
+            this.config.shouldRetry &&
+            (await this.config.shouldRetry(retryResponse, parsed))
+          ) {
+            const retryError = new PlugError(
+              `${method} ${url} marked retryable by shouldRetry()`,
+              response.status,
+              response.statusText,
+              JSON.stringify(parsed),
+              url,
+              method,
+            );
+            if (attempt < maxAttempts - 1) {
+              lastError = retryError;
+              await sleep(computeDelay(attempt, retryConfig));
+              continue;
+            }
+            throw retryError;
+          }
+          return parsed;
         }
 
+        let parsed: unknown;
         if (this.config.parsers) {
           for (const [mime, parser] of Object.entries(this.config.parsers)) {
             if (contentType.includes(mime)) {
               const text = await response.text();
-              return parser(text) as T;
+              parsed = parser(text);
+              break;
             }
           }
         }
 
-        return (await response.text()) as unknown as T;
+        if (parsed === undefined) {
+          parsed = await response.text();
+        }
+
+        if (
+          retryConfig &&
+          this.config.shouldRetry &&
+          (await this.config.shouldRetry(retryResponse, parsed))
+        ) {
+          const retryError = new PlugError(
+            `${method} ${url} marked retryable by shouldRetry()`,
+            response.status,
+            response.statusText,
+            String(parsed),
+            url,
+            method,
+          );
+          if (attempt < maxAttempts - 1) {
+            lastError = retryError;
+            await sleep(computeDelay(attempt, retryConfig));
+            continue;
+          }
+          throw retryError;
+        }
+
+        return parsed as T;
       } catch (error) {
         if (error instanceof PlugError) throw error;
 
