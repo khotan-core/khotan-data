@@ -362,18 +362,51 @@ export interface WireVerifyContext {
   wireVars: Record<string, string>;
 }
 
+export interface WireRenewContext extends WireSubscribeContext {
+  remoteId: string;
+  expiresAt?: string | null;
+}
+
+export interface WireSubscribeResult {
+  remoteId: string;
+  expiresAt?: string | Date | null;
+}
+
+export interface WireRenewResult {
+  remoteId?: string;
+  expiresAt?: string | Date | null;
+}
+
 export interface WireRegistration {
   events: string[];
-  onSubscribe(ctx: WireSubscribeContext): Promise<{ remoteId: string }>;
-  onUnsubscribe(ctx: WireUnsubscribeContext): Promise<void>;
+  mode?: "managed" | "manual";
+  onSubscribe?(ctx: WireSubscribeContext): Promise<WireSubscribeResult>;
+  onUnsubscribe?(ctx: WireUnsubscribeContext): Promise<void>;
+  onRenew?(ctx: WireRenewContext): Promise<WireRenewResult>;
   onVerify?(ctx: WireVerifyContext): Promise<boolean>;
 }
 
-export interface CatchRegistration {
+export interface WebhookEventSchema<TEvent> {
+  parse(input: unknown): TEvent;
+}
+
+export type WebhookEventFromSchema<TSchema> =
+  TSchema extends WebhookEventSchema<infer TEvent>
+    ? TEvent
+    : Record<string, unknown>;
+
+export interface CatchRegistration<
+  TSchema extends WebhookEventSchema<unknown> | undefined =
+    | WebhookEventSchema<unknown>
+    | undefined,
+> {
   type: "catch";
   name: string;
   events?: string[];
-  workflow: (ctx: CatchWorkflowContext) => Promise<void>;
+  schema?: TSchema;
+  workflow: (
+    ctx: CatchWorkflowContext<WebhookEventFromSchema<TSchema>>,
+  ) => Promise<void>;
 }
 
 export interface PassRegistration {
@@ -446,8 +479,8 @@ export interface MappingInstance {
   delete(id: string): Promise<void>;
 }
 
-export interface CatchWorkflowContext {
-  event: Record<string, unknown>;
+export interface CatchWorkflowContext<TEvent = Record<string, unknown>> {
+  event: TEvent;
   eventType: string;
   headers: Record<string, string>;
   khotanRunId: string;
@@ -807,6 +840,7 @@ export type KhotanHandler = (request: Request) => Promise<Response>;
 export interface WireInstance {
   create(callbackUrl: string): Promise<Record<string, unknown>>;
   delete(wireId: string): Promise<void>;
+  renew(wireId?: string): Promise<Record<string, unknown>>;
   get(): Promise<Record<string, unknown> | null>;
 }
 

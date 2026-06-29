@@ -12,12 +12,23 @@
 // ============================================================================
 
 // ---------------------------------------------------------------------------
+// Schema helpers — Zod schemas satisfy this shape without importing Zod here
+// ---------------------------------------------------------------------------
+
+export interface EventSchema<TEvent> {
+  parse(input: unknown): TEvent;
+}
+
+export type EventFromSchema<TSchema> =
+  TSchema extends EventSchema<infer TEvent> ? TEvent : Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
 // Context — serializable data passed to the workflow
 // ---------------------------------------------------------------------------
 
-export interface CatchContext {
+export interface CatchContext<TEvent = Record<string, unknown>> {
   /** Parsed webhook payload */
-  event: Record<string, unknown>;
+  event: TEvent;
   /** Event type extracted from payload (e.g. "order.created") */
   eventType: string;
   /** Incoming request headers */
@@ -32,43 +43,60 @@ export interface CatchContext {
 // Workflow type — the function signature your workflow must conform to
 // ---------------------------------------------------------------------------
 
-export type CatchWorkflow = (ctx: CatchContext) => Promise<void>;
+export type CatchWorkflow<TEvent> = (
+  ctx: CatchContext<TEvent>,
+) => Promise<void>;
 
 // ---------------------------------------------------------------------------
 // Config — passed to the catchEvent() builder
 // ---------------------------------------------------------------------------
 
-export interface CatchConfig {
+export interface CatchConfig<
+  TSchema extends EventSchema<unknown> | undefined = undefined,
+> {
   /** Unique name for this catch handler (used for DB tracking and Hub display) */
   name: string;
   /** Event types this catch should receive */
   events?: string[];
+  /** Optional schema that validates and types ctx.event for the workflow */
+  schema?: TSchema;
   /** Workflow function that processes the event */
-  workflow: CatchWorkflow;
+  workflow: CatchWorkflow<EventFromSchema<TSchema>>;
 }
 
 // ---------------------------------------------------------------------------
 // Registration — returned by catchEvent(), consumed by factory config
 // ---------------------------------------------------------------------------
 
-export interface CatchRegistration {
+export interface CatchRegistration<
+  TSchema extends EventSchema<unknown> | undefined = undefined,
+> {
   type: "catch";
   name: string;
   events?: string[];
-  workflow: CatchWorkflow;
+  schema?: TSchema;
+  workflow: CatchWorkflow<EventFromSchema<TSchema>>;
 }
 
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
 
-export function catchEvent(config: CatchConfig): CatchRegistration {
-  return {
+export function catchEvent<
+  TSchema extends EventSchema<unknown> | undefined = undefined,
+>(config: CatchConfig<TSchema>): CatchRegistration<TSchema> {
+  const registration: CatchRegistration<TSchema> = {
     type: "catch",
     name: config.name,
-    events: config.events,
     workflow: config.workflow,
   };
+  if (config.events) {
+    registration.events = config.events;
+  }
+  if (config.schema) {
+    registration.schema = config.schema;
+  }
+  return registration;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +104,7 @@ export function catchEvent(config: CatchConfig): CatchRegistration {
 // ---------------------------------------------------------------------------
 //
 // import { khotanCache } from "khotan-data/factory";
+// import { z } from "zod";
 // import { catchEvent, type CatchContext } from "./catch";
 // Khotan already records webhook deliveries in khotan_webhook_events and links
 // them to khotan_runs. Use your catch workflow for app-specific side effects
@@ -86,14 +115,22 @@ export function catchEvent(config: CatchConfig): CatchRegistration {
 // function — closures over workflow scope cannot be hoisted and fail at runtime.
 //
 // // Step: top-level, full Node.js access, retried independently.
-// async function notifyOps(ctx: CatchContext) {
+// const pollinateEventSchema = z.object({
+//   id: z.string().optional(),
+//   data: z.object({ orderId: z.string() }),
+// });
+//
+// type PollinateEvent = z.infer<typeof pollinateEventSchema>;
+//
+// async function notifyOps(ctx: CatchContext<PollinateEvent>) {
 //   "use step";
 //   const cache = khotanCache(ctx, "pollinate-webhook-markers");
-//   const eventId = String(ctx.event["id"] ?? "");
+//   const eventId = ctx.event.id ?? "";
 //   if (eventId && (await cache.get<boolean>(eventId))) return;
 //
 //   console.log("Handled webhook", {
 //     eventType: ctx.eventType,
+//     orderId: ctx.event.data.orderId,
 //     khotanRunId: ctx.khotanRunId,
 //   });
 //
@@ -111,6 +148,7 @@ export function catchEvent(config: CatchConfig): CatchRegistration {
 // export const pollinateCatch = catchEvent({
 //   name: "pollinate-orders",
 //   events: ["order.created"],
+//   schema: pollinateEventSchema,
 //   workflow: pollinateCatchWorkflow,
 // });
 //

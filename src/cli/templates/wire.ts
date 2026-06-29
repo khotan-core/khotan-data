@@ -11,6 +11,7 @@
 // ============================================================================
 
 import type { Plug } from "../plugs/plug";
+import { verifyHmacSha256 } from "khotan-data/factory";
 
 // ---------------------------------------------------------------------------
 // Bound Plug — plug with vars auto-injected by the factory
@@ -104,6 +105,23 @@ export interface WireVerifyContext {
   wireVars: Record<string, string>;
 }
 
+export interface WireRenewContext extends WireSubscribeContext {
+  /** The current remote subscription ID */
+  remoteId: string;
+  /** Last known subscription expiry, when the provider has one */
+  expiresAt?: string | null;
+}
+
+export interface WireSubscribeResult {
+  remoteId: string;
+  expiresAt?: string | Date | null;
+}
+
+export interface WireRenewResult {
+  remoteId?: string;
+  expiresAt?: string | Date | null;
+}
+
 // ---------------------------------------------------------------------------
 // Wire Config
 // ---------------------------------------------------------------------------
@@ -113,16 +131,29 @@ export interface WireConfig {
   events: string[];
 
   /**
+   * "managed" wires call onSubscribe/onUnsubscribe against the provider.
+   * "manual" wires only store the callback URL for providers that require
+   * webhook registration in their dashboard.
+   */
+  mode?: "managed" | "manual";
+
+  /**
    * Called when the wire is being connected.
    * Make the API call to register the webhook subscription and return the remoteId.
    */
-  onSubscribe(ctx: WireSubscribeContext): Promise<{ remoteId: string }>;
+  onSubscribe?(ctx: WireSubscribeContext): Promise<WireSubscribeResult>;
 
   /**
    * Called when the wire is being disconnected.
    * Make the API call to remove the webhook subscription.
    */
-  onUnsubscribe(ctx: WireUnsubscribeContext): Promise<void>;
+  onUnsubscribe?(ctx: WireUnsubscribeContext): Promise<void>;
+
+  /**
+   * Optional: renew a provider subscription before it expires.
+   * Khotan exposes this through wire().renew() and POST /wires/:plugName/renew.
+   */
+  onRenew?(ctx: WireRenewContext): Promise<WireRenewResult>;
 
   /**
    * Optional: verify incoming webhook signatures.
@@ -143,7 +174,7 @@ export function wire(config: WireConfig): WireConfig {
 // Usage Example (create a file like wires/stripe-wire.ts)
 // ---------------------------------------------------------------------------
 //
-// import { wire } from "./wire";
+// import { wire, verifyHmacSha256 } from "./wire";
 //
 // export const stripeWire = wire({
 //   events: ["invoice.paid", "invoice.payment_failed"],
@@ -172,7 +203,11 @@ export function wire(config: WireConfig): WireConfig {
 //   async onVerify(ctx) {
 //     const signature = ctx.headers["stripe-signature"];
 //     if (!signature) return false;
-//     // Verify using ctx.wireVars.webhookSecret and ctx.body (raw text)
-//     return true;
+//     return verifyHmacSha256(ctx.body, signature, ctx.wireVars.webhookSecret, {
+//       digest: "hex",
+//       prefix: "sha256=",
+//     });
 //   },
 // });
+
+export { verifyHmacSha256 };
