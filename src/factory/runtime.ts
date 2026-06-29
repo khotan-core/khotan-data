@@ -48,6 +48,7 @@ import type {
   WireInstance,
   CacheInstance,
   CacheEntryRecord,
+  MappingInstance,
   CacheRegistration,
   ResourceRegistration,
   FlowRegistration,
@@ -87,6 +88,20 @@ interface RouteContext {
 interface RouteMatch {
   route: RouteDefinition;
   params: Record<string, string>;
+}
+
+class KhotanInternalNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanInternalNotFoundError";
+  }
+}
+
+class KhotanWireRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanWireRequestError";
+  }
 }
 
 function matchRoute(
@@ -129,6 +144,22 @@ function matchRoute(
 type WaitUntilFn = (promise: Promise<unknown>) => void;
 
 let _resolvedWaitUntil: WaitUntilFn | null = null;
+
+function metadataFromFlowBody(body: unknown): Record<string, unknown> | null {
+  if (body === undefined || body === null) return null;
+  return isPlainObject(body) ? body : { body };
+}
+
+function attachRunFinalizer<T extends object>(
+  ctx: T,
+  finalize: (result?: FlowRunResult) => Promise<void>,
+): T & { finalize(result?: FlowRunResult): Promise<void> } {
+  Object.defineProperty(ctx, "finalize", {
+    value: finalize,
+    enumerable: false,
+  });
+  return ctx as T & { finalize(result?: FlowRunResult): Promise<void> };
+}
 
 function getWaitUntil(): WaitUntilFn {
   if (_resolvedWaitUntil) return _resolvedWaitUntil;
@@ -209,19 +240,32 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   const { adapter, plugs, resources = [], caches = [], authorize } = config;
   const instanceId = deriveInstanceId(config);
 
+  if (authorize === false && process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "[khotan] `authorize: false` is not allowed in production. Pass an " +
+        "authorization hook to gate management routes before deploying.",
+    );
+  }
+
   if (authorize === undefined) {
     if (process.env["NODE_ENV"] === "production") {
       throw new Error(
         "[khotan] `authorize` is required in production. Pass an authorization hook to gate " +
-          "management routes, or pass `authorize: false` to explicitly opt into " +
-          "publicly accessible management routes (not recommended).",
+          "management routes.",
       );
     }
     console.warn(
-      "[khotan] No `authorize` hook configured: the management API " +
-        "(/api/khotan/*) is publicly accessible. Pass `authorize` to gate it " +
-        "behind your auth layer (e.g. better-auth), or `authorize: false` to " +
-        "silence this warning. This will throw in production.",
+      "[khotan] No `authorize` hook configured: management routes " +
+        "(/api/khotan/*) will reject requests with 401. Pass `authorize` to " +
+        "gate them behind your auth layer (e.g. better-auth), or pass " +
+        "`authorize: false` to explicitly opt into a public development API. " +
+        "Omitting `authorize` throws in production.",
+    );
+  } else if (authorize === false) {
+    console.warn(
+      "[khotan] `authorize: false` configured: management routes " +
+        "(/api/khotan/*) are publicly accessible. This is only allowed outside " +
+        "production; configure a real `authorize` hook before deploying.",
     );
   }
   const authorizeHook =
@@ -699,6 +743,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return resourceConfigById.get(resourceId) ?? null;
   }
 
+  async function resolveResourceId(resourceName: string): Promise<string> {
+    await init();
+    const resourceId = resourceIdByName.get(resourceName);
+    if (!resourceId) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return resourceId;
+  }
+
+  async function getRegisteredResourceByName(
+    resourceName: string,
+  ): Promise<{ id: string; resource: ResourceRegistration }> {
+    const id = await resolveResourceId(resourceName);
+    const resource = resourceConfigById.get(id);
+    if (!resource) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return { id, resource };
+  }
+
   async function resolveCacheState(cacheName: string) {
     await init();
     const cacheState = cacheStateByName.get(cacheName);
@@ -896,6 +960,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     connectValue: string | string[];
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<Record<string, unknown>> {
     const resource = await validateMappingPayload(mapping);
     const result = await adapter.upsertMapping({
@@ -903,6 +968,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(result.id);
     if (!saved) {
@@ -918,6 +986,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: string | string[];
       refs: Record<string, string>;
       metadata?: Record<string, unknown> | null;
+      mergeRefs?: boolean;
     },
   ): Promise<Record<string, unknown>> {
     const existing = await adapter.getMapping(id);
@@ -932,12 +1001,55 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(id);
     if (!saved) {
       throw new Error(`Mapping "${id}" disappeared after update`);
     }
     return saved;
+  }
+
+  function createMappingInstance(resourceName: string): MappingInstance {
+    return {
+      async list(params = {}) {
+        const resourceId = await resolveResourceId(resourceName);
+        return listMappings({
+          resourceId,
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.search !== undefined ? { search: params.search } : {}),
+        });
+      },
+      async lookup(connectValue) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, connectValue });
+      },
+      async lookupByRef(plugName, ref) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, plugName, ref });
+      },
+      async upsert(mapping) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return upsertMapping({
+          resourceId,
+          connectValue: mapping.connectValue,
+          refs: mapping.refs,
+          ...(mapping.metadata !== undefined
+            ? { metadata: mapping.metadata }
+            : {}),
+          ...(mapping.mergeRefs !== undefined
+            ? { mergeRefs: mapping.mergeRefs }
+            : {}),
+        });
+      },
+      delete: deleteMapping,
+    };
   }
 
   async function deleteMapping(id: string): Promise<void> {
@@ -951,6 +1063,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   // -------------------------------------------------------------------------
   // Wire management
   // -------------------------------------------------------------------------
+
+  const WIRE_EXPIRES_AT_VAR = "__khotan_expires_at";
 
   function wire(plugName: string): WireInstance {
     const plugReg = plugs.find((p) => p.name === plugName);
@@ -987,6 +1101,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       await adapter.updateWireMetadata(wireId, toStore);
     }
 
+    function normalizeWireExpiry(expiresAt: string | Date | null | undefined) {
+      if (!expiresAt) return null;
+      return expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt;
+    }
+
+    function getWireString(
+      record: Record<string, unknown>,
+      camelKey: string,
+      snakeKey?: string,
+    ): string {
+      const value = record[camelKey] ?? (snakeKey ? record[snakeKey] : null);
+      return typeof value === "string" ? value : "";
+    }
+
+    function getWirePlugId(record: Record<string, unknown>): string {
+      return getWireString(record, "plugId", "plug_id");
+    }
+
     return {
       async create(callbackUrl: string) {
         await init();
@@ -1021,16 +1153,33 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           : undefined;
         const boundPlug = createBoundPlug(vars, _setVars);
 
-        const wireVars = await getWireVars(wireId);
+        let wireVars = await getWireVars(wireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(wireId, wireVars);
+        };
 
-        const result = await wireConfig.onSubscribe({
-          plug: boundPlug,
-          callbackUrl,
-          events: wireConfig.events,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        const isManual = wireConfig.mode === "manual";
+        if (!isManual && !wireConfig.onSubscribe) {
+          throw new Error(
+            `Plug "${plugName}" wire is managed but does not define onSubscribe`,
+          );
+        }
+
+        const result = isManual
+          ? { remoteId: `manual:${plugName}` }
+          : await wireConfig.onSubscribe!({
+              plug: boundPlug,
+              callbackUrl,
+              events: wireConfig.events,
+              wireVars,
+              setWireVars: persistWireVars,
+            });
+
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
 
         kd(
           "wire",
@@ -1051,13 +1200,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       async delete(wireId: string) {
         await init();
         kd("wire", `${plugName}: deleting wire ${wireId}`);
-        const wireRecord = await adapter.getWire(wireId);
-        if (!wireRecord) {
-          throw new Error(`Wire "${wireId}" not found`);
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
         }
 
-        const remoteId = (wireRecord["remoteId"] ??
-          wireRecord["remote_id"]) as string;
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = await adapter.getWire(wireId);
+        if (!wireRecord || getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
         kd("wire", `${plugName}: remoteId=${remoteId}`);
         if (!remoteId) {
           await adapter.updateWireStatus(wireId, "disabled");
@@ -1073,16 +1232,101 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         const wireVars = await getWireVars(wireId);
 
-        await wireConfig.onUnsubscribe({
-          plug: boundPlug,
-          remoteId,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        if (wireConfig.mode !== "manual" && wireConfig.onUnsubscribe) {
+          let currentWireVars = wireVars;
+          await wireConfig.onUnsubscribe({
+            plug: boundPlug,
+            remoteId,
+            wireVars,
+            setWireVars: async (updates) => {
+              currentWireVars = { ...currentWireVars, ...updates };
+              await setWireVars(wireId, currentWireVars);
+            },
+          });
+        }
 
         kd("wire", `${plugName}: unsubscribed successfully`);
         await adapter.updateWireStatus(wireId, "disabled");
+      },
+
+      async renew(wireId?: string) {
+        await init();
+        if (!wireConfig.onRenew) {
+          throw new KhotanWireRequestError(
+            `Plug "${plugName}" wire does not define onRenew`,
+          );
+        }
+
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
+        }
+
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = wireId
+          ? await adapter.getWire(wireId)
+          : await adapter.getPlugWire(plugId);
+        if (!wireRecord) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+        if (wireId && getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const resolvedWireId = wireRecord["id"] as string;
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
+        if (!remoteId) {
+          throw new KhotanWireRequestError(
+            `Wire "${resolvedWireId}" has no remoteId to renew`,
+          );
+        }
+
+        const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
+        const _setVars = secret
+          ? (updates: Record<string, string>) =>
+              setVars(plugName, { ...vars, ...updates })
+          : undefined;
+        const boundPlug = createBoundPlug(vars, _setVars);
+
+        let wireVars = await getWireVars(resolvedWireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(resolvedWireId, wireVars);
+        };
+
+        const callbackUrl = getWireString(wireRecord, "callbackUrl");
+        const result = await wireConfig.onRenew({
+          plug: boundPlug,
+          callbackUrl,
+          events: wireConfig.events,
+          remoteId,
+          expiresAt: wireVars[WIRE_EXPIRES_AT_VAR] ?? null,
+          wireVars,
+          setWireVars: persistWireVars,
+        });
+
+        const nextRemoteId = result.remoteId ?? remoteId;
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
+
+        await adapter.updateWireDetails(resolvedWireId, {
+          remoteId: nextRemoteId,
+          callbackUrl,
+          eventTypes: wireConfig.events,
+          status: "active",
+        });
+
+        const record = await adapter.getWire(resolvedWireId);
+        return record!;
       },
 
       async get() {
@@ -1177,11 +1421,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
     const activeVariant: FlowVariant | undefined = variants[variant];
 
+    const runBody = requestBody["body"];
+    const initialMetadata = metadataFromFlowBody(runBody);
+
     const { id: runId } = await adapter.insertRun({
       flowId,
       variant,
       source,
       status: "running",
+      metadata: initialMetadata,
     });
     const startedAt = Date.now();
 
@@ -1235,55 +1483,120 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       }
     }
 
-    async function completeRunOk(result: FlowRunResult | undefined) {
-      const completedAt = new Date();
-      const counters = getFlowRunCounters(result);
-      const status = resolveTerminalRunStatus(result, counters);
-      const durationMs = Date.now() - startedAt;
+    interface FinalizedRun {
+      completedAt: Date;
+      counters: ReturnType<typeof getFlowRunCounters>;
+      durationMs: number;
+      error: string | null;
+      metadata: Record<string, unknown> | null;
+      status: KhotanTerminalRunStatus;
+    }
 
-      await adapter.updateRun(runId, {
-        status,
-        completedAt,
-        durationMs,
-        ...counters,
-        error: result?.error ?? null,
-        metadata: result?.metadata ?? null,
+    let finalizedRun: FinalizedRun | null = null;
+    let finalizingRun: Promise<FinalizedRun> | null = null;
+
+    function finalizeOnce(
+      finalize: () => Promise<FinalizedRun>,
+    ): Promise<FinalizedRun> {
+      if (finalizedRun) return Promise.resolve(finalizedRun);
+      if (finalizingRun) return finalizingRun;
+
+      finalizingRun = (async () => {
+        try {
+          finalizedRun = await finalize();
+          return finalizedRun;
+        } catch (error) {
+          if (!finalizedRun) finalizingRun = null;
+          throw error;
+        }
+      })();
+
+      return finalizingRun;
+    }
+
+    async function completeRunOk(
+      result: FlowRunResult | undefined,
+    ): Promise<FinalizedRun> {
+      return finalizeOnce(async () => {
+        const completedAt = new Date();
+        const counters = getFlowRunCounters(result);
+        const status = resolveTerminalRunStatus(result, counters);
+        const durationMs = Date.now() - startedAt;
+        const error = result?.error ?? null;
+        const metadata =
+          result && "metadata" in result
+            ? (result.metadata ?? null)
+            : initialMetadata;
+
+        await adapter.updateRun(runId, {
+          status,
+          completedAt,
+          durationMs,
+          ...counters,
+          error,
+          metadata,
+        });
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: completedAt,
+          lastRunStatus: status,
+        });
+
+        const finalRun = {
+          completedAt,
+          counters,
+          durationMs,
+          error,
+          metadata,
+          status,
+        };
+
+        await runVariantHook(status, counters, error, durationMs);
+
+        return finalRun;
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
-
-      await runVariantHook(status, counters, result?.error ?? null, durationMs);
-
-      return { completedAt, counters, status };
     }
 
     async function completeRunFailed(error: unknown) {
-      const completedAt = new Date();
-      const message = getErrorMessage(error);
-      const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
-        ? "cancelled"
-        : "failed";
-      const durationMs = Date.now() - startedAt;
-      const counters = {
-        ...getFlowRunCounters(undefined),
-        failed: status === "failed" ? 1 : 0,
-      };
-      await adapter.updateRun(runId, {
-        status,
-        completedAt,
-        durationMs,
-        failed: counters.failed,
-        error: message,
+      if (finalizedRun) return finalizedRun.error ?? getErrorMessage(error);
+      const finalRun = await finalizeOnce(async () => {
+        const completedAt = new Date();
+        const message = getErrorMessage(error);
+        const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
+          ? "cancelled"
+          : "failed";
+        const durationMs = Date.now() - startedAt;
+        const counters = {
+          ...getFlowRunCounters(undefined),
+          failed: status === "failed" ? 1 : 0,
+        };
+        await adapter.updateRun(runId, {
+          status,
+          completedAt,
+          durationMs,
+          failed: counters.failed,
+          error: message,
+        });
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: completedAt,
+          lastRunStatus: status,
+        });
+        const finalRun = {
+          completedAt,
+          counters,
+          durationMs,
+          error: message,
+          metadata: initialMetadata,
+          status,
+        };
+        await runVariantHook(status, counters, message, durationMs);
+        return finalRun;
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
-      await runVariantHook(status, counters, message, durationMs);
-      return message;
+      return finalRun.error ?? getErrorMessage(error);
     }
+
+    const finalizeRun = async (result?: FlowRunResult): Promise<void> => {
+      await completeRunOk(result);
+    };
 
     function observeWorkflowCompletion(workflowResult: unknown) {
       const returnValue = getWorkflowReturnValue(workflowResult);
@@ -1335,7 +1648,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           {
             flow: flowContext,
             variant,
-            body: requestBody["body"],
+            body: runBody,
             vars,
             plugVarsByName,
             khotanRunId: runId,
@@ -1363,18 +1676,25 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         });
       }
 
-      const result = await flowReg.run?.({
-        plug: boundPlug,
-        flow: flowContext,
-        variant,
-        body: requestBody["body"],
-        vars,
-        setVars: setFlowVars,
-        cache: createCacheInstance,
-      });
+      const result = await flowReg.run?.(
+        attachRunFinalizer(
+          {
+            plug: boundPlug,
+            flow: flowContext,
+            variant,
+            body: runBody,
+            vars,
+            setVars: setFlowVars,
+            cache: createCacheInstance,
+            mapping: createMappingInstance,
+          },
+          finalizeRun,
+        ),
+      );
       const runResult = toFlowRunResult(result);
 
-      const { counters, status } = await completeRunOk(runResult);
+      const { counters, error, metadata, status } =
+        await completeRunOk(runResult);
 
       return Response.json({
         id: runId,
@@ -1383,8 +1703,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         variant,
         source,
         ...counters,
-        error: runResult?.error ?? null,
-        metadata: runResult?.metadata ?? null,
+        error,
+        metadata,
       });
     } catch (error) {
       const message = await completeRunFailed(error);
@@ -1795,6 +2115,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     try {
+      const eventForWorkflow =
+        handler.type === "catch" && handler.schema
+          ? handler.schema.parse(ctx.event)
+          : ctx.event;
       const workflowCtx =
         handler.type === "pass"
           ? {
@@ -1806,7 +2130,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
               khotanInstanceId: instanceId,
             }
           : {
-              event: ctx.event,
+              event: eventForWorkflow,
               eventType: ctx.eventType,
               headers: ctx.headers,
               khotanRunId,
@@ -2690,6 +3014,35 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     },
     {
       method: "POST",
+      pattern: "wires/:plugName/renew",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json().catch(() => ({}))) as {
+          wireId?: string;
+        };
+        try {
+          const record = await wire(plugName).renew(body.wireId);
+          return Response.json({ wire: record });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          kd("wire", `${plugName}: renew failed:`, message);
+          const status =
+            error instanceof KhotanInternalNotFoundError
+              ? 404
+              : error instanceof KhotanWireRequestError
+                ? 400
+                : 500;
+          return Response.json({ error: message }, { status });
+        }
+      },
+    },
+    {
+      method: "POST",
       pattern: "wires/:plugName",
       auth: "authorize",
       handler: async ({ params, request }) => {
@@ -2938,7 +3291,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const message =
             error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
-          return Response.json({ error: message }, { status: 500 });
+          return Response.json(
+            { error: message },
+            {
+              status: error instanceof KhotanInternalNotFoundError ? 404 : 500,
+            },
+          );
         }
       },
     },
@@ -3029,14 +3387,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         break;
 
       case "authorize":
-        if (authorizeHook) {
+        {
           let allowed = await isCliRequestAuthorized(request, secret);
-          if (!allowed) {
+          if (!allowed && authorizeHook) {
             try {
               allowed = await authorizeHook(request);
             } catch {
               allowed = false;
             }
+          }
+          if (!allowed && authorize === false) {
+            allowed = true;
           }
           if (!allowed) {
             return Response.json(
@@ -3075,6 +3436,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   khotanRuntimeRegistry.set(instanceId, {
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,
@@ -3092,6 +3454,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     flow,
     wire,
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,

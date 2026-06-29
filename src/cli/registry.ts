@@ -13,6 +13,8 @@ export interface ComponentFile {
    * - "outputDir" — the khotan outputDir (default)
    * - "components" — components/khotan/ relative to project root
    * - "app" — app/api/khotan/[...all]/ relative to project root (or src/app if src layout)
+   * - "appRoot" — app directory root (`src/app` or `app`)
+   * - "lib" — lib directory (`src/lib` or `lib`)
    * - "projectRoot" — the project root (cwd)
    * - "agentSkills" — installed to all detected agent directories (Cursor, Claude, Codex, etc.)
    */
@@ -21,6 +23,7 @@ export interface ComponentFile {
     | "components"
     | "app"
     | "appRoot"
+    | "lib"
     | "projectRoot"
     | "agentSkills";
 }
@@ -70,6 +73,26 @@ export interface ComponentEntry {
 // ---------------------------------------------------------------------------
 
 const COMPONENTS: Record<string, ComponentEntry> = {
+  auth: {
+    name: "auth",
+    description:
+      "Better Auth setup and authorize hook for the khotan management API",
+    dependencies: {
+      npmPackages: ["better-auth"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "auth.ts"),
+        outputFile: "auth.ts",
+        outputBase: "lib",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "auth-route.ts"),
+        outputFile: "api/auth/[...all]/route.ts",
+        outputBase: "appRoot",
+      },
+    ],
+  },
   plug: {
     name: "plug",
     description:
@@ -147,6 +170,31 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         templatePath: path.resolve(__dirname, "templates", "cache.example.ts"),
         outputFile: "caches/cache.example.ts",
         outputBase: "outputDir",
+      },
+    ],
+  },
+  ingest: {
+    name: "ingest",
+    description: "Typed inbound destination endpoint with org resolution",
+    requires: ["schema"],
+    dependencies: {
+      npmPackages: ["drizzle-orm", "zod"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "ingest.ts"),
+        outputFile: "ingests/ingest.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "ingest.example.ts"),
+        outputFile: "ingests/ingest.example.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(__dirname, "templates", "ingest-route.ts"),
+        outputFile: "api/internal/khotan/ingest/example/route.ts",
+        outputBase: "appRoot",
       },
     ],
   },

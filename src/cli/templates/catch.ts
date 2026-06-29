@@ -26,6 +26,7 @@ export type CatchWorkflow<
 // ---------------------------------------------------------------------------
 //
 // import { khotanCache } from "khotan-data/factory";
+// import { z } from "zod";
 // import { catchEvent, type CatchContext } from "./catch";
 // Khotan already records webhook deliveries in khotan_webhook_events and links
 // them to khotan_runs. Use your catch workflow for app-specific side effects
@@ -36,14 +37,22 @@ export type CatchWorkflow<
 // function — closures over workflow scope cannot be hoisted and fail at runtime.
 //
 // // Step: top-level, full Node.js access, retried independently.
-// async function notifyOps(ctx: CatchContext) {
+// const pollinateEventSchema = z.object({
+//   id: z.string().optional(),
+//   data: z.object({ orderId: z.string() }),
+// });
+//
+// type PollinateEvent = z.infer<typeof pollinateEventSchema>;
+//
+// async function notifyOps(ctx: CatchContext<PollinateEvent>) {
 //   "use step";
 //   const cache = khotanCache(ctx, "pollinate-webhook-markers");
-//   const eventId = String(ctx.event["id"] ?? "");
+//   const eventId = ctx.event.id ?? "";
 //   if (eventId && (await cache.get<boolean>(eventId))) return;
 //
 //   console.log("Handled webhook", {
 //     eventType: ctx.eventType,
+//     orderId: ctx.event.data.orderId,
 //     khotanRunId: ctx.khotanRunId,
 //   });
 //
@@ -61,6 +70,7 @@ export type CatchWorkflow<
 // export const pollinateCatch = catchEvent({
 //   name: "pollinate-orders",
 //   events: ["order.created"],
+//   schema: pollinateEventSchema,
 //   workflow: pollinateCatchWorkflow,
 // });
 //

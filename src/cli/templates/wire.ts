@@ -7,7 +7,7 @@
 // subscribe, unsubscribe, and verification logic for each external service.
 // ============================================================================
 
-export { wire } from "khotan-data/factory";
+export { wire, verifyHmacSha256 } from "khotan-data/factory";
 
 export type {
   BoundPlug,
@@ -16,13 +16,16 @@ export type {
   WireSubscribeContext,
   WireUnsubscribeContext,
   WireVerifyContext,
+  WireRenewContext,
+  WireSubscribeResult,
+  WireRenewResult,
 } from "khotan-data/factory";
 
 // ---------------------------------------------------------------------------
 // Usage Example (create a file like wires/stripe-wire.ts)
 // ---------------------------------------------------------------------------
 //
-// import { wire } from "./wire";
+// import { wire, verifyHmacSha256 } from "./wire";
 //
 // export const stripeWire = wire({
 //   events: ["invoice.paid", "invoice.payment_failed"],
@@ -51,7 +54,11 @@ export type {
 //   async onVerify(ctx) {
 //     const signature = ctx.headers["stripe-signature"];
 //     if (!signature) return false;
-//     // Verify using ctx.wireVars.webhookSecret and ctx.body (raw text)
-//     return true;
+//     return verifyHmacSha256(ctx.body, signature, ctx.wireVars.webhookSecret, {
+//       digest: "hex",
+//       prefix: "sha256=",
+//     });
 //   },
 // });
+
+export { verifyHmacSha256 };

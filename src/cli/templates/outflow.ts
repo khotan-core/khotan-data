@@ -44,9 +44,10 @@ export type {
 //
 //   const records = await db.select().from(products);
 //
-//   for (const record of records) {
-//     await hubspot.post("/products", { body: record });
-//   }
+//   await hubspot.batchPost("/products", records, {
+//     batchSize: 200,
+//     concurrency: 2,
+//   });
 //
 //   return {
 //     extracted: records.length,
