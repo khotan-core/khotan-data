@@ -11,8 +11,9 @@
 // Debug logger — set KHOTAN_DEBUG=1 to see trace output
 // ---------------------------------------------------------------------------
 
-const _khotanDebug =
-  typeof process !== "undefined" && process.env?.KHOTAN_DEBUG;
+const _khotanDebug = (
+  globalThis as { process?: { env?: Record<string, string | undefined> } }
+).process?.env?.["KHOTAN_DEBUG"];
 function kd(scope: string, ...args: unknown[]) {
   if (_khotanDebug) console.log(`[khotan:${scope}]`, ...args);
 }
@@ -39,14 +40,38 @@ export class PlugError extends Error {
 // Auth strategies
 // ---------------------------------------------------------------------------
 
+export interface QueryParamAuth {
+  name: string;
+  value: string;
+}
+
 export interface AuthStrategy {
   type: string;
   /** Mutate the outgoing request headers. Receives the plug's bound vars
    *  (decrypted plug variables for this run) so a custom strategy can read
-   *  credentials without reaching back into the factory. */
-  apply(headers: Headers, vars?: Record<string, string>): void | Promise<void>;
-  onUnauthorized?: () => void | Promise<void>;
+   *  credentials without reaching back into the factory. The optional context
+   *  exposes the fully resolved request URL for auth schemes that sign the
+   *  method, query string, or body. */
+  apply(
+    headers: Headers,
+    vars?: Record<string, string>,
+    context?: AuthApplyContext,
+  ): void | Promise<void>;
+  onUnauthorized?: (
+    vars?: Record<string, string>,
+    context?: AuthApplyContext,
+  ) => void | Promise<void>;
   baseUrl?: string;
+  queryParam?: QueryParamAuth;
+}
+
+export interface AuthApplyContext<Vars = Record<string, string>> {
+  url: string;
+  query: string;
+  searchParams: URLSearchParams;
+  method: string;
+  body?: unknown;
+  vars: Vars;
 }
 
 export function bearer(
@@ -85,15 +110,48 @@ export function apiKey(
       }
     },
     ...(location === "query" ? { queryParam: { name, value } } : {}),
-  } as AuthStrategy & { queryParam?: { name: string; value: string } };
+  };
 }
 
 export function custom(
-  fn: (headers: Headers, vars?: Record<string, string>) => void | Promise<void>,
+  fn: (
+    headers: Headers,
+    vars?: Record<string, string>,
+    context?: AuthApplyContext,
+  ) => void | Promise<void>,
 ): AuthStrategy {
   return {
     type: "custom",
     apply: fn,
+  };
+}
+
+export interface HmacSignatureConfig {
+  /**
+   * Label for documentation/debugging. The sign function owns the actual
+   * signing implementation so this template stays dependency-free.
+   */
+  algorithm?: "sha1" | "sha256" | "sha384" | "sha512";
+  /** Header that receives the computed signature. Defaults to X-Signature. */
+  header?: string;
+  sign: (
+    context: AuthApplyContext<Record<string, string>>,
+  ) => string | Promise<string>;
+}
+
+export function hmacSignature(config: HmacSignatureConfig): AuthStrategy {
+  return {
+    type: "hmacSignature",
+    async apply(headers, vars, context) {
+      if (!context) {
+        throw new Error("hmacSignature requires request context");
+      }
+      const signature = await config.sign({
+        ...context,
+        vars: vars ?? context.vars,
+      });
+      headers.set(config.header ?? "X-Signature", signature);
+    },
   };
 }
 
@@ -142,9 +200,26 @@ export interface TokenExchangeConfig {
   parseTokenResponse: (data: unknown) => {
     accessToken: string;
     expiresIn?: number;
+    expiresAt?: number;
+    refreshToken?: string;
+    tokenType?: string;
   };
   extraHeaders?: (vars: Record<string, string>) => Record<string, string>;
   refreshBufferSeconds?: number;
+  tokenStore?: TokenStore;
+}
+
+export interface StoredAuthToken {
+  accessToken: string;
+  expiresAt?: number;
+  refreshToken?: string;
+  tokenType?: string;
+}
+
+export interface TokenStore {
+  get(): StoredAuthToken | null | Promise<StoredAuthToken | null>;
+  set(token: StoredAuthToken): void | Promise<void>;
+  clear?(): void | Promise<void>;
 }
 
 export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
@@ -163,6 +238,26 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
     if (!cachedToken) return true;
     if (tokenExpiresAt === 0) return false;
     return Date.now() >= tokenExpiresAt - refreshBuffer;
+  }
+
+  function cacheToken(token: StoredAuthToken) {
+    cachedToken = token.accessToken;
+    tokenExpiresAt = token.expiresAt ?? 0;
+  }
+
+  async function loadStoredToken(): Promise<boolean> {
+    if (!config.tokenStore) return false;
+    const stored = await config.tokenStore.get();
+    if (!stored?.accessToken) return false;
+    cacheToken(stored);
+    kd("auth", "tokenExchange: loaded token from tokenStore");
+    return !isExpired();
+  }
+
+  async function clearToken() {
+    cachedToken = null;
+    tokenExpiresAt = 0;
+    await config.tokenStore?.clear?.();
   }
 
   async function fetchToken(): Promise<string> {
@@ -196,11 +291,14 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
 
     const endpoint = resolveEndpoint();
     kd("auth", "tokenExchange: POST", endpoint);
-    const res = await fetch(endpoint, {
+    const init: RequestInit = {
       method: reqConfig.method ?? "POST",
       headers,
-      body: tokenBody,
-    });
+    };
+    if (tokenBody !== undefined) {
+      init.body = tokenBody;
+    }
+    const res = await fetch(endpoint, init);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -222,31 +320,48 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
       Object.keys(data as object),
     );
     const parsed = config.parseTokenResponse(data);
-    cachedToken = parsed.accessToken;
-    if (!cachedToken) {
+    if (!parsed.accessToken) {
       kd(
         "auth",
         "tokenExchange: WARNING - accessToken is undefined/null, check parseTokenResponse",
       );
+      throw new Error(
+        "Token exchange response did not include an access token",
+      );
     }
-    if (parsed.expiresIn) {
-      tokenExpiresAt = Date.now() + parsed.expiresIn * 1000;
+
+    const token: StoredAuthToken = { accessToken: parsed.accessToken };
+    if (parsed.expiresAt !== undefined) {
+      token.expiresAt = parsed.expiresAt;
+    } else if (parsed.expiresIn !== undefined) {
+      token.expiresAt = Date.now() + parsed.expiresIn * 1000;
     }
+    if (parsed.refreshToken !== undefined) {
+      token.refreshToken = parsed.refreshToken;
+    }
+    if (parsed.tokenType !== undefined) {
+      token.tokenType = parsed.tokenType;
+    }
+    cacheToken(token);
+    await config.tokenStore?.set(token);
     kd(
       "auth",
       "tokenExchange: got token, expires in",
       parsed.expiresIn ?? "unknown",
       "seconds",
     );
-    return cachedToken;
+    return token.accessToken;
   }
 
   return {
     type: "tokenExchange",
     async apply(headers: Headers) {
       if (isExpired()) {
-        kd("auth", "tokenExchange: token expired or missing, refreshing");
-        await fetchToken();
+        const loaded = await loadStoredToken();
+        if (!loaded) {
+          kd("auth", "tokenExchange: token expired or missing, refreshing");
+          await fetchToken();
+        }
       }
       headers.set("Authorization", `Bearer ${cachedToken}`);
       kd(
@@ -264,10 +379,9 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
         }
       }
     },
-    onUnauthorized() {
+    async onUnauthorized() {
       kd("auth", "tokenExchange: 401 received, clearing cached token");
-      cachedToken = null;
-      tokenExpiresAt = 0;
+      await clearToken();
     },
     set baseUrl(url: string) {
       _baseUrl = url;
@@ -276,16 +390,337 @@ export function tokenExchange(config: TokenExchangeConfig): AuthStrategy {
 }
 
 // ---------------------------------------------------------------------------
+// Authorization-code + PKCE auth strategy
+// ---------------------------------------------------------------------------
+
+type MaybePromise<T> = T | Promise<T>;
+type VarResolver<T> = T | ((vars: Record<string, string>) => MaybePromise<T>);
+
+export interface AuthorizationCodeToken {
+  accessToken: string;
+  expiresIn?: number;
+  expiresAt?: number;
+  refreshToken?: string;
+  tokenType?: string;
+}
+
+export interface AuthorizationCodeConfig {
+  getVariables?: () => MaybePromise<Record<string, string>>;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: VarResolver<string>;
+  clientSecret?: VarResolver<string | undefined>;
+  redirectUri: VarResolver<string>;
+  scopes?: string[];
+  pkce?: boolean | { challengeMethod?: "S256" | "plain" };
+  tokenStore?: TokenStore;
+  refreshBufferSeconds?: number;
+  includeRedirectUriOnRefresh?: boolean;
+  extraAuthorizeParams?: Record<string, string>;
+  extraTokenParams?: Record<string, string>;
+  parseTokenResponse?: (data: unknown) => AuthorizationCodeToken;
+}
+
+export interface AuthorizationUrlResult {
+  url: string;
+  state?: string;
+  codeVerifier?: string;
+  codeChallenge?: string;
+}
+
+export interface AuthorizationCodeUrlOptions {
+  vars?: Record<string, string>;
+  state?: string;
+  scopes?: string[];
+  redirectUri?: string;
+  codeVerifier?: string;
+  extraParams?: Record<string, string>;
+}
+
+export interface AuthorizationCodeExchangeOptions {
+  vars?: Record<string, string>;
+  redirectUri?: string;
+  codeVerifier?: string;
+  extraParams?: Record<string, string>;
+}
+
+export type AuthorizationCodeAuthStrategy = AuthStrategy & {
+  getAuthorizationUrl(
+    options?: AuthorizationCodeUrlOptions,
+  ): Promise<AuthorizationUrlResult>;
+  exchangeCode(
+    code: string,
+    options?: AuthorizationCodeExchangeOptions,
+  ): Promise<StoredAuthToken>;
+  clearToken(): Promise<void>;
+};
+
+export function authorizationCode(
+  config: AuthorizationCodeConfig,
+): AuthorizationCodeAuthStrategy {
+  let cachedToken: StoredAuthToken | null = null;
+  let _baseUrl = "";
+  const refreshBuffer = (config.refreshBufferSeconds ?? 60) * 1000;
+
+  function resolveEndpoint(endpoint: string): string {
+    if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
+      return endpoint;
+    }
+    return `${_baseUrl.replace(/\/$/, "")}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+  }
+
+  async function getVars(
+    override?: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    return override ?? (await config.getVariables?.()) ?? {};
+  }
+
+  async function resolveValue<T>(
+    value: VarResolver<T>,
+    vars: Record<string, string>,
+  ): Promise<T> {
+    return typeof value === "function"
+      ? await (value as (vars: Record<string, string>) => MaybePromise<T>)(vars)
+      : value;
+  }
+
+  async function resolveOptionalValue<T>(
+    value: VarResolver<T | undefined> | undefined,
+    vars: Record<string, string>,
+  ): Promise<T | undefined> {
+    if (value === undefined) return undefined;
+    return resolveValue(value, vars);
+  }
+
+  function isExpired(token: StoredAuthToken | null): boolean {
+    if (!token?.accessToken) return true;
+    if (token.expiresAt === undefined) return false;
+    return Date.now() >= token.expiresAt - refreshBuffer;
+  }
+
+  function normalizeToken(token: AuthorizationCodeToken): StoredAuthToken {
+    const stored: StoredAuthToken = { accessToken: token.accessToken };
+    if (token.expiresAt !== undefined) {
+      stored.expiresAt = token.expiresAt;
+    } else if (token.expiresIn !== undefined) {
+      stored.expiresAt = Date.now() + token.expiresIn * 1000;
+    }
+    if (token.refreshToken !== undefined)
+      stored.refreshToken = token.refreshToken;
+    if (token.tokenType !== undefined) stored.tokenType = token.tokenType;
+    return stored;
+  }
+
+  function parseTokenResponse(data: unknown): AuthorizationCodeToken {
+    if (config.parseTokenResponse) return config.parseTokenResponse(data);
+    const value = data as Record<string, unknown>;
+    const token = value["access_token"];
+    if (typeof token !== "string" || token.length === 0) {
+      throw new Error("OAuth token response did not include access_token");
+    }
+    const parsed: AuthorizationCodeToken = { accessToken: token };
+    const expiresIn = value["expires_in"];
+    if (typeof expiresIn === "number") parsed.expiresIn = expiresIn;
+    const refreshToken = value["refresh_token"];
+    if (typeof refreshToken === "string") parsed.refreshToken = refreshToken;
+    const tokenType = value["token_type"];
+    if (typeof tokenType === "string") parsed.tokenType = tokenType;
+    return parsed;
+  }
+
+  async function saveToken(token: StoredAuthToken): Promise<StoredAuthToken> {
+    cachedToken = token;
+    await config.tokenStore?.set(token);
+    return token;
+  }
+
+  async function loadToken(): Promise<StoredAuthToken | null> {
+    if (cachedToken && !isExpired(cachedToken)) return cachedToken;
+    const stored = await config.tokenStore?.get();
+    if (stored?.accessToken) {
+      cachedToken = stored;
+      if (!isExpired(stored)) return stored;
+    }
+    return cachedToken;
+  }
+
+  async function clearToken(): Promise<void> {
+    cachedToken = null;
+    await config.tokenStore?.clear?.();
+  }
+
+  async function requestToken(body: URLSearchParams): Promise<StoredAuthToken> {
+    const endpoint = resolveEndpoint(config.tokenEndpoint);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/x-www-form-urlencoded",
+      }),
+      body,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new PlugError(
+        `OAuth token request failed: ${response.status} ${response.statusText}`,
+        response.status,
+        response.statusText,
+        text,
+        endpoint,
+        "POST",
+      );
+    }
+    const token = normalizeToken(parseTokenResponse(await response.json()));
+    return saveToken(token);
+  }
+
+  async function refreshToken(
+    token: StoredAuthToken,
+    vars: Record<string, string>,
+  ): Promise<StoredAuthToken> {
+    if (!token.refreshToken) {
+      throw new Error("OAuth token is expired and no refresh token is stored");
+    }
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: token.refreshToken,
+      client_id: await resolveValue(config.clientId, vars),
+      ...config.extraTokenParams,
+    });
+    if (config.includeRedirectUriOnRefresh) {
+      body.set("redirect_uri", await resolveValue(config.redirectUri, vars));
+    }
+    const clientSecret = await resolveOptionalValue(config.clientSecret, vars);
+    if (clientSecret) body.set("client_secret", clientSecret);
+    const refreshed = await requestToken(body);
+    if (!refreshed.refreshToken) {
+      refreshed.refreshToken = token.refreshToken;
+      await saveToken(refreshed);
+    }
+    return refreshed;
+  }
+
+  const strategy: AuthorizationCodeAuthStrategy = {
+    type: "authorizationCode",
+    async getAuthorizationUrl(options = {}) {
+      const vars = await getVars(options.vars);
+      const url = new URL(resolveEndpoint(config.authorizationEndpoint));
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set(
+        "client_id",
+        await resolveValue(config.clientId, vars),
+      );
+      url.searchParams.set(
+        "redirect_uri",
+        options.redirectUri ?? (await resolveValue(config.redirectUri, vars)),
+      );
+      const scopes = options.scopes ?? config.scopes;
+      if (scopes?.length) url.searchParams.set("scope", scopes.join(" "));
+      if (options.state) url.searchParams.set("state", options.state);
+      for (const [key, value] of Object.entries(
+        config.extraAuthorizeParams ?? {},
+      )) {
+        url.searchParams.set(key, value);
+      }
+      for (const [key, value] of Object.entries(options.extraParams ?? {})) {
+        url.searchParams.set(key, value);
+      }
+
+      const result: AuthorizationUrlResult = { url: "" };
+      if (options.state) result.state = options.state;
+      if (config.pkce) {
+        const verifier = options.codeVerifier ?? createPkceVerifier();
+        const method =
+          typeof config.pkce === "object"
+            ? (config.pkce.challengeMethod ?? "S256")
+            : "S256";
+        const challenge =
+          method === "plain" ? verifier : await createPkceChallenge(verifier);
+        url.searchParams.set("code_challenge", challenge);
+        url.searchParams.set("code_challenge_method", method);
+        result.codeVerifier = verifier;
+        result.codeChallenge = challenge;
+      }
+      result.url = url.toString();
+      return result;
+    },
+    async exchangeCode(code, options = {}) {
+      const vars = await getVars(options.vars);
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: await resolveValue(config.clientId, vars),
+        redirect_uri:
+          options.redirectUri ?? (await resolveValue(config.redirectUri, vars)),
+        ...config.extraTokenParams,
+        ...options.extraParams,
+      });
+      const clientSecret = await resolveOptionalValue(
+        config.clientSecret,
+        vars,
+      );
+      if (clientSecret) body.set("client_secret", clientSecret);
+      if (options.codeVerifier) body.set("code_verifier", options.codeVerifier);
+      return requestToken(body);
+    },
+    async apply(headers, vars) {
+      const resolvedVars = await getVars(vars);
+      let token = await loadToken();
+      if (isExpired(token)) {
+        if (token?.refreshToken) {
+          token = await refreshToken(token, resolvedVars);
+        } else {
+          throw new Error(
+            "OAuth authorization code token is expired or missing. Call exchangeCode() before making API requests.",
+          );
+        }
+      }
+      if (!token?.accessToken) {
+        throw new Error(
+          "OAuth authorization code token is missing. Call exchangeCode() before making API requests.",
+        );
+      }
+      headers.set("Authorization", `Bearer ${token.accessToken}`);
+    },
+    async onUnauthorized(vars) {
+      const token = await loadToken();
+      if (token?.refreshToken) {
+        await refreshToken(token, await getVars(vars));
+        return;
+      }
+      await clearToken();
+    },
+    clearToken,
+    set baseUrl(url: string) {
+      _baseUrl = url;
+    },
+  };
+
+  return strategy;
+}
+
+// ---------------------------------------------------------------------------
 // Pagination strategies
 // ---------------------------------------------------------------------------
 
 export interface PaginationStrategy {
   type: string;
-  getNextParams(
+  getNextParams?(
     response: Record<string, unknown>,
     currentParams: Record<string, unknown>,
   ): Record<string, unknown> | null;
+  getNext?(
+    response: Record<string, unknown>,
+    currentParams: Record<string, unknown>,
+    items: unknown[],
+  ): PaginationNext;
   getDataPath(): string;
+  getItems?(response: Record<string, unknown>): unknown[];
+  hasMore?(
+    response: Record<string, unknown>,
+    items: unknown[],
+    currentParams: Record<string, unknown>,
+  ): boolean;
+  interPageDelayMs?: number;
 }
 
 function getByPath(obj: Record<string, unknown>, path: string): unknown {
@@ -295,6 +730,28 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
     }
     return undefined;
   }, obj);
+}
+
+export type PaginationNext =
+  | string
+  | URL
+  | Record<string, unknown>
+  | null
+  | undefined;
+
+export interface PaginationInspector<T = unknown> {
+  getItems(response: Record<string, unknown>): T[];
+  hasMore?(
+    response: Record<string, unknown>,
+    items: T[],
+    currentParams: Record<string, unknown>,
+  ): boolean;
+  getNext?(
+    response: Record<string, unknown>,
+    currentParams: Record<string, unknown>,
+    items: T[],
+  ): PaginationNext;
+  interPageDelayMs?: number;
 }
 
 export function cursorPagination(config: {
@@ -368,6 +825,136 @@ export function keysetPagination(config: {
   };
 }
 
+export function linkPagination(config: {
+  linksPath: string;
+  dataPath: string;
+  hasMorePath?: string;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  return {
+    type: "link",
+    getNext(response) {
+      const next = getByPath(response, config.linksPath);
+      return typeof next === "string" && next.length > 0 ? next : null;
+    },
+    hasMore(response) {
+      if (config.hasMorePath) {
+        return Boolean(getByPath(response, config.hasMorePath));
+      }
+      const next = getByPath(response, config.linksPath);
+      return typeof next === "string" && next.length > 0;
+    },
+    getDataPath() {
+      return config.dataPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
+  };
+}
+
+export function jsonApiPagination(config: {
+  dataPath?: string;
+  pageParam?: string;
+  currentPagePath?: string;
+  lastPagePath?: string;
+  nextPath?: string;
+  firstPage?: number;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  const dataPath = config.dataPath ?? "data";
+  const pageParam = config.pageParam ?? "page[number]";
+  const firstPage = config.firstPage ?? 1;
+  return {
+    type: "json-api",
+    getNext(response, currentParams) {
+      const next = config.nextPath
+        ? getByPath(response, config.nextPath)
+        : undefined;
+      if (typeof next === "string" && next.length > 0) return next;
+
+      const lastPage =
+        config.lastPagePath !== undefined
+          ? Number(getByPath(response, config.lastPagePath))
+          : Number.NaN;
+      const currentPage =
+        config.currentPagePath !== undefined
+          ? Number(getByPath(response, config.currentPagePath))
+          : Number(currentParams[pageParam] ?? firstPage);
+
+      if (!Number.isFinite(lastPage) || !Number.isFinite(currentPage)) {
+        return null;
+      }
+      if (currentPage >= lastPage) return null;
+      return { [pageParam]: currentPage + 1 };
+    },
+    getDataPath() {
+      return dataPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
+  };
+}
+
+export function envelopePagination(config: {
+  itemsPath: string;
+  hasMorePath?: string;
+  nextPath?: string;
+  nextOffsetPath?: string;
+  offsetParam?: string;
+  limitParam?: string;
+  pageSize?: number;
+  interPageDelayMs?: number;
+}): PaginationStrategy {
+  const offsetParam = config.offsetParam ?? "offset";
+  const limitParam = config.limitParam ?? "limit";
+  return {
+    type: "envelope",
+    hasMore(response) {
+      if (config.hasMorePath) {
+        return Boolean(getByPath(response, config.hasMorePath));
+      }
+      if (config.nextPath) {
+        return Boolean(getByPath(response, config.nextPath));
+      }
+      if (config.nextOffsetPath) {
+        return Boolean(getByPath(response, config.nextOffsetPath));
+      }
+      return false;
+    },
+    getNext(response, currentParams, items) {
+      if (config.nextPath) {
+        const next = getByPath(response, config.nextPath);
+        if (typeof next === "string" && next.length > 0) return next;
+      }
+
+      if (config.nextOffsetPath) {
+        const nextOffset = getByPath(response, config.nextOffsetPath);
+        if (nextOffset != null && nextOffset !== "") {
+          return { [offsetParam]: nextOffset };
+        }
+      }
+
+      if (
+        config.hasMorePath &&
+        !Boolean(getByPath(response, config.hasMorePath))
+      ) {
+        return null;
+      }
+
+      const currentOffset = Number(currentParams[offsetParam] ?? 0);
+      const pageSize = Number(
+        config.pageSize ?? currentParams[limitParam] ?? items.length,
+      );
+      if (!Number.isFinite(currentOffset) || !Number.isFinite(pageSize)) {
+        return null;
+      }
+      return { [offsetParam]: currentOffset + pageSize };
+    },
+    getDataPath() {
+      return config.itemsPath;
+    },
+    interPageDelayMs: config.interPageDelayMs,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Retry logic
 // ---------------------------------------------------------------------------
@@ -431,10 +1018,8 @@ export interface PlugHooks<Vars = Record<string, string>> {
 
 export interface EndpointSchema {
   parse(data: unknown): unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _def?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  shape?: any;
+  _def?: unknown;
+  shape?: Record<string, unknown>;
 }
 
 export interface EndpointDef {
@@ -463,6 +1048,10 @@ export interface PlugConfig<V extends readonly VarField[] = VarField[]> {
   timeout?: number;
   defaultHeaders?: Record<string, string>;
   pagination?: PaginationStrategy;
+  shouldRetry?: (
+    response: Response,
+    body: unknown,
+  ) => boolean | Promise<boolean>;
   hooks?: PlugHooks<VarsRecord<V>>;
   parsers?: Record<string, (text: string) => unknown>;
 }
@@ -478,6 +1067,26 @@ export interface RequestOptions {
   _setVars?: (updates: Record<string, string>) => Promise<void>;
   /** @internal Skip hooks for this request (used to prevent recursion in beforeRequest) */
   _skipHooks?: boolean;
+}
+
+export interface PaginateOptions<T = unknown> extends RequestOptions {
+  pagination?: PaginationStrategy;
+  strategy?: PaginationStrategy;
+  getItems?: PaginationInspector<T>["getItems"];
+  hasMore?: PaginationInspector<T>["hasMore"];
+  getNext?: PaginationInspector<T>["getNext"];
+  interPageDelayMs?: number;
+}
+
+export interface BatchPostOptions<TRecord = unknown> {
+  /** Records per POST body. Defaults to 100. */
+  batchSize?: number;
+  /** Number of batches to post in parallel. Defaults to 1. */
+  concurrency?: number;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** Shape each request body. Defaults to sending the batch array directly. */
+  buildBody?: (records: TRecord[], batchIndex: number) => unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +1147,45 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     return this.request<T>("POST", path, options);
   }
 
+  async batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord>,
+  ): Promise<TResponse[]> {
+    const batchSize = options?.batchSize ?? 100;
+    const concurrency = options?.concurrency ?? 1;
+    if (batchSize < 1) throw new Error("batchSize must be at least 1");
+    if (concurrency < 1) throw new Error("concurrency must be at least 1");
+    if (records.length === 0) return [];
+
+    const batches: TRecord[][] = [];
+    for (let i = 0; i < records.length; i += batchSize) {
+      batches.push(records.slice(i, i + batchSize));
+    }
+
+    const results: TResponse[] = new Array<TResponse>(batches.length);
+    let next = 0;
+
+    const worker = async () => {
+      while (next < batches.length) {
+        const index = next++;
+        const batch = batches[index]!;
+        results[index] = await this.post<TResponse>(path, {
+          body: options?.buildBody ? options.buildBody(batch, index) : batch,
+          headers: options?.headers,
+          signal: options?.signal,
+        });
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, batches.length) }, () =>
+        worker(),
+      ),
+    );
+    return results;
+  }
+
   async put<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>("PUT", path, options);
   }
@@ -578,18 +1226,17 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     }
 
     if (this.config.auth) {
-      await this.config.auth.apply(headers, options?.vars);
+      await this.config.auth.apply(
+        headers,
+        options?.vars,
+        this.buildAuthContext(method, url, options),
+      );
     }
 
-    const authWithQuery = this.config.auth as AuthStrategy & {
-      queryParam?: { name: string; value: string };
-    };
-    if (authWithQuery?.queryParam) {
+    const queryParam = this.config.auth?.queryParam;
+    if (queryParam) {
       const u = new URL(url);
-      u.searchParams.set(
-        authWithQuery.queryParam.name,
-        authWithQuery.queryParam.value,
-      );
+      u.searchParams.set(queryParam.name, queryParam.value);
       return this._fetchWithAuthRetry<T>(
         method,
         u.toString(),
@@ -603,35 +1250,71 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 
   async *paginate<T>(
     path: string,
-    options?: RequestOptions,
+    options?: PaginateOptions<T>,
   ): AsyncIterable<T[]> {
-    const pagination = this.config.pagination;
+    const {
+      pagination: optionPagination,
+      strategy,
+      getItems,
+      hasMore,
+      getNext,
+      interPageDelayMs,
+      ...requestOptions
+    } = options ?? {};
+    const inlinePagination: PaginationInspector<T> | undefined = getItems
+      ? { getItems, hasMore, getNext, interPageDelayMs }
+      : undefined;
+    const pagination =
+      inlinePagination ??
+      optionPagination ??
+      strategy ??
+      this.config.pagination;
     if (!pagination) {
       throw new Error(
         "Pagination strategy must be configured to use paginate()",
       );
     }
 
-    let currentParams: Record<string, unknown> = { ...options?.params };
+    let currentPath = path;
+    let currentParams: Record<string, unknown> = { ...requestOptions.params };
 
     while (true) {
       const response = await this.request<Record<string, unknown>>(
         "GET",
-        path,
-        { ...options, params: currentParams },
+        currentPath,
+        { ...requestOptions, params: currentParams },
       );
 
-      const data = getByPath(response, pagination.getDataPath()) as
-        | T[]
-        | undefined;
+      const data = (
+        "getItems" in pagination && pagination.getItems
+          ? pagination.getItems(response)
+          : getByPath(response, pagination.getDataPath())
+      ) as T[] | undefined;
       if (!data || data.length === 0) break;
 
       yield data;
 
-      const nextParams = pagination.getNextParams(response, currentParams);
-      if (!nextParams) break;
+      const shouldContinue =
+        !pagination.hasMore ||
+        pagination.hasMore(response, data, currentParams);
+      if (!shouldContinue) break;
 
-      currentParams = { ...currentParams, ...nextParams };
+      const next =
+        pagination.getNext?.(response, currentParams, data) ??
+        pagination.getNextParams?.(response, currentParams);
+      if (!next) break;
+
+      if (typeof next === "string" || next instanceof URL) {
+        currentPath = next.toString();
+        currentParams = {};
+      } else {
+        currentParams = { ...currentParams, ...next };
+      }
+
+      const delay = pagination.interPageDelayMs;
+      if (delay && delay > 0) {
+        await sleep(delay);
+      }
     }
   }
 
@@ -649,8 +1332,11 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     params?: Record<string, unknown>,
   ): string {
     const trimmedBase = base.replace(/\/+$/, "");
+    const isAbsolute = /^[a-z][a-z\d+\-.]*:\/\//i.test(path);
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
-    const url = new URL(`${trimmedBase}${cleanPath}`);
+    const url = isAbsolute
+      ? new URL(path)
+      : new URL(`${trimmedBase}${cleanPath}`);
 
     if (params) {
       for (const [key, value] of Object.entries(params)) {
@@ -681,6 +1367,22 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
     return headers;
   }
 
+  private buildAuthContext(
+    method: string,
+    url: string,
+    options?: RequestOptions,
+  ): AuthApplyContext<VarsRecord<V>> {
+    const parsed = new URL(url);
+    return {
+      url,
+      query: parsed.searchParams.toString(),
+      searchParams: parsed.searchParams,
+      method,
+      body: options?.body,
+      vars: (options?.vars ?? {}) as VarsRecord<V>,
+    };
+  }
+
   private async _fetchWithAuthRetry<T>(
     method: string,
     url: string,
@@ -699,9 +1401,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
           "request",
           `${this.name}: 401 on ${method} ${url}, retrying with fresh auth`,
         );
-        await this.config.auth.onUnauthorized();
+        const authContext = this.buildAuthContext(method, url, options);
+        await this.config.auth.onUnauthorized(options?.vars, authContext);
         const freshHeaders = this.buildHeaders(options?.headers);
-        await this.config.auth.apply(freshHeaders, options?.vars);
+        await this.config.auth.apply(freshHeaders, options?.vars, authContext);
         return this._fetch<T>(method, url, freshHeaders, options);
       }
       throw error;
@@ -808,20 +1511,69 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
         }
 
         const contentType = response.headers.get("Content-Type") ?? "";
+        const retryResponse = response.clone();
         if (contentType.includes("application/json")) {
-          return (await response.json()) as T;
+          const parsed = (await response.json()) as T;
+          if (
+            retryConfig &&
+            this.config.shouldRetry &&
+            (await this.config.shouldRetry(retryResponse, parsed))
+          ) {
+            const retryError = new PlugError(
+              `${method} ${url} marked retryable by shouldRetry()`,
+              response.status,
+              response.statusText,
+              JSON.stringify(parsed),
+              url,
+              method,
+            );
+            if (attempt < maxAttempts - 1) {
+              lastError = retryError;
+              await sleep(computeDelay(attempt, retryConfig));
+              continue;
+            }
+            throw retryError;
+          }
+          return parsed;
         }
 
+        let parsed: unknown;
         if (this.config.parsers) {
           for (const [mime, parser] of Object.entries(this.config.parsers)) {
             if (contentType.includes(mime)) {
               const text = await response.text();
-              return parser(text) as T;
+              parsed = parser(text);
+              break;
             }
           }
         }
 
-        return (await response.text()) as unknown as T;
+        if (parsed === undefined) {
+          parsed = await response.text();
+        }
+
+        if (
+          retryConfig &&
+          this.config.shouldRetry &&
+          (await this.config.shouldRetry(retryResponse, parsed))
+        ) {
+          const retryError = new PlugError(
+            `${method} ${url} marked retryable by shouldRetry()`,
+            response.status,
+            response.statusText,
+            String(parsed),
+            url,
+            method,
+          );
+          if (attempt < maxAttempts - 1) {
+            lastError = retryError;
+            await sleep(computeDelay(attempt, retryConfig));
+            continue;
+          }
+          throw retryError;
+        }
+
+        return parsed as T;
       } catch (error) {
         if (error instanceof PlugError) throw error;
 
@@ -867,4 +1619,35 @@ export function plug<const V extends readonly VarField[]>(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createPkceVerifier(): string {
+  const bytes = new Uint8Array(32);
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error("PKCE requires globalThis.crypto.getRandomValues");
+  }
+  globalThis.crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+async function createPkceChallenge(verifier: string): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("PKCE S256 requires globalThis.crypto.subtle");
+  }
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }

@@ -8,7 +8,14 @@
 
 import { z } from "zod";
 import { defineContract, createPlugClient } from "khotan-data/plug";
-import { plug, bearer } from "./plug";
+import {
+  authorizationCode,
+  bearer,
+  hmacSignature,
+  plug,
+  tokenExchange,
+  type StoredAuthToken,
+} from "./plug";
 
 // ---------------------------------------------------------------------------
 // 1. Define your API contract
@@ -73,6 +80,112 @@ const api = plug({
 });
 
 export const client = createPlugClient(apiContract, api);
+
+// ---------------------------------------------------------------------------
+// Auth examples
+// ---------------------------------------------------------------------------
+
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function hmacSha256Base64(secret: string, message: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(message),
+  );
+  return base64FromBytes(new Uint8Array(signature));
+}
+
+export const signedApi = plug({
+  baseUrl: "https://signed-api.example.com",
+  vars: [
+    { key: "apiSecret", label: "API secret", type: "password", secret: true },
+  ] as const,
+  auth: hmacSignature({
+    algorithm: "sha256",
+    header: "api-auth-signature",
+    sign: ({ method, url, query, body, vars }) =>
+      hmacSha256Base64(
+        vars["apiSecret"]!,
+        [method, new URL(url).pathname, query, JSON.stringify(body ?? "")].join(
+          "\n",
+        ),
+      ),
+  }),
+});
+
+export const formOAuthApi = plug({
+  baseUrl: "https://oauth-api.example.com",
+  vars: [
+    { key: "clientId", label: "Client ID", type: "text", required: true },
+    {
+      key: "clientSecret",
+      label: "Client secret",
+      type: "password",
+      secret: true,
+      required: true,
+    },
+  ] as const,
+  auth: tokenExchange({
+    getVariables: () => ({
+      clientId: process.env.OAUTH_CLIENT_ID ?? "",
+      clientSecret: process.env.OAUTH_CLIENT_SECRET ?? "",
+    }),
+    tokenEndpoint: "/oauth/token",
+    buildTokenRequest: (vars) => ({
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: vars["clientId"]!,
+        client_secret: vars["clientSecret"]!,
+      }),
+    }),
+    parseTokenResponse: (data) => {
+      const value = data as { access_token: string; expires_in?: number };
+      if (value.expires_in === undefined) {
+        return { accessToken: value.access_token };
+      }
+      return { accessToken: value.access_token, expiresIn: value.expires_in };
+    },
+  }),
+});
+
+let exampleGraphToken: StoredAuthToken | null = null;
+
+export const graphAuth = authorizationCode({
+  authorizationEndpoint:
+    "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+  tokenEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  clientId: process.env.MS_GRAPH_CLIENT_ID!,
+  redirectUri: process.env.MS_GRAPH_REDIRECT_URI!,
+  scopes: ["offline_access", "User.Read"],
+  pkce: true,
+  tokenStore: {
+    get: () => exampleGraphToken,
+    set: (token) => {
+      exampleGraphToken = token;
+    },
+    clear: () => {
+      exampleGraphToken = null;
+    },
+  },
+});
+
+export const graphApi = plug({
+  baseUrl: "https://graph.microsoft.com/v1.0",
+  auth: graphAuth,
+});
 
 // ---------------------------------------------------------------------------
 // 3. Usage — fully typed, validated, with IDE autocomplete

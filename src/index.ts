@@ -34,4 +34,19 @@ export {
   fromQueryCursor,
   fromQueryPaginated,
 } from "./drizzle-extract.js";
-export { toDrizzle, toDrizzleTx } from "./drizzle-load.js";
+export { khotanUpsert, toDrizzle, toDrizzleTx } from "./drizzle-load.js";
+export type {
+  KhotanUpsertDedupe,
+  KhotanUpsertOptions,
+  KhotanUpsertResult,
+} from "./drizzle-load.js";
+
+export {
+  retry,
+  sleep,
+  computeRetryDelayMs,
+  stableStringify,
+  sha256Hex,
+  createDedupKey,
+} from "./retry.js";
+export type { RetryOptions } from "./retry.js";

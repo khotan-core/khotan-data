@@ -89,6 +89,16 @@ export const productsInflow = inflow({
 Outflows query your DB and push out; relays read a source plug and write a
 destination plug. The step/workflow rules are identical for all three.
 
+Return a `FlowRunResult` from the workflow, usually by returning the last
+`"use step"` result. Khotan observes that return value and finalizes
+`khotan_runs` + `khotan_flows` automatically: counters, duration, terminal
+status (`partial` when failures are non-zero), error, and metadata. Treat the
+returned `FlowRunResult` as the production-safe contract for durable workflows;
+hosted workflow contexts can be serialized and rehydrated, so workflow args do
+not expose `ctx.finalize`. Inline `run(ctx)` handlers can use
+`ctx.finalize(result)` as an explicit escape hatch when returning a final result
+is not practical.
+
 ## Registering
 
 In `{outputDir}/khotan.ts`, register flows under their source plug:

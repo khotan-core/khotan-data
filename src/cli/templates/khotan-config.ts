@@ -7,6 +7,8 @@
 // ============================================================================
 
 import { khotan, drizzleAdapter } from "khotan-data/factory";
+// Run `npx khotan-data add auth` to scaffold Better Auth and wire this hook:
+// import { authorizeKhotanRequest } from "@/lib/auth";
 // TODO: Update this import to your Drizzle database instance
 import { db } from "@/db";
 
@@ -16,19 +18,18 @@ const khotanData = khotan({
   // ── Security ──────────────────────────────────────────────────────────────
   // The management API (/api/khotan/*) and the Hub dashboard expose plug
   // credentials and operational controls. Gate every management route behind
-  // your auth layer with `authorize`. It receives the raw Request, so it works
-  // directly with session libraries like better-auth:
+  // your auth layer with `authorize`.
   //
-  //   import { auth } from "@/lib/auth";
+  // Without `authorize`, development requests are rejected with 401 and
+  // production startup throws. `authorize: false` explicitly opens the
+  // management API for local development only and is rejected in production.
   //
-  //   authorize: async (request) => {
-  //     const session = await auth.api.getSession({ headers: request.headers });
-  //     return Boolean(session?.user); // or: session?.user?.role === "admin"
-  //   },
+  // To scaffold a Better Auth setup and wire this file automatically:
+  //   npx khotan-data add auth
   //
   // Inbound webhooks, the cron dispatcher (CRON_SECRET), and debug routes are
-  // exempt automatically. Without `authorize`, the API is PUBLIC.
-  // authorize: async (request) => { /* return true to allow */ return false; },
+  // exempt automatically.
+  // authorize: authorizeKhotanRequest,
 
   // Resources define logical entity types for cross-referencing across plugs.
   // The mapping block declares the shared identity contract for that resource.

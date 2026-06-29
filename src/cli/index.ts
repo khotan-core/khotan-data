@@ -10,6 +10,11 @@ import { plugCommand } from "./commands/probe.js";
 import { wireCommand } from "./commands/wire.js";
 import { flowsCommand } from "./commands/flows.js";
 import { mappingsCommand } from "./commands/mappings.js";
+import { whoamiCommand } from "./commands/whoami.js";
+import { databasesCommand } from "./commands/databases.js";
+import { appsCommand } from "./commands/apps.js";
+import { bootstrapCommand } from "./commands/bootstrap.js";
+import { loadEnvFileIntoProcess } from "./cli-api.js";
 
 const __cliDirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -21,7 +26,21 @@ const program = new Command();
 program
   .name("khotan-data")
   .description("Scaffold data components into your project")
-  .version(pkg.version);
+  .version(pkg.version)
+  .option("--env-file <path>", "Load a dotenv file for this CLI invocation")
+  .option("--org-id <id>", "Set KHOTAN_ORG_ID for this CLI invocation")
+  .hook("preAction", (thisCommand, actionCommand) => {
+    const opts = actionCommand.optsWithGlobals<{
+      envFile?: string;
+      orgId?: string;
+    }>();
+    if (opts.envFile) {
+      loadEnvFileIntoProcess(opts.envFile);
+    }
+    if (opts.orgId) {
+      process.env["KHOTAN_ORG_ID"] = opts.orgId;
+    }
+  });
 
 program.addCommand(initCommand);
 program.addCommand(addCommand);
@@ -31,5 +50,9 @@ program.addCommand(plugCommand);
 program.addCommand(wireCommand);
 program.addCommand(flowsCommand);
 program.addCommand(mappingsCommand);
+program.addCommand(whoamiCommand);
+program.addCommand(databasesCommand);
+program.addCommand(appsCommand);
+program.addCommand(bootstrapCommand);
 
 program.parse();

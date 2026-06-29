@@ -1,14 +1,14 @@
 ---
 name: khotan-probe
 description: >
-  Inspect and debug khotan plugs via the CLI. Prefer `khotan plug`
-  (legacy alias: `khotan probe`). Use when verifying API
+  Inspect and debug khotan plugs via the CLI. Prefer `khotan-data plug`
+  (legacy alias: `khotan-data probe`). Use when verifying API
   response shapes against typed endpoint definitions, debugging type
   mismatches between declared schemas and actual responses, or exploring
   available plugs and their endpoints.
 ---
 
-Inspect and debug khotan plugs via the CLI. Prefer `khotan plug` (legacy alias: `khotan probe`). Use when verifying API response shapes against typed endpoint definitions, debugging type mismatches between declared schemas and actual responses, or exploring available plugs and their endpoints.
+Inspect and debug khotan plugs via the CLI. Prefer `khotan-data plug` (legacy alias: `khotan-data probe`). Use when verifying API response shapes against typed endpoint definitions, debugging type mismatches between declared schemas and actual responses, or exploring available plugs and their endpoints.
 
 **Requires**: A running dev server with `KHOTAN_DEBUG=1` set.
 

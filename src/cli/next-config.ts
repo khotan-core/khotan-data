@@ -42,6 +42,75 @@ function ensureWorkflowImport(source: string): string {
   return `import { withWorkflow } from "workflow/next";\n${source}`;
 }
 
+function arrayContainsKhotanData(arrayBody: string): boolean {
+  return /["']khotan-data["']/.test(arrayBody);
+}
+
+function appendKhotanDataPackage(arrayBody: string): string {
+  if (arrayBody.trim().length === 0) {
+    return `"khotan-data"`;
+  }
+
+  if (!arrayBody.includes("\n")) {
+    return `${arrayBody.trim().replace(/,\s*$/, "")}, "khotan-data"`;
+  }
+
+  const lines = arrayBody.split("\n");
+  const closingIndent = lines[lines.length - 1]?.match(/^\s*/)?.[0] ?? "";
+  const lastItemLine = [...lines]
+    .reverse()
+    .find((line) => line.trim().length > 0);
+  const itemIndent = lastItemLine?.match(/^\s*/)?.[0] ?? `${closingIndent}  `;
+  const bodyWithoutTrailingWhitespace = arrayBody.replace(/\s*$/, "");
+  const bodyWithoutTrailingComma = bodyWithoutTrailingWhitespace.replace(
+    /,\s*$/,
+    "",
+  );
+
+  return `${bodyWithoutTrailingComma},\n${itemIndent}"khotan-data",\n${closingIndent}`;
+}
+
+function ensureServerExternalPackages(source: string): string | null {
+  const packagePattern = /serverExternalPackages\s*:\s*\[([\s\S]*?)\]/m;
+  const packageMatch = packagePattern.exec(source);
+
+  if (packageMatch) {
+    const body = packageMatch[1] ?? "";
+    if (arrayContainsKhotanData(body)) return source;
+
+    return source.replace(
+      packagePattern,
+      `serverExternalPackages: [${appendKhotanDataPackage(body)}]`,
+    );
+  }
+
+  const namedExportPattern =
+    /export\s+default\s+(?:withWorkflow\(\s*)?([A-Za-z_$][\w$]*)\s*\)?\s*;?/;
+  const namedExport = namedExportPattern.exec(source);
+  if (namedExport) {
+    const name = namedExport[1]!;
+    const declarationPattern = new RegExp(
+      `(const\\s+${name}\\s*(?::[^=]+)?=\\s*\\{)`,
+    );
+    if (declarationPattern.test(source)) {
+      return source.replace(
+        declarationPattern,
+        `$1\n  serverExternalPackages: ["khotan-data"],`,
+      );
+    }
+  }
+
+  const objectExportPattern = /(export\s+default\s+\{)/m;
+  if (objectExportPattern.test(source)) {
+    return source.replace(
+      objectExportPattern,
+      `$1\n  serverExternalPackages: ["khotan-data"],`,
+    );
+  }
+
+  return null;
+}
+
 function wrapDefaultExport(source: string): string | null {
   if (source.includes("export default withWorkflow(")) {
     return source;
@@ -79,7 +148,9 @@ export function ensureWorkflowNextConfig(
         'import type { NextConfig } from "next";',
         'import { withWorkflow } from "workflow/next";',
         "",
-        "const nextConfig: NextConfig = {};",
+        "const nextConfig: NextConfig = {",
+        '  serverExternalPackages: ["khotan-data"],',
+        "};",
         "",
         "export default withWorkflow(nextConfig);",
         "",
@@ -91,7 +162,12 @@ export function ensureWorkflowNextConfig(
 
   const original = fs.readFileSync(configPath, "utf-8");
   const withImport = ensureWorkflowImport(original);
-  const wrapped = wrapDefaultExport(withImport);
+  const withServerExternalPackages = ensureServerExternalPackages(withImport);
+  if (!withServerExternalPackages) {
+    return { status: "unsupported", path: configPath };
+  }
+
+  const wrapped = wrapDefaultExport(withServerExternalPackages);
 
   if (!wrapped) {
     return { status: "unsupported", path: configPath };

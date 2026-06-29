@@ -73,14 +73,22 @@ The factory auto-upserts plugs, flows, and resources to the database on first AP
 
 ## Route Handler
 
-The catch-all route delegates all HTTP methods to the factory:
+The generated catch-all route binds the khotan instance directly with
+`toNextJsHandler` and a relative import computed from the route file to
+`{outputDir}/khotan.ts`:
 
 ```typescript
 import { toNextJsHandler } from "khotan-data/factory";
-import khotanData from "@/lib/khotan/khotan";
+import khotanData from "../../../../khotan/khotan";
 
-export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(khotanData.handler);
+export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(
+  khotanData.handler,
+);
 ```
+
+`khotan-data/next` remains available as a compatibility convenience for projects
+that expose the standard `@/khotan/khotan` instance, but generated routes use the
+direct form so custom `outputDir` values work.
 
 ## Database Setup
 
@@ -120,7 +128,14 @@ Rules of thumb:
 ## Securing the Management API
 
 The management API (`/api/khotan/*`) and the Hub dashboard expose plug
-credentials and operational controls. **They are public unless you gate them.**
+credentials and operational controls. The API is deny-by-default until you wire
+an auth hook.
+
+For Better Auth projects, scaffold the default setup and wire the hook:
+
+```bash
+npx khotan-data add auth --yes
+```
 
 Pass an `authorize` hook to `khotan({ ... })`. It receives the raw `Request` and
 returns `true` to allow the request or `false` to reject it with `401`. It
@@ -153,8 +168,10 @@ Notes:
   non-production only) are exempt from `authorize` automatically.
 - Also protect the Hub dashboard page (e.g. `/config`) with your app's
   middleware — `authorize` only guards the API, not your React pages.
-- Without `authorize`, khotan logs a startup warning and refuses to start.
-  Set `authorize: false` to explicitly opt out (development only).
+- Without `authorize`, khotan logs a startup warning and returns `401` for
+  management routes in development; production startup throws.
+- Set `authorize: false` to explicitly opt out in local development only.
+  `authorize: false` throws in production.
   Always configure a real `authorize` hook before deploying.
 
 ## Next.js Config

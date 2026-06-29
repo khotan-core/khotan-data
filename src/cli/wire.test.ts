@@ -159,4 +159,71 @@ describe("wire command", () => {
       wireId: "wire_1",
     });
   });
+
+  it("renews a wire through the khotan API", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          wire: { id: "wire_1", remoteId: "remote_2", status: "active" },
+        }),
+      );
+
+    const { parsed, thrown } = await runWireAction([
+      "pollinate",
+      "renew",
+      "--base-path",
+      "/api/khotan",
+      "--wire-id",
+      "wire_1",
+    ]);
+
+    expect(thrown).toBeNull();
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3000/api/khotan/wires/pollinate/renew",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ wireId: "wire_1" }),
+      }),
+    );
+    expect(parsed[0]).toEqual({
+      ok: true,
+      action: "renew",
+      plugName: "pollinate",
+      wire: { id: "wire_1", remoteId: "remote_2", status: "active" },
+    });
+  });
+
+  it("surfaces renew failures for wire ids rejected by the API", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse([{ name: "pollinate" }]))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: 'Wire for plug "pollinate" not found' }, 404),
+      );
+
+    const { parsed, thrown } = await runWireAction([
+      "pollinate",
+      "renew",
+      "--base-path",
+      "/api/khotan",
+      "--wire-id",
+      "wire_other",
+    ]);
+
+    expect(thrown).toEqual(new Error("EXIT:1"));
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3000/api/khotan/wires/pollinate/renew",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ wireId: "wire_other" }),
+      }),
+    );
+    expect(parsed[0]).toEqual({
+      ok: false,
+      error: "renew_failed",
+      hint: 'Wire for plug "pollinate" not found',
+    });
+  });
 });

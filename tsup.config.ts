@@ -8,7 +8,10 @@ const libraryEntries = {
   transform: "src/transform.ts",
   drizzle: "src/drizzle.ts",
   factory: "src/factory.ts",
+  next: "src/next.ts",
   "plug-client": "src/plug-client.ts",
+  retry: "src/retry.ts",
+  bootstrap: "src/bootstrap.ts",
 };
 
 export default defineConfig([
@@ -23,7 +26,7 @@ export default defineConfig([
     minify: false,
     outDir: "dist",
     target: "es2022",
-    external: ["drizzle-orm", "zod"],
+    external: ["@/khotan/khotan", "drizzle-orm", "zod"],
   },
   {
     entry: { cli: "src/cli/index.ts" },
@@ -46,6 +49,14 @@ export default defineConfig([
         path.resolve(templatesDir, "plug.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "auth.ts"),
+        path.resolve(templatesDir, "auth.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "auth-route.ts"),
+        path.resolve(templatesDir, "auth-route.ts"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "plug.example.ts"),
         path.resolve(templatesDir, "plug.example.ts"),
       );
@@ -60,6 +71,18 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "cache.example.ts"),
         path.resolve(templatesDir, "cache.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest.ts"),
+        path.resolve(templatesDir, "ingest.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest.example.ts"),
+        path.resolve(templatesDir, "ingest.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest-route.ts"),
+        path.resolve(templatesDir, "ingest-route.ts"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "wire.ts"),

@@ -48,6 +48,7 @@ import type {
   WireInstance,
   CacheInstance,
   CacheEntryRecord,
+  MappingInstance,
   CacheRegistration,
   ResourceRegistration,
   FlowRegistration,
@@ -61,6 +62,11 @@ import type {
   FlowHookContext,
   RunSource,
   RunSummary,
+  StuckRunReconcileOptions,
+  StuckRunReconcileResult,
+  StuckRunReconcileItem,
+  KhotanRunStatus,
+  KhotanTerminalRunUpdate,
 } from "./types.js";
 import { bindPlugWithVars, khotanRuntimeRegistry } from "./types.js";
 
@@ -87,6 +93,20 @@ interface RouteContext {
 interface RouteMatch {
   route: RouteDefinition;
   params: Record<string, string>;
+}
+
+class KhotanInternalNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanInternalNotFoundError";
+  }
+}
+
+class KhotanWireRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanWireRequestError";
+  }
 }
 
 function matchRoute(
@@ -130,6 +150,22 @@ type WaitUntilFn = (promise: Promise<unknown>) => void;
 
 let _resolvedWaitUntil: WaitUntilFn | null = null;
 
+function metadataFromFlowBody(body: unknown): Record<string, unknown> | null {
+  if (body === undefined || body === null) return null;
+  return isPlainObject(body) ? body : { body };
+}
+
+function attachRunFinalizer<T extends object>(
+  ctx: T,
+  finalize: (result?: FlowRunResult) => Promise<void>,
+): T & { finalize(result?: FlowRunResult): Promise<void> } {
+  Object.defineProperty(ctx, "finalize", {
+    value: finalize,
+    enumerable: false,
+  });
+  return ctx as T & { finalize(result?: FlowRunResult): Promise<void> };
+}
+
 function getWaitUntil(): WaitUntilFn {
   if (_resolvedWaitUntil) return _resolvedWaitUntil;
   _resolvedWaitUntil = (_promise: Promise<unknown>) => {
@@ -156,23 +192,94 @@ const waitUntilReady: Promise<void> = (async () => {
 // khotan factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Derive a deterministic instance id from the stable, serializable identity of a
+ * config. Workflow steps run in a fresh isolate where the flow module is
+ * re-imported and `khotan(config)` runs again; deriving the id from config
+ * identity (rather than a per-process random uuid) ensures the re-imported module
+ * lands on the same registry key so runtime helpers resolve across isolates.
+ *
+ * Only stable string identity is used (plug/flow/cache/resource names) — never
+ * `adapter`/`authorize`/`secret`, which are non-serializable, per-process, or not
+ * identity. Lists are sorted for order-independence. A tiny inline FNV-1a hash is
+ * used instead of `node:crypto` so this works in any runtime with zero imports.
+ */
+function deriveInstanceId(config: KhotanConfig): string {
+  const { plugs, resources = [], caches = [] } = config;
+  const plugNames = plugs.map((p) => p.name).sort();
+  const flowNames = plugs
+    .flatMap((p) => (p.flows ?? []).map((f) => f.name))
+    .sort();
+  const cacheNames = caches.map((c) => c.name).sort();
+  const resourceNames = resources.map((r) => r.name).sort();
+
+  const identity = JSON.stringify({
+    plugs: plugNames,
+    flows: flowNames,
+    caches: cacheNames,
+    resources: resourceNames,
+  });
+
+  // If there is no identity at all (degenerate config with no names), fall back
+  // to a random id so behavior is never worse than before.
+  if (
+    plugNames.length === 0 &&
+    flowNames.length === 0 &&
+    cacheNames.length === 0 &&
+    resourceNames.length === 0
+  ) {
+    return crypto.randomUUID();
+  }
+
+  // FNV-1a 32-bit hash — pure, deterministic, no imports, runtime-agnostic.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < identity.length; i++) {
+    hash ^= identity.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, "0");
+  return `cfg_${hex}`;
+}
+
 export function khotan(config: KhotanConfig): KhotanInstance {
-  const { adapter, plugs, resources = [], caches = [], authorize } = config;
-  const instanceId = crypto.randomUUID();
+  const {
+    adapter,
+    plugs,
+    resources = [],
+    caches = [],
+    authorize,
+    onFlowRunComplete,
+    onFlowRunFailed,
+    onWebhookReceived,
+  } = config;
+  const instanceId = deriveInstanceId(config);
+
+  if (authorize === false && process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "[khotan] `authorize: false` is not allowed in production. Pass an " +
+        "authorization hook to gate management routes before deploying.",
+    );
+  }
 
   if (authorize === undefined) {
     if (process.env["NODE_ENV"] === "production") {
       throw new Error(
         "[khotan] `authorize` is required in production. Pass an authorization hook to gate " +
-          "management routes, or pass `authorize: false` to explicitly opt into " +
-          "publicly accessible management routes (not recommended).",
+          "management routes.",
       );
     }
     console.warn(
-      "[khotan] No `authorize` hook configured: the management API " +
-        "(/api/khotan/*) is publicly accessible. Pass `authorize` to gate it " +
-        "behind your auth layer (e.g. better-auth), or `authorize: false` to " +
-        "silence this warning. This will throw in production.",
+      "[khotan] No `authorize` hook configured: management routes " +
+        "(/api/khotan/*) will reject requests with 401. Pass `authorize` to " +
+        "gate them behind your auth layer (e.g. better-auth), or pass " +
+        "`authorize: false` to explicitly opt into a public development API. " +
+        "Omitting `authorize` throws in production.",
+    );
+  } else if (authorize === false) {
+    console.warn(
+      "[khotan] `authorize: false` configured: management routes " +
+        "(/api/khotan/*) are publicly accessible. This is only allowed outside " +
+        "production; configure a real `authorize` hook before deploying.",
     );
   }
   const authorizeHook =
@@ -650,6 +757,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return resourceConfigById.get(resourceId) ?? null;
   }
 
+  async function resolveResourceId(resourceName: string): Promise<string> {
+    await init();
+    const resourceId = resourceIdByName.get(resourceName);
+    if (!resourceId) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return resourceId;
+  }
+
+  async function getRegisteredResourceByName(
+    resourceName: string,
+  ): Promise<{ id: string; resource: ResourceRegistration }> {
+    const id = await resolveResourceId(resourceName);
+    const resource = resourceConfigById.get(id);
+    if (!resource) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return { id, resource };
+  }
+
   async function resolveCacheState(cacheName: string) {
     await init();
     const cacheState = cacheStateByName.get(cacheName);
@@ -847,6 +974,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     connectValue: string | string[];
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<Record<string, unknown>> {
     const resource = await validateMappingPayload(mapping);
     const result = await adapter.upsertMapping({
@@ -854,6 +982,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(result.id);
     if (!saved) {
@@ -869,6 +1000,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: string | string[];
       refs: Record<string, string>;
       metadata?: Record<string, unknown> | null;
+      mergeRefs?: boolean;
     },
   ): Promise<Record<string, unknown>> {
     const existing = await adapter.getMapping(id);
@@ -883,12 +1015,55 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(id);
     if (!saved) {
       throw new Error(`Mapping "${id}" disappeared after update`);
     }
     return saved;
+  }
+
+  function createMappingInstance(resourceName: string): MappingInstance {
+    return {
+      async list(params = {}) {
+        const resourceId = await resolveResourceId(resourceName);
+        return listMappings({
+          resourceId,
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.search !== undefined ? { search: params.search } : {}),
+        });
+      },
+      async lookup(connectValue) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, connectValue });
+      },
+      async lookupByRef(plugName, ref) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, plugName, ref });
+      },
+      async upsert(mapping) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return upsertMapping({
+          resourceId,
+          connectValue: mapping.connectValue,
+          refs: mapping.refs,
+          ...(mapping.metadata !== undefined
+            ? { metadata: mapping.metadata }
+            : {}),
+          ...(mapping.mergeRefs !== undefined
+            ? { mergeRefs: mapping.mergeRefs }
+            : {}),
+        });
+      },
+      delete: deleteMapping,
+    };
   }
 
   async function deleteMapping(id: string): Promise<void> {
@@ -902,6 +1077,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   // -------------------------------------------------------------------------
   // Wire management
   // -------------------------------------------------------------------------
+
+  const WIRE_EXPIRES_AT_VAR = "__khotan_expires_at";
 
   function wire(plugName: string): WireInstance {
     const plugReg = plugs.find((p) => p.name === plugName);
@@ -938,6 +1115,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       await adapter.updateWireMetadata(wireId, toStore);
     }
 
+    function normalizeWireExpiry(expiresAt: string | Date | null | undefined) {
+      if (!expiresAt) return null;
+      return expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt;
+    }
+
+    function getWireString(
+      record: Record<string, unknown>,
+      camelKey: string,
+      snakeKey?: string,
+    ): string {
+      const value = record[camelKey] ?? (snakeKey ? record[snakeKey] : null);
+      return typeof value === "string" ? value : "";
+    }
+
+    function getWirePlugId(record: Record<string, unknown>): string {
+      return getWireString(record, "plugId", "plug_id");
+    }
+
     return {
       async create(callbackUrl: string) {
         await init();
@@ -972,16 +1167,33 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           : undefined;
         const boundPlug = createBoundPlug(vars, _setVars);
 
-        const wireVars = await getWireVars(wireId);
+        let wireVars = await getWireVars(wireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(wireId, wireVars);
+        };
 
-        const result = await wireConfig.onSubscribe({
-          plug: boundPlug,
-          callbackUrl,
-          events: wireConfig.events,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        const isManual = wireConfig.mode === "manual";
+        if (!isManual && !wireConfig.onSubscribe) {
+          throw new Error(
+            `Plug "${plugName}" wire is managed but does not define onSubscribe`,
+          );
+        }
+
+        const result = isManual
+          ? { remoteId: `manual:${plugName}` }
+          : await wireConfig.onSubscribe!({
+              plug: boundPlug,
+              callbackUrl,
+              events: wireConfig.events,
+              wireVars,
+              setWireVars: persistWireVars,
+            });
+
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
 
         kd(
           "wire",
@@ -1002,13 +1214,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       async delete(wireId: string) {
         await init();
         kd("wire", `${plugName}: deleting wire ${wireId}`);
-        const wireRecord = await adapter.getWire(wireId);
-        if (!wireRecord) {
-          throw new Error(`Wire "${wireId}" not found`);
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
         }
 
-        const remoteId = (wireRecord["remoteId"] ??
-          wireRecord["remote_id"]) as string;
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = await adapter.getWire(wireId);
+        if (!wireRecord || getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
         kd("wire", `${plugName}: remoteId=${remoteId}`);
         if (!remoteId) {
           await adapter.updateWireStatus(wireId, "disabled");
@@ -1024,16 +1246,101 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         const wireVars = await getWireVars(wireId);
 
-        await wireConfig.onUnsubscribe({
-          plug: boundPlug,
-          remoteId,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        if (wireConfig.mode !== "manual" && wireConfig.onUnsubscribe) {
+          let currentWireVars = wireVars;
+          await wireConfig.onUnsubscribe({
+            plug: boundPlug,
+            remoteId,
+            wireVars,
+            setWireVars: async (updates) => {
+              currentWireVars = { ...currentWireVars, ...updates };
+              await setWireVars(wireId, currentWireVars);
+            },
+          });
+        }
 
         kd("wire", `${plugName}: unsubscribed successfully`);
         await adapter.updateWireStatus(wireId, "disabled");
+      },
+
+      async renew(wireId?: string) {
+        await init();
+        if (!wireConfig.onRenew) {
+          throw new KhotanWireRequestError(
+            `Plug "${plugName}" wire does not define onRenew`,
+          );
+        }
+
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
+        }
+
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = wireId
+          ? await adapter.getWire(wireId)
+          : await adapter.getPlugWire(plugId);
+        if (!wireRecord) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+        if (wireId && getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const resolvedWireId = wireRecord["id"] as string;
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
+        if (!remoteId) {
+          throw new KhotanWireRequestError(
+            `Wire "${resolvedWireId}" has no remoteId to renew`,
+          );
+        }
+
+        const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
+        const _setVars = secret
+          ? (updates: Record<string, string>) =>
+              setVars(plugName, { ...vars, ...updates })
+          : undefined;
+        const boundPlug = createBoundPlug(vars, _setVars);
+
+        let wireVars = await getWireVars(resolvedWireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(resolvedWireId, wireVars);
+        };
+
+        const callbackUrl = getWireString(wireRecord, "callbackUrl");
+        const result = await wireConfig.onRenew({
+          plug: boundPlug,
+          callbackUrl,
+          events: wireConfig.events,
+          remoteId,
+          expiresAt: wireVars[WIRE_EXPIRES_AT_VAR] ?? null,
+          wireVars,
+          setWireVars: persistWireVars,
+        });
+
+        const nextRemoteId = result.remoteId ?? remoteId;
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
+
+        await adapter.updateWireDetails(resolvedWireId, {
+          remoteId: nextRemoteId,
+          callbackUrl,
+          eventTypes: wireConfig.events,
+          status: "active",
+        });
+
+        const record = await adapter.getWire(resolvedWireId);
+        return record!;
       },
 
       async get() {
@@ -1128,11 +1435,15 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
     const activeVariant: FlowVariant | undefined = variants[variant];
 
+    const runBody = requestBody["body"];
+    const initialMetadata = metadataFromFlowBody(runBody);
+
     const { id: runId } = await adapter.insertRun({
       flowId,
       variant,
       source,
       status: "running",
+      metadata: initialMetadata,
     });
     const startedAt = Date.now();
 
@@ -1153,10 +1464,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       variant,
     };
 
-    // Invoke the active variant's terminal-state hook. `onComplete` fires on
-    // success, `onError` on `failed`/`partial`. A throwing hook is caught and
-    // logged and never changes the recorded run status.
-    async function runVariantHook(
+    // Invoke terminal-state hooks. Variant hooks preserve the existing
+    // per-variant behavior; factory hooks observe every registered flow run.
+    // Throwing hooks are caught and logged and never change the recorded run
+    // status.
+    async function runTerminalHooks(
       status: KhotanTerminalRunStatus,
       counters: ReturnType<typeof getFlowRunCounters>,
       error: string | null,
@@ -1168,7 +1480,6 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           : status === "failed" || status === "partial"
             ? activeVariant?.onError
             : undefined;
-      if (!hook) return;
 
       const summary: RunSummary = {
         id: runId,
@@ -1179,62 +1490,147 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         ...counters,
         error,
       };
-      try {
-        await hook(hookContext, summary);
-      } catch (err) {
-        kd("flow", `variant hook for "${variant}" threw`, err);
+
+      if (hook) {
+        try {
+          await hook(hookContext, summary);
+        } catch (err) {
+          kd("flow", `variant hook for "${variant}" threw`, err);
+        }
+      }
+
+      const factoryHook =
+        status === "completed" ? onFlowRunComplete : onFlowRunFailed;
+      if (factoryHook) {
+        try {
+          await factoryHook(hookContext, summary);
+        } catch (err) {
+          kd(
+            "flow",
+            `factory lifecycle hook for "${hookContext.flow.name}" threw`,
+            err,
+          );
+        }
       }
     }
 
-    async function completeRunOk(result: FlowRunResult | undefined) {
-      const completedAt = new Date();
-      const counters = getFlowRunCounters(result);
-      const status = resolveTerminalRunStatus(result, counters);
-      const durationMs = Date.now() - startedAt;
+    interface FinalizedRun {
+      completedAt: Date;
+      counters: ReturnType<typeof getFlowRunCounters>;
+      durationMs: number;
+      error: string | null;
+      metadata: Record<string, unknown> | null;
+      status: KhotanTerminalRunStatus;
+    }
 
-      await adapter.updateRun(runId, {
-        status,
-        completedAt,
-        durationMs,
-        ...counters,
-        error: result?.error ?? null,
-        metadata: result?.metadata ?? null,
+    let finalizedRun: FinalizedRun | null = null;
+    let finalizingRun: Promise<FinalizedRun> | null = null;
+
+    function finalizeOnce(
+      finalize: () => Promise<FinalizedRun>,
+    ): Promise<FinalizedRun> {
+      if (finalizedRun) return Promise.resolve(finalizedRun);
+      if (finalizingRun) return finalizingRun;
+
+      finalizingRun = (async () => {
+        try {
+          finalizedRun = await finalize();
+          return finalizedRun;
+        } catch (error) {
+          if (!finalizedRun) finalizingRun = null;
+          throw error;
+        }
+      })();
+
+      return finalizingRun;
+    }
+
+    async function completeRunOk(
+      result: FlowRunResult | undefined,
+    ): Promise<FinalizedRun> {
+      return finalizeOnce(async () => {
+        const completedAt = new Date();
+        const counters = getFlowRunCounters(result);
+        const status = resolveTerminalRunStatus(result, counters);
+        const durationMs = Date.now() - startedAt;
+        const error = result?.error ?? null;
+        const metadata =
+          result && "metadata" in result
+            ? (result.metadata ?? null)
+            : initialMetadata;
+
+        // Guarded terminal transition so an interrupted run that a stuck-run
+        // reconciler already claimed is not double-finalized.
+        const transitioned = await claimTerminalRun(runId, {
+          status,
+          completedAt,
+          durationMs,
+          ...counters,
+          error,
+          metadata,
+        });
+
+        if (transitioned) {
+          await adapter.updateFlowLastRun(flowId, {
+            lastRunAt: completedAt,
+            lastRunStatus: status,
+          });
+          await runTerminalHooks(status, counters, error, durationMs);
+        }
+
+        return {
+          completedAt,
+          counters,
+          durationMs,
+          error,
+          metadata,
+          status,
+        };
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
-
-      await runVariantHook(status, counters, result?.error ?? null, durationMs);
-
-      return { completedAt, counters, status };
     }
 
     async function completeRunFailed(error: unknown) {
-      const completedAt = new Date();
-      const message = getErrorMessage(error);
-      const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
-        ? "cancelled"
-        : "failed";
-      const durationMs = Date.now() - startedAt;
-      const counters = {
-        ...getFlowRunCounters(undefined),
-        failed: status === "failed" ? 1 : 0,
-      };
-      await adapter.updateRun(runId, {
-        status,
-        completedAt,
-        durationMs,
-        failed: counters.failed,
-        error: message,
+      if (finalizedRun) return finalizedRun.error ?? getErrorMessage(error);
+      const finalRun = await finalizeOnce(async () => {
+        const completedAt = new Date();
+        const message = getErrorMessage(error);
+        const status: KhotanTerminalRunStatus = isWorkflowCancelledError(error)
+          ? "cancelled"
+          : "failed";
+        const durationMs = Date.now() - startedAt;
+        const counters = {
+          ...getFlowRunCounters(undefined),
+          failed: status === "failed" ? 1 : 0,
+        };
+        const transitioned = await claimTerminalRun(runId, {
+          status,
+          completedAt,
+          durationMs,
+          failed: counters.failed,
+          error: message,
+        });
+        if (transitioned) {
+          await adapter.updateFlowLastRun(flowId, {
+            lastRunAt: completedAt,
+            lastRunStatus: status,
+          });
+          await runTerminalHooks(status, counters, message, durationMs);
+        }
+        return {
+          completedAt,
+          counters,
+          durationMs,
+          error: message,
+          metadata: initialMetadata,
+          status,
+        };
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
-      await runVariantHook(status, counters, message, durationMs);
-      return message;
+      return finalRun.error ?? getErrorMessage(error);
     }
+
+    const finalizeRun = async (result?: FlowRunResult): Promise<void> => {
+      await completeRunOk(result);
+    };
 
     function observeWorkflowCompletion(workflowResult: unknown) {
       const returnValue = getWorkflowReturnValue(workflowResult);
@@ -1286,7 +1682,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           {
             flow: flowContext,
             variant,
-            body: requestBody["body"],
+            body: runBody,
             vars,
             plugVarsByName,
             khotanRunId: runId,
@@ -1314,18 +1710,25 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         });
       }
 
-      const result = await flowReg.run?.({
-        plug: boundPlug,
-        flow: flowContext,
-        variant,
-        body: requestBody["body"],
-        vars,
-        setVars: setFlowVars,
-        cache: createCacheInstance,
-      });
+      const result = await flowReg.run?.(
+        attachRunFinalizer(
+          {
+            plug: boundPlug,
+            flow: flowContext,
+            variant,
+            body: runBody,
+            vars,
+            setVars: setFlowVars,
+            cache: createCacheInstance,
+            mapping: createMappingInstance,
+          },
+          finalizeRun,
+        ),
+      );
       const runResult = toFlowRunResult(result);
 
-      const { counters, status } = await completeRunOk(runResult);
+      const { counters, error, metadata, status } =
+        await completeRunOk(runResult);
 
       return Response.json({
         id: runId,
@@ -1334,8 +1737,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         variant,
         source,
         ...counters,
-        error: runResult?.error ?? null,
-        metadata: runResult?.metadata ?? null,
+        error,
+        metadata,
       });
     } catch (error) {
       const message = await completeRunFailed(error);
@@ -1639,6 +2042,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         return payload as Record<string, unknown>;
       },
+      async reconcileStuck(options = {}) {
+        const flowId = await resolveFlowId(flowNameOrId, selectorOptions);
+        return reconcileStuckRuns({ ...options, flowId });
+      },
     };
   }
 
@@ -1679,6 +2086,360 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return typeof run["workflowRunId"] === "string"
       ? run["workflowRunId"]
       : null;
+  }
+
+  function getRunId(run: Record<string, unknown>): string | null {
+    return typeof run["id"] === "string" ? run["id"] : null;
+  }
+
+  function getRunFlowId(run: Record<string, unknown>): string | null {
+    return typeof run["flowId"] === "string" ? run["flowId"] : null;
+  }
+
+  function coerceRunSource(value: unknown): RunSource {
+    return value === "scheduled" || value === "webhook" ? value : "manual";
+  }
+
+  function coerceRunStatus(value: unknown): KhotanRunStatus | null {
+    return value === "pending" ||
+      value === "running" ||
+      value === "completed" ||
+      value === "partial" ||
+      value === "failed" ||
+      value === "cancelled"
+      ? value
+      : null;
+  }
+
+  const NON_TERMINAL_RUN_STATUSES: ("pending" | "running")[] = [
+    "pending",
+    "running",
+  ];
+
+  function isNonTerminalRunStatus(
+    status: KhotanRunStatus | null,
+  ): status is "pending" | "running" {
+    return status === "pending" || status === "running";
+  }
+
+  async function claimTerminalRun(
+    runId: string,
+    updates: KhotanTerminalRunUpdate,
+  ): Promise<boolean> {
+    if (adapter.claimRunTerminal) {
+      return adapter.claimRunTerminal({
+        runId,
+        fromStatuses: NON_TERMINAL_RUN_STATUSES,
+        updates,
+      });
+    }
+
+    const current = await adapter.getRun(runId);
+    if (
+      !current ||
+      !isNonTerminalRunStatus(coerceRunStatus(current["status"]))
+    ) {
+      return false;
+    }
+
+    await adapter.updateRun(runId, updates);
+    return true;
+  }
+
+  function isStuckCandidate(
+    run: Record<string, unknown>,
+    olderThan: Date,
+    statuses: ("pending" | "running")[],
+  ): boolean {
+    const status = coerceRunStatus(run["status"]);
+    const startedAt = coerceDate(run["startedAt"]);
+    return (
+      !!status &&
+      statuses.includes(status as "pending" | "running") &&
+      !!startedAt &&
+      startedAt.getTime() <= olderThan.getTime()
+    );
+  }
+
+  async function getStuckRunCandidates(params: {
+    flowId?: string;
+    olderThan: Date;
+    statuses: ("pending" | "running")[];
+    limit: number;
+  }): Promise<Record<string, unknown>[]> {
+    if (adapter.listStuckRuns) {
+      return adapter.listStuckRuns({
+        flowId: params.flowId ?? null,
+        olderThan: params.olderThan,
+        statuses: params.statuses,
+        limit: params.limit,
+      });
+    }
+
+    if (params.flowId) {
+      return (await adapter.listRuns(params.flowId))
+        .filter((run) =>
+          isStuckCandidate(run, params.olderThan, params.statuses),
+        )
+        .slice(0, params.limit);
+    }
+
+    const candidates: Record<string, unknown>[] = [];
+    const pageSize = 100;
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore && candidates.length < params.limit) {
+      const page = await adapter.listRunsPage({ limit: pageSize, offset });
+      for (const run of page.items) {
+        if (isStuckCandidate(run, params.olderThan, params.statuses)) {
+          candidates.push(run);
+          if (candidates.length >= params.limit) break;
+        }
+      }
+      hasMore = page.hasMore;
+      offset += pageSize;
+    }
+    return candidates;
+  }
+
+  async function getFlowHookContextForRun(
+    run: Record<string, unknown>,
+  ): Promise<FlowHookContext | null> {
+    const flowId = getRunFlowId(run);
+    if (!flowId) return null;
+    const flow = await adapter.getFlow(flowId);
+    if (!flow) return null;
+    const flowConfig = getRegisteredFlowConfig(flow);
+    if (!flowConfig) return null;
+    const plugName =
+      typeof flow["plugName"] === "string" ? flow["plugName"] : null;
+    if (!plugName) return null;
+    return {
+      flow: {
+        id: flowId,
+        name: flowConfig.name,
+        plugName,
+        type: flowConfig.type,
+        resource: flowConfig.resource ?? null,
+        to: flowConfig.to ?? null,
+      },
+      variant:
+        typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT,
+    };
+  }
+
+  async function emitFactoryFlowHook(
+    ctx: FlowHookContext | null,
+    summary: RunSummary,
+  ): Promise<void> {
+    if (!ctx) return;
+    const hook =
+      summary.status === "completed" ? onFlowRunComplete : onFlowRunFailed;
+    if (!hook) return;
+    try {
+      await hook(ctx, summary);
+    } catch (error) {
+      kd("flow", `factory lifecycle hook for "${ctx.flow.name}" threw`, error);
+    }
+  }
+
+  function getRunCountersFromRecord(run: Record<string, unknown>) {
+    const numberOrZero = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) ? value : 0;
+    return {
+      extracted: numberOrZero(run["extracted"]),
+      transformed: numberOrZero(run["transformed"]),
+      created: numberOrZero(run["created"]),
+      updated: numberOrZero(run["updated"]),
+      deleted: numberOrZero(run["deleted"]),
+      failed: numberOrZero(run["failed"]),
+      skipped: numberOrZero(run["skipped"]),
+    };
+  }
+
+  async function reconcileStuckRuns(
+    options: StuckRunReconcileOptions = {},
+  ): Promise<StuckRunReconcileResult> {
+    await init();
+
+    const now = options.now ?? new Date();
+    const olderThanMs = Math.max(options.olderThanMs ?? 30 * 60_000, 1);
+    const olderThan = new Date(now.getTime() - olderThanMs);
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 500);
+    const statuses = (
+      options.statuses && options.statuses.length > 0
+        ? options.statuses
+        : ["pending", "running"]
+    ).filter(
+      (status): status is "pending" | "running" =>
+        status === "pending" || status === "running",
+    );
+    const toStatus = options.status ?? "failed";
+    const dryRun = options.dryRun ?? false;
+    const error =
+      options.error ??
+      `Marked ${toStatus} by khotan stuck-run reconciliation after ${String(
+        olderThanMs,
+      )}ms`;
+
+    if (statuses.length === 0) {
+      return {
+        ok: true,
+        dryRun,
+        checked: 0,
+        reconciled: 0,
+        skipped: 0,
+        olderThan: olderThan.toISOString(),
+        items: [],
+      };
+    }
+
+    const candidateOptions: {
+      flowId?: string;
+      olderThan: Date;
+      statuses: ("pending" | "running")[];
+      limit: number;
+    } = {
+      olderThan,
+      statuses,
+      limit,
+    };
+    if (options.flowId) candidateOptions.flowId = options.flowId;
+    const candidates = await getStuckRunCandidates(candidateOptions);
+
+    const items: StuckRunReconcileItem[] = [];
+    let reconciled = 0;
+    let skipped = 0;
+
+    for (const run of candidates) {
+      const runId = getRunId(run);
+      if (!runId) {
+        skipped++;
+        continue;
+      }
+      const previousStatus = coerceRunStatus(run["status"]);
+      if (previousStatus !== "pending" && previousStatus !== "running") {
+        skipped++;
+        continue;
+      }
+
+      const startedAt = coerceDate(run["startedAt"]);
+      const durationMs = startedAt ? now.getTime() - startedAt.getTime() : null;
+      const flowId = getRunFlowId(run);
+      const item: StuckRunReconcileItem = {
+        id: runId,
+        flowId,
+        workflowRunId: getRunWorkflowId(run),
+        variant:
+          typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT,
+        source: coerceRunSource(run["source"]),
+        previousStatus,
+        status: toStatus,
+        startedAt,
+        completedAt: now,
+        durationMs,
+        error,
+        dryRun,
+        reconciled: false,
+      };
+
+      if (dryRun) {
+        items.push(item);
+        continue;
+      }
+
+      const claimed = adapter.claimStuckRun
+        ? await adapter.claimStuckRun({
+            runId,
+            olderThan,
+            fromStatuses: statuses,
+            toStatus,
+            completedAt: now,
+            durationMs,
+            error,
+          })
+        : await (async () => {
+            const current = await adapter.getRun(runId);
+            if (!current || !isStuckCandidate(current, olderThan, statuses)) {
+              return false;
+            }
+            await adapter.updateRun(runId, {
+              status: toStatus,
+              completedAt: now,
+              ...(durationMs !== null ? { durationMs } : {}),
+              failed: toStatus === "failed" ? 1 : 0,
+              error,
+            });
+            return true;
+          })();
+
+      if (!claimed) {
+        skipped++;
+        items.push(item);
+        continue;
+      }
+
+      item.reconciled = true;
+      reconciled++;
+      items.push(item);
+
+      if (flowId) {
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: now,
+          lastRunStatus: toStatus,
+        });
+      }
+
+      const hookContext = await getFlowHookContextForRun(run);
+      await emitFactoryFlowHook(hookContext, {
+        id: runId,
+        status: toStatus,
+        variant: item.variant,
+        source: item.source,
+        durationMs: durationMs ?? 0,
+        ...getRunCountersFromRecord(run),
+        failed:
+          toStatus === "failed" ? 1 : getRunCountersFromRecord(run).failed,
+        error,
+      });
+    }
+
+    return {
+      ok: true,
+      dryRun,
+      checked: candidates.length,
+      reconciled,
+      skipped,
+      olderThan: olderThan.toISOString(),
+      items,
+    };
+  }
+
+  function parseStuckRunReconcileBody(body: unknown): StuckRunReconcileOptions {
+    if (!isPlainObject(body)) return {};
+    const options: StuckRunReconcileOptions = {};
+    if (typeof body["olderThanMs"] === "number") {
+      options.olderThanMs = body["olderThanMs"];
+    }
+    if (typeof body["limit"] === "number") {
+      options.limit = body["limit"];
+    }
+    if (body["status"] === "failed" || body["status"] === "cancelled") {
+      options.status = body["status"];
+    }
+    if (typeof body["error"] === "string") {
+      options.error = body["error"];
+    }
+    if (typeof body["dryRun"] === "boolean") {
+      options.dryRun = body["dryRun"];
+    }
+    if (Array.isArray(body["statuses"])) {
+      options.statuses = body["statuses"].filter(
+        (status): status is "pending" | "running" =>
+          status === "pending" || status === "running",
+      );
+    }
+    return options;
   }
 
   // -------------------------------------------------------------------------
@@ -1746,6 +2507,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     try {
+      const eventForWorkflow =
+        handler.type === "catch" && handler.schema
+          ? handler.schema.parse(ctx.event)
+          : ctx.event;
       const workflowCtx =
         handler.type === "pass"
           ? {
@@ -1757,7 +2522,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
               khotanInstanceId: instanceId,
             }
           : {
-              event: ctx.event,
+              event: eventForWorkflow,
               eventType: ctx.eventType,
               headers: ctx.headers,
               khotanRunId,
@@ -2369,6 +3134,25 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const eventType =
           typeof event["type"] === "string" ? event["type"] : "unknown";
 
+        if (onWebhookReceived) {
+          try {
+            await onWebhookReceived({
+              plug: {
+                id: plugId,
+                name: plugName,
+              },
+              wireId,
+              eventType,
+              event,
+              headers,
+              receivedAt: new Date(),
+              rawBody,
+            });
+          } catch (err) {
+            kd("webhook", `${plugName}: onWebhookReceived hook threw`, err);
+          }
+        }
+
         const webhookHandlers = getWebhookHandlersForPlug(plugReg);
 
         const processingWork = (async () => {
@@ -2580,30 +3364,71 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           );
         }
 
+        const currentStatus = coerceRunStatus(run["status"]);
+        if (currentStatus && !isNonTerminalRunStatus(currentStatus)) {
+          const currentError =
+            typeof run["error"] === "string" ? run["error"] : null;
+          return Response.json({
+            ok: true,
+            id: runId,
+            workflowRunId,
+            status: currentStatus,
+            ...(currentError !== null ? { error: currentError } : {}),
+          });
+        }
+
         const getRun = await importWorkflowGetRun();
         const workflowRun = getRun(workflowRunId);
         await workflowRun.cancel?.();
 
         const completedAt = new Date();
-        await adapter.updateRun(runId, {
+        const transitioned = await claimTerminalRun(runId, {
           status: "cancelled",
           completedAt,
           error: "Cancelled",
         });
         const flowId = typeof run["flowId"] === "string" ? run["flowId"] : null;
-        if (flowId) {
+        if (transitioned && flowId) {
           await adapter.updateFlowLastRun(flowId, {
             lastRunAt: completedAt,
             lastRunStatus: "cancelled",
           });
         }
+        if (transitioned) {
+          const startedAt = coerceDate(run["startedAt"]);
+          await emitFactoryFlowHook(await getFlowHookContextForRun(run), {
+            id: runId,
+            status: "cancelled",
+            variant:
+              typeof run["variant"] === "string"
+                ? run["variant"]
+                : DEFAULT_VARIANT,
+            source: coerceRunSource(run["source"]),
+            durationMs: startedAt
+              ? Math.max(completedAt.getTime() - startedAt.getTime(), 0)
+              : 0,
+            ...getRunCountersFromRecord(run),
+            error: "Cancelled",
+          });
+        }
+
+        const latestRun = transitioned ? null : await adapter.getRun(runId);
+        const responseRun = latestRun ?? run;
+        const responseStatus = transitioned
+          ? "cancelled"
+          : (coerceRunStatus(responseRun["status"]) ?? "cancelled");
+        const responseError = transitioned
+          ? "Cancelled"
+          : typeof responseRun["error"] === "string"
+            ? responseRun["error"]
+            : null;
 
         return Response.json({
           ok: true,
           id: runId,
           workflowRunId,
-          status: "cancelled",
-          error: "Cancelled",
+          status: responseStatus,
+          ...(responseError !== null ? { error: responseError } : {}),
         });
       },
     },
@@ -2631,12 +3456,75 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     },
     {
       method: "POST",
+      pattern: "runs/reconcile-stuck",
+      auth: "authorize",
+      handler: async ({ request }) => {
+        const body: unknown = await request.json().catch(() => ({}));
+        return Response.json(
+          await reconcileStuckRuns(parseStuckRunReconcileBody(body)),
+        );
+      },
+    },
+    {
+      method: "POST",
+      pattern: "flows/:flowId/runs/reconcile-stuck",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const body: unknown = await request.json().catch(() => ({}));
+        const flowId = params["flowId"]!;
+        const flow = await adapter.getFlow(flowId);
+        if (
+          !flow ||
+          typeof flow["plugName"] !== "string" ||
+          !plugNames.has(flow["plugName"])
+        ) {
+          return Response.json({ error: "Flow not found" }, { status: 404 });
+        }
+        return Response.json(
+          await reconcileStuckRuns({
+            ...parseStuckRunReconcileBody(body),
+            flowId,
+          }),
+        );
+      },
+    },
+    {
+      method: "POST",
       pattern: "flows/:flowId/runs",
       auth: "authorize",
       handler: async ({ params, request }) => {
         const flowId = params["flowId"]!;
         const body: unknown = await request.json().catch(() => ({}));
         return triggerFlowRun(flowId, body, "manual");
+      },
+    },
+    {
+      method: "POST",
+      pattern: "wires/:plugName/renew",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json().catch(() => ({}))) as {
+          wireId?: string;
+        };
+        try {
+          const record = await wire(plugName).renew(body.wireId);
+          return Response.json({ wire: record });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          kd("wire", `${plugName}: renew failed:`, message);
+          const status =
+            error instanceof KhotanInternalNotFoundError
+              ? 404
+              : error instanceof KhotanWireRequestError
+                ? 400
+                : 500;
+          return Response.json({ error: message }, { status });
+        }
       },
     },
     {
@@ -2889,7 +3777,12 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const message =
             error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
-          return Response.json({ error: message }, { status: 500 });
+          return Response.json(
+            { error: message },
+            {
+              status: error instanceof KhotanInternalNotFoundError ? 404 : 500,
+            },
+          );
         }
       },
     },
@@ -2980,14 +3873,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         break;
 
       case "authorize":
-        if (authorizeHook) {
+        {
           let allowed = await isCliRequestAuthorized(request, secret);
-          if (!allowed) {
+          if (!allowed && authorizeHook) {
             try {
               allowed = await authorizeHook(request);
             } catch {
               allowed = false;
             }
+          }
+          if (!allowed && authorize === false) {
+            allowed = true;
           }
           if (!allowed) {
             return Response.json(
@@ -3026,6 +3922,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   khotanRuntimeRegistry.set(instanceId, {
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,
@@ -3041,8 +3938,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     handler,
     init,
     flow,
+    reconcileStuckRuns,
     wire,
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,
@@ -3062,11 +3961,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 // toNextJsHandler
 // ---------------------------------------------------------------------------
 
-interface NextJsRequest extends Request {
+export interface NextJsRequest extends Request {
   nextUrl?: URL;
 }
 
-interface NextJsRouteHandlers {
+export interface NextJsRouteHandlers {
   GET: (req: NextJsRequest) => Promise<Response>;
   POST: (req: NextJsRequest) => Promise<Response>;
   PUT: (req: NextJsRequest) => Promise<Response>;

@@ -1,5 +1,26 @@
 # khotan-data
 
+## Unreleased
+
+### Patch Changes
+
+- Flow runs now finalize reliably from returned workflow `FlowRunResult` values
+  and expose inline `run(ctx)` `ctx.finalize(result)` as a race-idempotent
+  escape hatch. Durable workflow contexts rely on returned `FlowRunResult`
+  values as the production-safe contract. Manual start bodies are persisted as
+  initial run metadata and preserved unless the final result explicitly supplies
+  metadata.
+
+## 0.9.2
+
+### Patch Changes
+
+- cab03a4: Fix `khotanCache(ctx, …)` and `khotanMappings(ctx)` throwing `Khotan runtime helpers for instance "…" are not registered` inside Vercel Workflow `"use step"` functions in production.
+
+  The factory instance id is now derived deterministically from the config's stable identity (sorted plug/flow/cache/resource names) instead of a per-process `crypto.randomUUID()`. A workflow step runs in a fresh isolate that re-imports the flow module and re-runs `khotan(config)`; deriving the id from config identity means the re-imported module lands on the same runtime-registry key, so cache/mapping helpers resolve across the isolate boundary (the same way plug vars already survive via serialized context).
+
+  Also adds a sole-instance fallback in the registry lookup (resolve to the only registered instance on a miss) and a clearer error when multiple instances are registered and none match.
+
 ## 0.9.0
 
 ### Minor Changes
@@ -134,7 +155,7 @@
 
 - Add `dispose()` to `KhotanInstance` to remove the instance from the module-level runtime registry, preventing unbounded growth in tests, HMR, or multi-instance scenarios.
 
-- Require explicit security posture for `authorize`: omitting the field in production (`NODE_ENV=production`) now throws. In development it warns and defaults to no auth. Pass `authorize: false` to explicitly opt into publicly accessible management routes.
+- Require explicit security posture for `authorize`: omitting the field in production (`NODE_ENV=production`) throws. In current versions, omitting it in development warns and default-denies management routes with `401`; `authorize: false` is an explicit non-production opt-out for publicly accessible management routes.
 
 - Remove dual-casing fallback in `getRunWorkflowId` — only `workflowRunId` (camelCase) is checked, matching Drizzle's mapped column names.
 

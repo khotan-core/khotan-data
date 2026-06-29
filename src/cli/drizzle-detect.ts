@@ -18,6 +18,43 @@ function readDrizzleConfig(projectRoot: string): {
   }
 }
 
+export interface ScaffoldDrizzleConfigResult {
+  status: "created" | "skipped";
+  path: string;
+  schemaDir: string;
+}
+
+export function defaultDrizzleSchemaDir(projectRoot: string): string {
+  return fs.existsSync(path.join(projectRoot, "src", "app"))
+    ? "src/db/schema"
+    : "db/schema";
+}
+
+export function scaffoldDrizzleConfig(
+  projectRoot: string,
+  schemaDir = defaultDrizzleSchemaDir(projectRoot),
+): ScaffoldDrizzleConfigResult {
+  const configPath = path.join(projectRoot, "drizzle.config.ts");
+  if (fs.existsSync(configPath)) {
+    return { status: "skipped", path: configPath, schemaDir };
+  }
+
+  const content =
+    `import { defineConfig } from "drizzle-kit";\n` +
+    `\n` +
+    `export default defineConfig({\n` +
+    `  dialect: "postgresql",\n` +
+    `  schema: "./${schemaDir}/*",\n` +
+    `  out: "./drizzle",\n` +
+    `  dbCredentials: {\n` +
+    `    url: process.env.DATABASE_URL!,\n` +
+    `  },\n` +
+    `});\n`;
+
+  fs.writeFileSync(configPath, content, "utf-8");
+  return { status: "created", path: configPath, schemaDir };
+}
+
 function parseSchemaValue(content: string): string | null {
   const schemaMatch = /schema:\s*["'`]([^"'`]+)["'`]/.exec(content);
   return schemaMatch?.[1] ?? null;

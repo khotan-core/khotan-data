@@ -1,5 +1,5 @@
-import { and, eq, desc, sql, count, inArray } from "drizzle-orm";
-import type { PgDatabase } from "drizzle-orm/pg-core";
+import { and, eq, desc, sql, count, inArray, lte } from "drizzle-orm";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   khotanPlugs,
   khotanResources,
@@ -15,8 +15,18 @@ import {
 import type { FlowType, KhotanAdapter, KhotanRunStatus } from "./types.js";
 import { serializeConnectField, deserializeConnectField } from "./helpers.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
+export type KhotanDrizzleDatabase<
+  TQueryResult extends PgQueryResultHKT = PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown> = Record<string, never>,
+> = Pick<
+  PgDatabase<TQueryResult, TFullSchema>,
+  "select" | "insert" | "update" | "delete" | "execute"
+>;
+
+export function drizzleAdapter<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(db: KhotanDrizzleDatabase<TQueryResult, TFullSchema>): KhotanAdapter {
   return {
     async upsertPlug(plug) {
       const rows = await db
@@ -24,13 +34,13 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .values({
           name: plug.name,
           baseUrl: plug.baseUrl,
-          authType: plug.authType as "bearer" | "basic" | "apiKey" | "custom",
+          authType: plug.authType,
         })
         .onConflictDoUpdate({
           target: khotanPlugs.name,
           set: {
             baseUrl: plug.baseUrl,
-            authType: plug.authType as "bearer" | "basic" | "apiKey" | "custom",
+            authType: plug.authType,
             updatedAt: new Date(),
           },
         })
@@ -244,6 +254,79 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
       };
     },
 
+    async listStuckRuns({ flowId, olderThan, statuses, limit }) {
+      const filters = [
+        inArray(khotanRuns.status, statuses),
+        lte(khotanRuns.startedAt, olderThan),
+      ];
+      if (flowId) {
+        filters.push(eq(khotanRuns.flowId, flowId));
+      }
+
+      return db
+        .select()
+        .from(khotanRuns)
+        .where(and(...filters))
+        .orderBy(khotanRuns.startedAt)
+        .limit(limit);
+    },
+
+    async claimStuckRun({
+      runId,
+      olderThan,
+      fromStatuses,
+      toStatus,
+      completedAt,
+      durationMs,
+      error,
+    }) {
+      const rows = await db
+        .update(khotanRuns)
+        .set({
+          status: toStatus,
+          completedAt,
+          durationMs: durationMs ?? null,
+          failed: toStatus === "failed" ? 1 : 0,
+          error,
+        })
+        .where(
+          and(
+            eq(khotanRuns.id, runId),
+            inArray(khotanRuns.status, fromStatuses),
+            lte(khotanRuns.startedAt, olderThan),
+          ),
+        )
+        .returning({ id: khotanRuns.id });
+      return rows.length > 0;
+    },
+
+    async claimRunTerminal({ runId, fromStatuses, updates }) {
+      const rows = await db
+        .update(khotanRuns)
+        .set({
+          status: updates.status,
+          completedAt: updates.completedAt,
+          durationMs: updates.durationMs,
+          extracted: updates.extracted,
+          transformed: updates.transformed,
+          created: updates.created,
+          updated: updates.updated,
+          deleted: updates.deleted,
+          failed: updates.failed,
+          skipped: updates.skipped,
+          error: updates.error,
+          metadata: updates.metadata,
+        })
+        .where(
+          and(
+            eq(khotanRuns.id, runId),
+            inArray(khotanRuns.status, fromStatuses),
+          ),
+        )
+        .returning({ id: khotanRuns.id });
+      return rows.length > 0;
+    },
+
     async upsertResource(resource) {
       const rows = await db
         .insert(khotanResources)
@@ -425,12 +508,15 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
 
     async upsertMapping(mapping) {
       if (mapping.id) {
+        const mergeRefs = mapping.mergeRefs ?? false;
         const rows = await db
           .update(khotanMappingsTable)
           .set({
             resourceId: mapping.resourceId,
             connectValue: mapping.connectValue,
-            refs: mapping.refs,
+            refs: mergeRefs
+              ? sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`
+              : mapping.refs,
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           })
@@ -447,6 +533,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         )
         .limit(1);
 
+      const mergeRefs = mapping.mergeRefs ?? true;
       const rows = await db
         .insert(khotanMappingsTable)
         .values({
@@ -461,7 +548,9 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
             khotanMappingsTable.connectValue,
           ],
           set: {
-            refs: sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`,
+            refs: mergeRefs
+              ? sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`
+              : mapping.refs,
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           },
@@ -746,6 +835,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           variant: run.variant,
           source: run.source,
           status: run.status as KhotanRunStatus,
+          metadata: run.metadata ?? null,
         })
         .returning({ id: khotanRuns.id });
       return { id: rows[0]!.id };
