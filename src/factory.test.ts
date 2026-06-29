@@ -1609,6 +1609,7 @@ describe("khotan factory", () => {
       }));
       const flowInstance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "stripe",
@@ -1696,6 +1697,7 @@ describe("khotan factory", () => {
       );
       const flowInstance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "stripe",
@@ -2016,6 +2018,7 @@ describe("khotan factory", () => {
 
       const flowInstance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "stripe",
