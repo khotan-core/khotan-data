@@ -205,6 +205,32 @@ export type FlowHook = (
   run: RunSummary,
 ) => void | Promise<void>;
 
+/** Factory-level flow lifecycle hook invoked for every registered flow run that
+ * reaches a terminal state. Hook errors are caught and logged. */
+export type FactoryFlowRunHook = (
+  ctx: FlowHookContext,
+  run: RunSummary,
+) => void | Promise<void>;
+
+export interface WebhookReceivedContext {
+  plug: {
+    id: string | null;
+    name: string;
+  };
+  wireId: string | null;
+  eventType: string;
+  event: Record<string, unknown>;
+  headers: Record<string, string>;
+  receivedAt: Date;
+  rawBody: string;
+}
+
+/** Factory-level webhook hook invoked once a webhook has passed verification
+ * and been parsed. Hook errors are caught and logged. */
+export type WebhookReceivedHook = (
+  ctx: WebhookReceivedContext,
+) => void | Promise<void>;
+
 /** A named run mode for a flow. The variant name *is* the mode — flow code
  *  branches on `ctx.variant`. Each variant may carry its own `schedule` and
  *  terminal-state hooks. */
@@ -625,6 +651,26 @@ export interface KhotanAdapter {
     limit: number;
     offset: number;
   }): Promise<{ items: Record<string, unknown>[]; hasMore: boolean }>;
+  listStuckRuns?(params: {
+    flowId?: string | null;
+    olderThan: Date;
+    statuses: ("pending" | "running")[];
+    limit: number;
+  }): Promise<Record<string, unknown>[]>;
+  claimStuckRun?(params: {
+    runId: string;
+    olderThan: Date;
+    fromStatuses: ("pending" | "running")[];
+    toStatus: KhotanTerminalRunStatus;
+    completedAt: Date;
+    durationMs?: number | null;
+    error: string;
+  }): Promise<boolean>;
+  claimRunTerminal?(params: {
+    runId: string;
+    fromStatuses: ("pending" | "running")[];
+    updates: KhotanTerminalRunUpdate;
+  }): Promise<boolean>;
 
   upsertResource(resource: {
     name: string;
@@ -835,6 +881,12 @@ export interface KhotanConfig {
    * See {@link KhotanAuthorize}.
    */
   authorize?: KhotanAuthorize | false;
+  /** Invoked after any registered flow run completes successfully. */
+  onFlowRunComplete?: FactoryFlowRunHook;
+  /** Invoked after any registered flow run ends failed, partial, or cancelled. */
+  onFlowRunFailed?: FactoryFlowRunHook;
+  /** Invoked after an inbound webhook passes verification and is accepted. */
+  onWebhookReceived?: WebhookReceivedHook;
 }
 
 export type KhotanHandler = (request: Request) => Promise<Response>;
@@ -861,6 +913,61 @@ export interface FlowSelectorOptions {
 
 export interface FlowInstance<TBody = unknown> {
   start(options?: FlowStartOptions<TBody>): Promise<Record<string, unknown>>;
+  reconcileStuck(
+    options?: Omit<StuckRunReconcileOptions, "flowId">,
+  ): Promise<StuckRunReconcileResult>;
+}
+
+export interface StuckRunReconcileOptions {
+  flowId?: string;
+  olderThanMs?: number;
+  limit?: number;
+  statuses?: ("pending" | "running")[];
+  status?: Extract<KhotanTerminalRunStatus, "failed" | "cancelled">;
+  error?: string;
+  dryRun?: boolean;
+  now?: Date;
+}
+
+export interface StuckRunReconcileItem {
+  id: string;
+  flowId: string | null;
+  workflowRunId: string | null;
+  variant: string;
+  source: RunSource;
+  previousStatus: KhotanRunStatus;
+  status: KhotanTerminalRunStatus;
+  startedAt: Date | null;
+  completedAt: Date;
+  durationMs: number | null;
+  error: string;
+  dryRun: boolean;
+  reconciled: boolean;
+}
+
+export interface StuckRunReconcileResult {
+  ok: true;
+  dryRun: boolean;
+  checked: number;
+  reconciled: number;
+  skipped: number;
+  olderThan: string;
+  items: StuckRunReconcileItem[];
+}
+
+export interface KhotanTerminalRunUpdate {
+  status: KhotanTerminalRunStatus;
+  completedAt: Date;
+  durationMs?: number;
+  extracted?: number;
+  transformed?: number;
+  created?: number;
+  updated?: number;
+  deleted?: number;
+  failed?: number;
+  skipped?: number;
+  error?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface KhotanInstance {
@@ -870,6 +977,9 @@ export interface KhotanInstance {
     flowNameOrId: string,
     options?: FlowSelectorOptions,
   ): FlowInstance<TBody>;
+  reconcileStuckRuns(
+    options?: StuckRunReconcileOptions,
+  ): Promise<StuckRunReconcileResult>;
   wire(plugName: string): WireInstance;
   cache(cacheName: string): CacheInstance;
   mapping(resourceName: string): MappingInstance;

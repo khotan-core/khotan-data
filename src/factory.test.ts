@@ -2481,6 +2481,53 @@ describe("khotan factory", () => {
       ).resolves.toEqual({ seen: true });
     });
 
+    it("fires onWebhookReceived after verification accepts an inbound webhook", async () => {
+      const onWebhookReceived = vi.fn();
+      const webhookInstance = khotan({
+        adapter,
+        onWebhookReceived,
+        authorize: false,
+        plugs: [
+          {
+            name: "pollinate",
+            plug: {
+              baseUrl: "https://api.pollinate.tech",
+              authType: "custom",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["order.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "remote-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onVerify: vi.fn(async () => true),
+              },
+            ],
+          },
+        ],
+      });
+
+      const response = await webhookInstance.handler(
+        makeRequest("/api/khotan/webhook/pollinate", "POST", {
+          type: "order.created",
+          id: "evt-1",
+        }),
+      );
+
+      expect(response.status).toBe(202);
+      expect(onWebhookReceived).toHaveBeenCalledTimes(1);
+      expect(onWebhookReceived.mock.calls[0]![0]).toMatchObject({
+        plug: { name: "pollinate" },
+        wireId: "wire-1",
+        eventType: "order.created",
+        event: { type: "order.created", id: "evt-1" },
+      });
+    });
+
     it("creates and deletes manual wires without subscription hooks", async () => {
       const instance = khotan({
         adapter,
@@ -3242,6 +3289,163 @@ describe("khotan factory", () => {
         status: "cancelled",
         error: "Cancelled",
       });
+    });
+
+    it("does not overwrite a manually cancelled workflow run when the workflow later settles", async () => {
+      const cancel = vi.fn(async () => undefined);
+      const workflow = vi.fn(async () => undefined);
+      let resolveWorkflow!: (value: unknown) => void;
+      const returnValue = new Promise<unknown>((resolve) => {
+        resolveWorkflow = resolve;
+      });
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue,
+        })),
+      );
+      __setWorkflowGetRunForTests(vi.fn(() => ({ cancel })));
+      const onFlowRunComplete = vi.fn();
+      const onFlowRunFailed = vi.fn();
+
+      const flowInstance = khotan({
+        adapter,
+        authorize: false,
+        onFlowRunComplete,
+        onFlowRunFailed,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+      await flowInstance.handler(
+        makeRequest("/api/khotan/runs/run-1/cancel", "POST"),
+      );
+
+      resolveWorkflow({ updated: 9 });
+      await returnValue;
+      await waitForBackgroundTasks();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "cancelled",
+        error: "Cancelled",
+        updated: 0,
+      });
+      expect(onFlowRunFailed).toHaveBeenCalledTimes(1);
+      expect(onFlowRunFailed.mock.calls[0]![1]).toMatchObject({
+        id: "run-1",
+        status: "cancelled",
+        error: "Cancelled",
+      });
+      expect(onFlowRunComplete).not.toHaveBeenCalled();
+      expect(adapter.updateRun).not.toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({ status: "completed" }),
+      );
+    });
+
+    it("does not overwrite a reconciled stuck workflow run when the workflow later settles", async () => {
+      const workflow = vi.fn(async () => undefined);
+      let resolveWorkflow!: (value: unknown) => void;
+      const returnValue = new Promise<unknown>((resolve) => {
+        resolveWorkflow = resolve;
+      });
+      __setWorkflowStartForTests(
+        vi.fn(async () => ({
+          runId: "workflow-run-1",
+          returnValue,
+        })),
+      );
+      const onFlowRunComplete = vi.fn();
+      const onFlowRunFailed = vi.fn();
+
+      const flowInstance = khotan({
+        adapter,
+        authorize: false,
+        onFlowRunComplete,
+        onFlowRunFailed,
+        plugs: [
+          {
+            name: "stripe",
+            plug: {
+              baseUrl: "https://api.stripe.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            flows: [{ name: "products", type: "inflow", workflow }],
+          },
+        ],
+      });
+
+      await flowInstance.init();
+      await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST"),
+      );
+      const run = await adapter.getRun("run-1");
+      expect(run).not.toBeNull();
+      run!["startedAt"] = new Date(Date.now() - 60 * 60_000);
+
+      const result = await flowInstance.reconcileStuckRuns({
+        olderThanMs: 10 * 60_000,
+        error: "stale worker",
+      });
+      expect(result).toMatchObject({
+        checked: 1,
+        reconciled: 1,
+        skipped: 0,
+      });
+
+      resolveWorkflow({ updated: 9 });
+      await returnValue;
+      await waitForBackgroundTasks();
+
+      const runsRes = await flowInstance.handler(
+        makeRequest("/api/khotan/flows/flow-1/runs"),
+      );
+      const runs = (await runsRes.json()) as Array<Record<string, unknown>>;
+      expect(runs[0]).toMatchObject({
+        id: "run-1",
+        status: "failed",
+        error: "stale worker",
+        failed: 1,
+        updated: 0,
+      });
+      expect(onFlowRunFailed).toHaveBeenCalledTimes(1);
+      expect(onFlowRunFailed.mock.calls[0]![1]).toMatchObject({
+        id: "run-1",
+        status: "failed",
+        error: "stale worker",
+      });
+      expect(onFlowRunComplete).not.toHaveBeenCalled();
+      expect(adapter.updateRun).not.toHaveBeenCalledWith(
+        "run-1",
+        expect.objectContaining({ status: "completed" }),
+      );
     });
 
     it("POST /api/khotan/flows/:id/runs reconciles cancelled workflow runs", async () => {
@@ -4301,6 +4505,7 @@ describe("khotan factory", () => {
     it("flow run contexts expose mapping(resource) helpers", async () => {
       const flowInstance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "shopify",

@@ -10,6 +10,7 @@ const libraryEntries = {
   factory: "src/factory.ts",
   next: "src/next.ts",
   "plug-client": "src/plug-client.ts",
+  retry: "src/retry.ts",
   bootstrap: "src/bootstrap.ts",
 };
 
