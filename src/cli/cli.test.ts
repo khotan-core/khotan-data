@@ -2323,10 +2323,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.existsSync(wirePath)).toBe(true);
 
       const content = fs.readFileSync(wirePath, "utf-8");
-      expect(content).toContain("export function wire");
+      // The scaffold re-exports the real builder/types from khotan-data
+      // instead of redeclaring them locally (PR 10).
+      expect(content).toContain("export { wire");
+      expect(content).toContain('from "khotan-data/factory"');
       expect(content).toContain("// Usage Example");
-      expect(content).not.toContain('from "khotan-data"');
-      expect(content).not.toContain("from 'khotan-data'");
     });
 
     it("wire requires plug and schema", () => {
