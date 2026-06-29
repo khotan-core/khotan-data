@@ -9,6 +9,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { ensureWorkflowNextConfig } from "./next-config.js";
 
 const CLI_PATH = path.resolve(__dirname, "../../dist/cli.js");
 
@@ -23,6 +24,7 @@ function run(
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout,
+      env: { ...process.env, KHOTAN_SKIP_INSTALL: "1" },
     });
     return { output: stdout, exitCode: 0 };
   } catch (error: unknown) {
@@ -47,6 +49,7 @@ function runAsync(
         cwd,
         encoding: "utf-8",
         timeout,
+        env: { ...process.env, KHOTAN_SKIP_INSTALL: "1" },
       },
       (error, stdout, stderr) => {
         const exitCode =
@@ -75,6 +78,42 @@ function writePkgJson(
   );
 }
 
+function parseCliJson(output: string): Record<string, unknown> {
+  return JSON.parse(output) as Record<string, unknown>;
+}
+
+function installFakeNpm(cwd: string): () => void {
+  const originalPath = process.env.PATH;
+  const binDir = path.join(cwd, "fake-bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(binDir, "npm"),
+    [
+      "#!/usr/bin/env node",
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const args = process.argv.slice(2);",
+      'fs.appendFileSync(path.join(process.cwd(), "npm-args.log"), `${args.join(" ")}\\n`);',
+      'if (args[0] === "install") {',
+      '  const isDev = args.includes("--save-dev") || args.includes("-D") || args.includes("-d");',
+      '  const packages = args.slice(1).filter((arg) => !arg.startsWith("-"));',
+      '  const pkgPath = path.join(process.cwd(), "package.json");',
+      '  const pkg = fs.existsSync(pkgPath) ? JSON.parse(fs.readFileSync(pkgPath, "utf-8")) : {};',
+      '  const key = isDev ? "devDependencies" : "dependencies";',
+      "  pkg[key] = pkg[key] || {};",
+      '  for (const name of packages) pkg[key][name] = "0.0.0-test";',
+      "  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));",
+      "}",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+  return () => {
+    process.env.PATH = originalPath;
+  };
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -96,12 +135,15 @@ function sendJson(
 
 describe("CLI", { timeout: 30_000 }, () => {
   let tmpDir: string;
+  let restorePath: (() => void) | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "khotan-cli-test-"));
+    restorePath = undefined;
   });
 
   afterEach(() => {
+    restorePath?.();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -181,6 +223,41 @@ describe("CLI", { timeout: 30_000 }, () => {
       ).toBe(true);
     });
 
+    it("creates .env.template with khotan environment variables", () => {
+      const result = run("init", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created .env.template");
+
+      const content = fs.readFileSync(
+        path.join(tmpDir, ".env.template"),
+        "utf-8",
+      );
+      expect(content).toContain("DATABASE_URL=");
+      expect(content).toContain("KHOTAN_SECRET=");
+      expect(content).toContain("openssl rand -hex 32");
+      expect(content).toContain("KHOTAN_DEBUG=1");
+      expect(content).toContain("KHOTAN_WEBHOOK_URL=");
+      expect(content).toContain("CRON_SECRET=");
+    });
+
+    it("appends missing khotan variables to existing .env.template", () => {
+      fs.writeFileSync(
+        path.join(tmpDir, ".env.template"),
+        "DATABASE_URL=postgres://existing\n",
+      );
+      const result = run("init", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Updated .env.template");
+
+      const content = fs.readFileSync(
+        path.join(tmpDir, ".env.template"),
+        "utf-8",
+      );
+      expect(content.match(/^DATABASE_URL=/gm)).toHaveLength(1);
+      expect(content).toContain("KHOTAN_SECRET=");
+      expect(content).toContain("CRON_SECRET=");
+    });
+
     it("never overwrites existing khotan.ts or route.ts", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       run("init", tmpDir);
@@ -234,6 +311,165 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("cannot be combined");
     });
+
+    it("supports init --schema", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(
+        tmpDir,
+        {
+          "drizzle-orm": "^0.35.0",
+          "khotan-data": "^0.0.1",
+        },
+        { "drizzle-kit": "^0.25.0" },
+      );
+      const result = run("init --schema --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Adding khotan Drizzle schema");
+      expect(
+        fs.existsSync(path.join(tmpDir, "db", "schema", "khotan.ts")),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "drizzle.config.ts"))).toBe(true);
+    });
+
+    it("installs drizzle-kit as a dev dependency for init --schema", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        "khotan-data": "^0.0.1",
+      });
+      restorePath = installFakeNpm(tmpDir);
+
+      const result = run("init --schema --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Installing drizzle-kit (dev)");
+
+      const pkg = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"),
+      ) as { devDependencies?: Record<string, string> };
+      expect(pkg.devDependencies?.["drizzle-kit"]).toBe("0.0.0-test");
+      expect(fs.existsSync(path.join(tmpDir, "drizzle.config.ts"))).toBe(true);
+    });
+  });
+
+  describe("ops/devx commands", () => {
+    it("loads --env-file and asserts the expected org", () => {
+      fs.writeFileSync(
+        path.join(tmpDir, ".env.khotan"),
+        "KHOTAN_ORG_ID=org_123\n",
+      );
+
+      const result = run(
+        "--env-file .env.khotan whoami --assert-org org_123",
+        tmpDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        organizationId: "org_123",
+        assertedOrganizationId: "org_123",
+      });
+    });
+
+    it("fails whoami when the resolved org does not match --assert-org", () => {
+      const result = run(
+        "whoami --org-id org_actual --assert-org org_expected",
+        tmpDir,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: false,
+        error: "org_mismatch",
+      });
+    });
+
+    it("stores local database bindings and prepares app env metadata", () => {
+      const bind = run(
+        "databases bind primary neon/project/db --url-env PRIMARY_DATABASE_URL",
+        tmpDir,
+      );
+      expect(bind.exitCode).toBe(0);
+      expect(parseCliJson(bind.output)).toMatchObject({
+        ok: true,
+        binding: {
+          alias: "primary",
+          id: "neon/project/db",
+          urlEnv: "PRIMARY_DATABASE_URL",
+        },
+      });
+
+      const prepare = run(
+        "apps env prepare web --database primary --key DATABASE_URL",
+        tmpDir,
+      );
+      expect(prepare.exitCode).toBe(0);
+      expect(parseCliJson(prepare.output)).toMatchObject({
+        ok: true,
+        binding: {
+          app: "web",
+          envKey: "DATABASE_URL",
+          databaseAlias: "primary",
+          databaseId: "neon/project/db",
+        },
+      });
+
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "khotan.bindings.json"), "utf-8"),
+      ) as {
+        databases: Record<string, unknown>;
+        apps: Record<string, { env: Record<string, unknown> }>;
+      };
+      expect(registry.databases["primary"]).toMatchObject({
+        id: "neon/project/db",
+      });
+      expect(registry.apps["web"]?.env["DATABASE_URL"]).toMatchObject({
+        databaseAlias: "primary",
+      });
+    });
+
+    it("bootstraps config, khotan instance, and route files without package installs", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+
+      const result = run("bootstrap", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        outputDir: "src/khotan",
+      });
+      expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            tmpDir,
+            "src",
+            "app",
+            "api",
+            "khotan",
+            "[...all]",
+            "route.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "package.json"))).toBe(false);
+    });
+
+    it("bootstraps empty projects with the shared outputDir default", () => {
+      const result = run("bootstrap", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        outputDir: "src/khotan",
+      });
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
+    });
   });
 
   describe("add", () => {
@@ -274,6 +510,70 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(true);
     });
 
+    it("installs drizzle-kit when add schema scaffolds config after init", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        "khotan-data": "^0.0.1",
+      });
+      restorePath = installFakeNpm(tmpDir);
+
+      const result = run("add schema --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("No khotan.config.ts found");
+      expect(result.output).toContain("Installing drizzle-kit (dev)");
+      expect(fs.existsSync(path.join(tmpDir, "drizzle.config.ts"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "db", "schema", "khotan.ts")),
+      ).toBe(true);
+
+      const pkg = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"),
+      ) as { devDependencies?: Record<string, string> };
+      expect(pkg.devDependencies?.["drizzle-kit"]).toBe("0.0.0-test");
+    });
+
+    it("scaffolds Better Auth and wires khotan authorize", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "better-auth": "^1.0.0",
+        "khotan-data": "^0.0.1",
+      });
+      run("init", tmpDir);
+
+      const result = run("add auth --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 2 files");
+      expect(result.output).toContain("Wired authorize hook");
+
+      const authPath = path.join(tmpDir, "src", "lib", "auth.ts");
+      const authRoutePath = path.join(
+        tmpDir,
+        "src",
+        "app",
+        "api",
+        "auth",
+        "[...all]",
+        "route.ts",
+      );
+      const khotanPath = path.join(tmpDir, "src", "khotan", "khotan.ts");
+
+      expect(fs.existsSync(authPath)).toBe(true);
+      expect(fs.existsSync(authRoutePath)).toBe(true);
+
+      const authContent = fs.readFileSync(authPath, "utf-8");
+      expect(authContent).toContain("betterAuth");
+      expect(authContent).toContain("genericOAuth");
+      expect(authContent).toContain("oAuthProxy");
+      expect(authContent).toContain("authorizeKhotanRequest");
+
+      const khotanContent = fs.readFileSync(khotanPath, "utf-8");
+      expect(khotanContent).toContain(
+        'import { authorizeKhotanRequest } from "@/lib/auth";',
+      );
+      expect(khotanContent).toContain("authorize: authorizeKhotanRequest");
+    });
+
     it("creates khotan.ts schema at detected Drizzle schema dir", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
@@ -302,7 +602,11 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("creates cache templates under caches", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      writePkgJson(
+        tmpDir,
+        { "drizzle-orm": "^0.35.0" },
+        { "drizzle-kit": "^0.25.0" },
+      );
       run("init", tmpDir);
 
       const result = run("add cache --yes", tmpDir);
@@ -331,11 +635,15 @@ describe("CLI", { timeout: 30_000 }, () => {
       "creates %s flow template under flows",
       (component) => {
         fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-        writePkgJson(tmpDir, {
-          "drizzle-orm": "^0.35.0",
-          workflow: "^4.0.0",
-          zod: "^3.22.0",
-        });
+        writePkgJson(
+          tmpDir,
+          {
+            "drizzle-orm": "^0.35.0",
+            workflow: "^4.0.0",
+            zod: "^3.22.0",
+          },
+          { "drizzle-kit": "^0.25.0" },
+        );
         run("init", tmpDir);
         const result = run(`add ${component} --yes`, tmpDir, 90_000);
         expect(result.exitCode).toBe(0);
@@ -365,15 +673,147 @@ describe("CLI", { timeout: 30_000 }, () => {
       90_000,
     );
 
-    it("creates khotan.ts schema at outputDir when no drizzle config", () => {
+    it("creates ingest helper, example handler, and internal route", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      run("init", tmpDir);
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const helperPath = path.join(tmpDir, "khotan", "ingests", "ingest.ts");
+      const examplePath = path.join(
+        tmpDir,
+        "khotan",
+        "ingests",
+        "ingest.example.ts",
+      );
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+
+      expect(fs.existsSync(helperPath)).toBe(true);
+      expect(fs.existsSync(examplePath)).toBe(true);
+      expect(fs.existsSync(routePath)).toBe(true);
+
+      expect(fs.readFileSync(helperPath, "utf-8")).toContain(
+        'from "khotan-data/factory"',
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "idempotencyStore",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "unresolved_intake",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "upsertProviderRef",
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        'from "@/khotan/ingests/ingest.example"',
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        "packiyoInventoryIngest.POST",
+      );
+    });
+
+    it("uses configured outputDir in the generated ingest route import", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "khotan.config.ts"),
+        `export default { outputDir: "lib/custom" };`,
+      );
+
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+      const routeContent = fs.readFileSync(routePath, "utf-8");
+
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "lib", "custom", "ingests", "ingest.example.ts"),
+        ),
+      ).toBe(true);
+      expect(routeContent).toContain(
+        'from "@/lib/custom/ingests/ingest.example"',
+      );
+      expect(routeContent).not.toContain("@/khotan/ingests/ingest.example");
+    });
+
+    it("scaffolds drizzle.config.ts and schema directory when no drizzle config exists", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
       run("init", tmpDir);
       const result = run("add schema --force", tmpDir);
       expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created drizzle.config.ts");
 
-      const schemaPath = path.join(tmpDir, "khotan", "khotan.ts");
+      const schemaPath = path.join(tmpDir, "db", "schema", "khotan.ts");
       expect(fs.existsSync(schemaPath)).toBe(true);
+
+      const drizzleConfig = fs.readFileSync(
+        path.join(tmpDir, "drizzle.config.ts"),
+        "utf-8",
+      );
+      expect(drizzleConfig).toContain('schema: "./db/schema/*"');
+    });
+
+    it("adds the Vercel cron dispatcher", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      run("init", tmpDir);
+      const result = run("add cron", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("cron dispatcher");
+
+      const vercel = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "vercel.json"), "utf-8"),
+      ) as { crons: Array<{ path: string; schedule: string }> };
+      expect(vercel.crons).toEqual([
+        { path: "/api/khotan/cron", schedule: "* * * * *" },
+      ]);
+    });
+
+    it("appends the Vercel cron dispatcher to existing vercel.json", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "vercel.json"),
+        JSON.stringify({ regions: ["syd1"], crons: [] }, null, 2),
+      );
+      run("init", tmpDir);
+      const result = run("add cron", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Updated vercel.json");
+
+      const vercel = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "vercel.json"), "utf-8"),
+      ) as { regions: string[]; crons: Array<{ path: string }> };
+      expect(vercel.regions).toEqual(["syd1"]);
+      expect(vercel.crons).toContainEqual({
+        path: "/api/khotan/cron",
+        schedule: "* * * * *",
+      });
     });
 
     it("prints Drizzle re-export hint when no barrel file exists", () => {
@@ -393,7 +833,11 @@ describe("CLI", { timeout: 30_000 }, () => {
     it("auto-updates barrel and drizzle config with --yes", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, "db"), { recursive: true });
-      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      writePkgJson(
+        tmpDir,
+        { "drizzle-orm": "^0.35.0" },
+        { "drizzle-kit": "^0.25.0" },
+      );
       fs.writeFileSync(
         path.join(tmpDir, "drizzle.config.ts"),
         `export default { schema: "./db/schema.ts" };`,
@@ -475,7 +919,11 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("skips drizzle config update when schema is already a glob", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-      writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
+      writePkgJson(
+        tmpDir,
+        { "drizzle-orm": "^0.35.0" },
+        { "drizzle-kit": "^0.25.0" },
+      );
       fs.writeFileSync(
         path.join(tmpDir, "drizzle.config.ts"),
         `export default { schema: "./db/schema/*" };`,
@@ -1208,12 +1656,77 @@ describe("CLI", { timeout: 30_000 }, () => {
   });
 
   describe("workflow integration scaffolding", () => {
+    it("appends khotan-data to single-line serverExternalPackages arrays", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        [
+          "const nextConfig = {",
+          '  serverExternalPackages: ["sharp",],',
+          "};",
+          "",
+          "export default nextConfig;",
+          "",
+        ].join("\n"),
+      );
+
+      const result = ensureWorkflowNextConfig(tmpDir);
+      expect(result.status).toBe("updated");
+
+      const content = fs.readFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        "utf-8",
+      );
+      expect(content).toContain(
+        'serverExternalPackages: ["sharp", "khotan-data"]',
+      );
+      expect(content).not.toContain(",,");
+    });
+
+    it("appends khotan-data to multiline serverExternalPackages arrays", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        [
+          "const nextConfig = {",
+          "  serverExternalPackages: [",
+          '    "sharp",',
+          "  ],",
+          "};",
+          "",
+          "export default nextConfig;",
+          "",
+        ].join("\n"),
+      );
+
+      const result = ensureWorkflowNextConfig(tmpDir);
+      expect(result.status).toBe("updated");
+
+      const content = fs.readFileSync(
+        path.join(tmpDir, "next.config.ts"),
+        "utf-8",
+      );
+      expect(content).toContain(
+        [
+          "serverExternalPackages: [",
+          '    "sharp",',
+          '    "khotan-data",',
+          "  ]",
+        ].join("\n"),
+      );
+      expect(content).not.toContain(",,");
+    });
+
     it("updates existing next.config.ts when adding catch", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-      writePkgJson(tmpDir, {
-        "drizzle-orm": "^0.35.0",
-        workflow: "^4.0.0",
-      });
+      writePkgJson(
+        tmpDir,
+        {
+          "drizzle-orm": "^0.35.0",
+          workflow: "^4.0.0",
+        },
+        { "drizzle-kit": "^0.25.0" },
+      );
       fs.writeFileSync(
         path.join(tmpDir, "next.config.ts"),
         [
@@ -1241,6 +1754,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(content).toContain(
         'import { withWorkflow } from "workflow/next";',
       );
+      expect(content).toContain('serverExternalPackages: ["khotan-data"]');
       expect(content).toContain("export default withWorkflow(nextConfig);");
       expect(
         fs.existsSync(
@@ -1251,10 +1765,14 @@ describe("CLI", { timeout: 30_000 }, () => {
 
     it("creates next.config.ts when adding pass to a project without one", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
-      writePkgJson(tmpDir, {
-        "drizzle-orm": "^0.35.0",
-        workflow: "^4.0.0",
-      });
+      writePkgJson(
+        tmpDir,
+        {
+          "drizzle-orm": "^0.35.0",
+          workflow: "^4.0.0",
+        },
+        { "drizzle-kit": "^0.25.0" },
+      );
 
       run("init", tmpDir);
       const result = run("add pass --yes", tmpDir);
@@ -1271,6 +1789,7 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(content).toContain(
         'import { withWorkflow } from "workflow/next";',
       );
+      expect(content).toContain('serverExternalPackages: ["khotan-data"]');
       expect(content).toContain("export default withWorkflow(nextConfig);");
       expect(
         fs.existsSync(
@@ -1514,6 +2033,45 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const content = fs.readFileSync(routePath, "utf-8");
       expect(content).toContain("PATCH");
+      expect(content).toContain(
+        'import { toNextJsHandler } from "khotan-data/factory"',
+      );
+      expect(content).toContain(
+        'import khotanData from "../../../../khotan/khotan"',
+      );
+      expect(content).toContain(
+        "export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(",
+      );
+      expect(content).not.toContain("khotan-data/next");
+      expect(content).not.toContain("@/khotan/khotan");
+    });
+
+    it("route template exposes PATCH method with a custom outputDir", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "khotan.config.ts"),
+        'export default { outputDir: "lib/custom" };',
+      );
+      run("init", tmpDir);
+
+      expect(
+        fs.existsSync(path.join(tmpDir, "lib", "custom", "khotan.ts")),
+      ).toBe(true);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "khotan",
+        "[...all]",
+        "route.ts",
+      );
+      const content = fs.readFileSync(routePath, "utf-8");
+      expect(content).toContain(
+        'import khotanData from "../../../../lib/custom/khotan"',
+      );
+      expect(content).not.toContain("khotan-data/next");
+      expect(content).not.toContain("@/khotan/khotan");
     });
 
     it("hub.tsx uses PATCH for flow toggles", () => {
@@ -1779,15 +2337,17 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("add schema", tmpDir);
       expect(result.output).toContain("Missing npm packages");
       expect(result.output).toContain("drizzle-orm");
+      expect(result.output).toContain("drizzle-kit");
       expect(result.output).toContain("Skipping dependency install");
     });
 
-    it("does not show missing packages when drizzle-orm is present", () => {
+    it("does not show missing packages when drizzle packages are present", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       fs.writeFileSync(
         path.join(tmpDir, "package.json"),
         JSON.stringify({
           dependencies: { "drizzle-orm": "^0.35.0" },
+          devDependencies: { "drizzle-kit": "^0.25.0" },
         }),
       );
       run("init", tmpDir);
@@ -1814,6 +2374,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "package.json"),
         JSON.stringify({
           dependencies: { "drizzle-orm": "^0.35.0" },
+          devDependencies: { "drizzle-kit": "^0.25.0" },
         }),
       );
       fs.writeFileSync(
@@ -2154,10 +2715,11 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.existsSync(wirePath)).toBe(true);
 
       const content = fs.readFileSync(wirePath, "utf-8");
-      expect(content).toContain("export function wire");
+      // The scaffold re-exports the real builder/types from khotan-data
+      // instead of redeclaring them locally (PR 10).
+      expect(content).toContain("export { wire");
+      expect(content).toContain('from "khotan-data/factory"');
       expect(content).toContain("// Usage Example");
-      expect(content).not.toContain('from "khotan-data"');
-      expect(content).not.toContain("from 'khotan-data'");
     });
 
     it("wire requires plug and schema", () => {

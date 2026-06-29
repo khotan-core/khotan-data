@@ -23,16 +23,21 @@ npx khotan init
 # Full setup (drizzle + shadcn + config in one go)
 npx khotan init --full
 
+# Initialize and scaffold khotan Drizzle tables
+npx khotan init --schema --yes
+
 # Skills only (install agent skills; skip config + core files + package install)
 npx khotan init --skills-only
 
 # Add components (reusable building blocks — never create pages)
 npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
+npx khotan add auth      # Better Auth setup + khotan authorize hook
 npx khotan add cache     # Durable key/value caches for workflows and relays
 npx khotan add plug      # Fetch wrapper with auth, retry, pagination
 npx khotan add inflow    # Workflow-backed flow for pulling data in
 npx khotan add outflow   # Workflow-backed flow for pushing data out
 npx khotan add relay     # Workflow-backed flow for moving data between plugs
+npx khotan add cron      # Vercel cron dispatcher for scheduled flows
 npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
 
 # Add blocks (sample pages composed from components)
@@ -42,14 +47,26 @@ npx khotan add config-page-1   # /config page that renders the KhotanHub dashboa
 npx khotan add schema --force   # Overwrite existing files without prompting
 npx khotan add hub --yes        # Non-interactive mode: auto-accept all prompts
 npx khotan generate --force     # Regenerate schema (prompts before overwriting by default)
+
+# Ops guardrails
+npx khotan --env-file .env.customer whoami --assert-org org_123
+npx khotan databases bind primary neon/project/db --url-env DATABASE_URL
+npx khotan apps env prepare web --database primary
+npx khotan bootstrap            # Config + route bootstrap without package installs
 ```
+
+`whoami` resolves the current organization from `--org-id`, `KHOTAN_ORG_ID`, or
+an explicit `--env-file`, then fails fast when `--assert-org` does not match.
+Database and app env commands write `khotan.bindings.json` only; they do not
+call provider APIs or synthesize database URLs. Use the recorded `databaseId`
+with your platform-specific deployment tooling.
 
 ## Factory (Runtime Engine)
 
 Register plugs, caches, flows, and resources — the factory upserts them on boot and serves a REST API:
 
 ```typescript
-import { khotan, drizzleAdapter, toNextJsHandler } from "khotan-data/factory";
+import { khotan, drizzleAdapter } from "khotan-data/factory";
 import { db } from "@/db";
 import { shopifyPlug } from "@/lib/khotan/plugs/shopify";
 import { shopifyProductsInflow } from "@/lib/khotan/flows/shopify-products";
@@ -79,10 +96,26 @@ const khotanData = khotan({
   ],
 });
 
-// Next.js App Router: app/api/khotan/[...all]/route.ts
-export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler);
+export default khotanData;
+```
 
-// Start a flow through Khotan so run tracking + Workflow IDs are recorded
+`khotan init` also generates the catch-all route with `toNextJsHandler` and a relative import back to that instance:
+
+```typescript
+// Next.js App Router: app/api/khotan/[...all]/route.ts
+import { toNextJsHandler } from "khotan-data/factory";
+import khotanData from "../../../../khotan/khotan";
+
+export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(
+  khotanData.handler,
+);
+```
+
+`khotan-data/next` remains available as a compatibility helper for projects that expose the standard `@/khotan/khotan` instance, but generated routes use direct imports so custom output directories keep working.
+
+Start a flow through Khotan so run tracking and Workflow IDs are recorded:
+
+```typescript
 await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
   variant: "delta",
 });
@@ -129,12 +162,27 @@ await khotanData.flow("products-inflow").reconcileStuck({
 // POST /api/khotan/flows/{flowId}/runs/reconcile-stuck
 ```
 
+### Transaction Boundary
+
+`drizzleAdapter(db)` expects a normal Drizzle database handle for Khotan's own
+metadata writes. Khotan does not open `db.transaction()` internally, and
+generated starter code should not wrap Khotan factory boot, route handlers, or
+workflow-run bookkeeping inside an application transaction. Keep user-domain
+transactions around your own reads/writes; call Khotan flow starts, mapping
+updates, cache writes, and run tracking at the boundary after those transactions
+commit, or make those operations idempotent if they are coordinated externally.
+
 ## Security
 
 The management API (`/api/khotan/*`) exposes plug credentials and operational
-controls. It is **public unless you gate it**. Pass an `authorize` hook — it
-receives the raw `Request` and returns `true`/`false`, so it composes directly
-with session libraries like better-auth:
+controls. It is deny-by-default unless you wire an `authorize` hook. Omitting
+`authorize` rejects management requests with `401` in development and throws at
+startup in production. `authorize: false` explicitly opens management routes for
+local development only and is rejected in production.
+
+Run `npx khotan add auth` to scaffold a Better Auth setup and wire the hook, or
+pass your own function. The hook receives the raw `Request` and returns
+`true`/`false`, so it composes directly with session libraries like better-auth:
 
 ```typescript
 authorize: async (request) => {
@@ -156,6 +204,9 @@ authorize: async (request) => {
   exempt from `authorize` automatically.
 - `KHOTAN_DEBUG` is force-disabled when `NODE_ENV=production`. The cron route
   fails closed in production when `CRON_SECRET` is unset.
+- `npx khotan init` creates or appends `.env.template` with the khotan
+  environment variables. Generate `KHOTAN_SECRET` and `CRON_SECRET` with
+  `openssl rand -hex 32`.
 - Protect the Hub dashboard page (e.g. `/config`) with your app's middleware —
   `authorize` only guards the API.
 
@@ -212,6 +263,100 @@ async function shopifyProductsWorkflow(ctx: InflowContext) {
   "use workflow";
   return syncProducts(ctx);
 }
+```
+
+Return a `FlowRunResult` from the workflow or from the final `"use step"` call.
+Khotan observes the workflow return value and finalizes `khotan_runs` and
+`khotan_flows` automatically, including counters, duration, `partial` status
+when failures are non-zero, error text, and metadata. This returned
+`FlowRunResult` is the production-safe contract for durable workflows because
+hosted workflow contexts may be serialized and rehydrated. Inline `run(ctx)`
+handlers also expose `ctx.finalize(result)` as an explicit escape hatch when
+returning a final result is not practical.
+
+## Load and write-back primitives
+
+Use `khotanUpsert` for natural-key Drizzle loads that need dedupe, enum
+coercion, and local-field preservation:
+
+```typescript
+import { khotanUpsert } from "khotan-data/drizzle";
+import { db } from "@/db";
+import { suppliers } from "@/db/schema";
+
+await khotanUpsert(db, {
+  table: suppliers,
+  records,
+  conflictKey: "code",
+  excludeOnUpdate: ["emailDomain", "embedding"],
+  dedupe: "first-wins",
+  coerceEnum: {
+    status: { active: "ACTIVE", inactive: "INACTIVE" },
+  },
+});
+```
+
+Use cache-backed helpers inside top-level `"use step"` functions for cursors,
+delta skips, and disappeared-record reconciliation. Register the cache on your
+`khotan(...)` instance first.
+
+```typescript
+import {
+  createCursorHelper,
+  deltaSkip,
+  khotanCache,
+} from "khotan-data/factory";
+
+const productCursor = createCursorHelper<string>("shopify-products-cursor");
+
+async function syncProducts(ctx: RelayContext) {
+  "use step";
+
+  const since = await productCursor.get(ctx);
+  const response = await shopify.get<{ data: Product[]; nextCursor?: string }>(
+    "/products",
+    { params: since ? { cursor: since } : undefined },
+  );
+
+  const delta = await deltaSkip(
+    ctx,
+    "shopify-products-delta",
+    response.data,
+    (record) => record.code,
+    { updateCache: false },
+  );
+
+  await hubspot.batchPost("/products", delta.changed, {
+    batchSize: 200,
+    concurrency: 2,
+  });
+  await delta.commit();
+
+  if (response.nextCursor) {
+    await productCursor.set(ctx, response.nextCursor);
+  }
+}
+```
+
+`deltaSkip` keeps the existing array return shape when `updateCache` is omitted.
+For write-back flows, pass `{ updateCache: false }` and call `commit()` only
+after the destination write succeeds, so failed writes do not advance the cached
+hash snapshot.
+
+For soft-delete or disappeared-record handling, keep a prior keyset in
+`khotanCache` after a successful write-back and compare it with the current run:
+
+```typescript
+const keyCache = khotanCache(ctx, "shopify-product-keys");
+const previousKeys = new Set((await keyCache.get<string[]>("last-success")) ?? []);
+const currentKeys = new Set(records.map((record) => record.code));
+const removed = [...previousKeys].filter((key) => !currentKeys.has(key));
+
+await hubspot.batchPost("/products/delete", removed, {
+  batchSize: 200,
+  buildBody: (codes) => ({ codes }),
+});
+await keyCache.set("last-success", [...currentKeys]);
 ```
 
 ## Quick Start
@@ -402,6 +547,7 @@ pipeline.on((event) => {
 import { Pipeline } from "khotan-data/pipeline";
 import { map, filter } from "khotan-data/transform";
 import { fromQuery, toDrizzle } from "khotan-data/drizzle";
+import { inflow, outflow, relay, catchEvent, wire } from "khotan-data/factory";
 ```
 
 ## Development

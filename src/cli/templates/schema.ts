@@ -31,9 +31,7 @@ export const khotanPlugs = pgTable("khotan_plugs", {
     .$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull().unique(),
   baseUrl: text("base_url").notNull(),
-  authType: text("auth_type", {
-    enum: ["bearer", "basic", "apiKey", "custom"],
-  }).notNull(),
+  authType: text("auth_type").notNull(),
   enabled: boolean("enabled").default(true).notNull(),
   status: text("status", {
     enum: ["connected", "error", "idle"],
