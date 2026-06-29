@@ -12,10 +12,15 @@ import {
   sendUpdate,
   toNextJsHandler,
   type KhotanAdapter,
+  type KhotanConfig,
   type PlugRegistration,
   type ResourceRegistration,
 } from "./factory.js";
 import { z } from "zod";
+
+function khotanOpen(config: Omit<KhotanConfig, "authorize">) {
+  return khotan({ ...config, authorize: false });
+}
 
 interface StoredFlow {
   id: string;
@@ -841,13 +846,13 @@ describe("khotan factory", () => {
         },
       ];
 
-      expect(() => khotan({ adapter, plugs })).toThrow(
+      expect(() => khotanOpen({ adapter, plugs })).toThrow(
         'Duplicate plug name: "stripe"',
       );
     });
 
     it("accepts an empty plugs array", () => {
-      const instance = khotan({ adapter, plugs: [] });
+      const instance = khotanOpen({ adapter, plugs: [] });
       expect(instance).toHaveProperty("handler");
       expect(instance).toHaveProperty("init");
     });
@@ -864,7 +869,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      expect(() => khotan({ adapter, plugs })).not.toThrow();
+      expect(() => khotanOpen({ adapter, plugs })).not.toThrow();
     });
 
     it("throws on duplicate resource names", () => {
@@ -873,7 +878,7 @@ describe("khotan factory", () => {
         { name: "products", mapping: { connectField: "product_id" } },
       ];
 
-      expect(() => khotan({ adapter, plugs: [], resources })).toThrow(
+      expect(() => khotanOpen({ adapter, plugs: [], resources })).toThrow(
         'Duplicate resource name: "products"',
       );
     });
@@ -889,14 +894,14 @@ describe("khotan factory", () => {
         },
       ];
 
-      expect(() => khotan({ adapter, plugs })).toThrow(
+      expect(() => khotanOpen({ adapter, plugs })).toThrow(
         'Flow "products-inflow" references unknown resource: "products"',
       );
     });
 
     it("throws on duplicate cache names", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [],
           caches: [
@@ -909,7 +914,7 @@ describe("khotan factory", () => {
 
     it("throws when cache scope references an unknown plug", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [],
           caches: [
@@ -924,7 +929,7 @@ describe("khotan factory", () => {
 
     it("throws when cache scope references an unknown flow", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [
             {
@@ -958,12 +963,12 @@ describe("khotan factory", () => {
         },
       ];
 
-      expect(() => khotan({ adapter, plugs, resources })).not.toThrow();
+      expect(() => khotanOpen({ adapter, plugs, resources })).not.toThrow();
     });
 
     it("accepts composite connectField resources", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [],
           resources: [
@@ -978,7 +983,7 @@ describe("khotan factory", () => {
 
     it("throws when a resource declares an unknown participant plug", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [],
           resources: [
@@ -998,7 +1003,7 @@ describe("khotan factory", () => {
 
     it("throws when a resource plug declaration is malformed", () => {
       expect(() =>
-        khotan({
+        khotanOpen({
           adapter,
           plugs: [
             {
@@ -1037,7 +1042,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs });
+      const instance = khotanOpen({ adapter, plugs });
       await instance.init();
 
       expect(adapter.upsertPlug).toHaveBeenCalledWith({
@@ -1068,7 +1073,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs });
+      const instance = khotanOpen({ adapter, plugs });
       await Promise.all([instance.init(), instance.init(), instance.init()]);
 
       expect(adapter.upsertPlug).toHaveBeenCalledTimes(1);
@@ -1082,7 +1087,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs });
+      const instance = khotanOpen({ adapter, plugs });
       await instance.init();
 
       expect(adapter.upsertPlug).toHaveBeenCalledTimes(1);
@@ -1107,7 +1112,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs, resources });
+      const instance = khotanOpen({ adapter, plugs, resources });
       await instance.init();
 
       expect(adapter.upsertResource).toHaveBeenCalledWith({
@@ -1134,7 +1139,7 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs, resources });
+      const instance = khotanOpen({ adapter, plugs, resources });
       await instance.init();
 
       expect(adapter.updateFlowResourceId).toHaveBeenCalledWith(
@@ -1152,14 +1157,14 @@ describe("khotan factory", () => {
         },
       ];
 
-      const instance = khotan({ adapter, plugs });
+      const instance = khotanOpen({ adapter, plugs });
       await instance.init();
 
       expect(adapter.updateFlowResourceId).not.toHaveBeenCalled();
     });
 
     it("upserts registered caches with normalized ttl", async () => {
-      const validated = khotan({
+      const validated = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1202,7 +1207,7 @@ describe("khotan factory", () => {
 
   describe("cache runtime", () => {
     it("supports programmatic cache reads, overwrites, and deletes", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [],
         caches: [{ name: "products-snapshot" }],
@@ -1237,7 +1242,7 @@ describe("khotan factory", () => {
       vi.setSystemTime(new Date("2026-06-13T10:00:00Z"));
 
       try {
-        const instance = khotan({
+        const instance = khotanOpen({
           adapter,
           plugs: [],
           caches: [{ name: "relay-checkpoint", ttl: "1s" }],
@@ -1263,7 +1268,7 @@ describe("khotan factory", () => {
     });
 
     it("deleting a missing cache key is safe", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [],
         caches: [{ name: "webhook-dedupe" }],
@@ -1279,7 +1284,7 @@ describe("khotan factory", () => {
     let instance: ReturnType<typeof khotan>;
 
     beforeEach(() => {
-      instance = khotan({
+      instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1312,7 +1317,7 @@ describe("khotan factory", () => {
     });
 
     it("surfaces relay flows on their destination plug", async () => {
-      const relayInstance = khotan({
+      const relayInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1399,7 +1404,7 @@ describe("khotan factory", () => {
     });
 
     it("supports cache entry GET/POST/DELETE routes", async () => {
-      const cacheInstance = khotan({
+      const cacheInstance = khotanOpen({
         adapter,
         plugs: [],
         caches: [{ name: "products-snapshot", ttl: "1h" }],
@@ -1538,7 +1543,7 @@ describe("khotan factory", () => {
         updated: 1,
         metadata: { source: "test" },
       }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1601,7 +1606,7 @@ describe("khotan factory", () => {
       const run = vi.fn(async () => ({
         skipped: 5,
       }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1649,7 +1654,7 @@ describe("khotan factory", () => {
         failed: 2,
         metadata: { source: "test" },
       }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1700,7 +1705,7 @@ describe("khotan factory", () => {
         error: "Stopped by preflight",
         metadata: { reason: "preflight" },
       }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1760,7 +1765,7 @@ describe("khotan factory", () => {
       }));
       __setWorkflowStartForTests(startWorkflow);
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -1841,7 +1846,7 @@ describe("khotan factory", () => {
       }));
       __setWorkflowStartForTests(startWorkflow);
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         secret: "test-secret",
         plugs: [
@@ -1938,7 +1943,7 @@ describe("khotan factory", () => {
       });
       __setWorkflowStartForTests(startWorkflow);
 
-      const relayInstance = khotan({
+      const relayInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2046,7 +2051,7 @@ describe("khotan factory", () => {
       };
 
       // Instance A: original process. Start a flow to capture the serialized id.
-      const instanceA = khotan(config);
+      const instanceA = khotanOpen(config);
       const res = await instanceA.handler(
         makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
           variant: "full",
@@ -2059,7 +2064,7 @@ describe("khotan factory", () => {
       // Simulate the step isolate: the original process is gone (clear the
       // registry), then the flow module is re-imported, re-running khotan(config).
       khotanRuntimeRegistry.clear();
-      const instanceB = khotan(config);
+      const instanceB = khotanOpen(config);
       expect(instanceB).toBeDefined();
 
       // The re-imported instance must have registered under the SAME id so the
@@ -2078,7 +2083,7 @@ describe("khotan factory", () => {
     it("falls back to the sole registered instance on a registry miss", async () => {
       khotanRuntimeRegistry.clear();
 
-      khotan({
+      khotanOpen({
         adapter,
         plugs: [
           {
@@ -2122,7 +2127,7 @@ describe("khotan factory", () => {
         })),
       );
 
-      const webhookInstance = khotan({
+      const webhookInstance = khotanOpen({
         adapter,
         secret: "test-secret",
         plugs: [
@@ -2199,7 +2204,7 @@ describe("khotan factory", () => {
       }));
       __setWorkflowStartForTests(startWorkflow);
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2258,7 +2263,7 @@ describe("khotan factory", () => {
         })),
       );
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2314,7 +2319,7 @@ describe("khotan factory", () => {
         })),
       );
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2356,7 +2361,7 @@ describe("khotan factory", () => {
       );
       __setWorkflowGetRunForTests(vi.fn(() => ({ cancel })));
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2413,7 +2418,7 @@ describe("khotan factory", () => {
         })),
       );
 
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2457,7 +2462,7 @@ describe("khotan factory", () => {
 
     it("POST /api/khotan/runs/:id/retry starts another flow run", async () => {
       const run = vi.fn(async () => ({ updated: 1 }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2502,7 +2507,7 @@ describe("khotan factory", () => {
         transformed: 1,
         updated: 1,
       }));
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2546,7 +2551,7 @@ describe("khotan factory", () => {
 
     it("flow().start requires plugName when a flow name is ambiguous", async () => {
       const run = vi.fn(async () => undefined);
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -2594,7 +2599,7 @@ describe("khotan factory", () => {
       try {
         const dueRun = vi.fn(async () => ({ updated: 1 }));
         const laterRun = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2656,7 +2661,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2709,7 +2714,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2765,7 +2770,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2820,7 +2825,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2873,7 +2878,7 @@ describe("khotan factory", () => {
       try {
         const inflowRun = vi.fn(async () => ({ updated: 1 }));
         const outflowRun = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -2940,7 +2945,7 @@ describe("khotan factory", () => {
         const run = vi.fn(async () => {
           throw new Error("something broke");
         });
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -3010,7 +3015,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -3058,7 +3063,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -3113,7 +3118,7 @@ describe("khotan factory", () => {
 
       try {
         const run = vi.fn(async () => ({ updated: 1 }));
-        const flowInstance = khotan({
+        const flowInstance = khotanOpen({
           adapter,
           plugs: [
             {
@@ -3158,7 +3163,7 @@ describe("khotan factory", () => {
       const run = vi.fn(async () => {
         throw new Error("boom");
       });
-      const flowInstance = khotan({
+      const flowInstance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3225,7 +3230,7 @@ describe("khotan factory", () => {
     });
 
     it("handles empty plugs list", async () => {
-      const emptyInstance = khotan({ adapter, plugs: [] });
+      const emptyInstance = khotanOpen({ adapter, plugs: [] });
       const res = await emptyInstance.handler(makeRequest("/api/khotan/plugs"));
       expect(res.status).toBe(200);
       const data = await res.json();
@@ -3237,7 +3242,7 @@ describe("khotan factory", () => {
     let instance: ReturnType<typeof khotan>;
 
     beforeEach(() => {
-      instance = khotan({
+      instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3504,7 +3509,7 @@ describe("khotan factory", () => {
     });
 
     it("canonicalizes composite connect values deterministically", async () => {
-      const composite = khotan({
+      const composite = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3555,7 +3560,7 @@ describe("khotan factory", () => {
     let instance: ReturnType<typeof khotan>;
 
     beforeEach(() => {
-      instance = khotan({
+      instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3617,7 +3622,7 @@ describe("khotan factory", () => {
 
   describe("config-driven filtering", () => {
     it("GET /plugs excludes plugs not in config", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3642,7 +3647,7 @@ describe("khotan factory", () => {
     });
 
     it("GET /plugs/:id returns 404 for orphaned plug", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3666,7 +3671,7 @@ describe("khotan factory", () => {
     });
 
     it("GET /flows excludes flows from unregistered plugs", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3698,7 +3703,7 @@ describe("khotan factory", () => {
     });
 
     it("GET /resources excludes unregistered resources", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [],
         resources: [{ name: "products", mapping: { connectField: "sku" } }],
@@ -3717,7 +3722,7 @@ describe("khotan factory", () => {
     });
 
     it("GET /resources/:id returns 404 for orphaned resource", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [],
         resources: [{ name: "products", mapping: { connectField: "sku" } }],
@@ -3736,7 +3741,7 @@ describe("khotan factory", () => {
     });
 
     it("PATCH /plugs/:id returns 404 for orphaned plug", async () => {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3773,7 +3778,7 @@ describe("debug route", () => {
     const originalEnv = process.env["KHOTAN_DEBUG"];
     delete process.env["KHOTAN_DEBUG"];
     try {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3808,7 +3813,7 @@ describe("debug route", () => {
     process.env["KHOTAN_DEBUG"] = "1";
     try {
       const mockGet = vi.fn(async () => ({ products: [{ id: "p1" }] }));
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3863,7 +3868,7 @@ describe("debug route", () => {
       const mockGet = vi.fn(async () => {
         throw error;
       });
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3906,7 +3911,7 @@ describe("debug route", () => {
     const originalEnv = process.env["KHOTAN_DEBUG"];
     process.env["KHOTAN_DEBUG"] = "1";
     try {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -3943,7 +3948,7 @@ describe("debug route", () => {
   });
 
   it("includes varsConfigured in GET /plugs responses", async () => {
-    const instance = khotan({
+    const instance = khotanOpen({
       adapter,
       plugs: [
         {
@@ -3972,7 +3977,7 @@ describe("debug route", () => {
   });
 
   it("seeds default variable values into storage on init", async () => {
-    const instance = khotan({
+    const instance = khotanOpen({
       adapter,
       secret: "test-secret",
       plugs: [
@@ -4029,7 +4034,7 @@ describe("debug route", () => {
   });
 
   it("merges variable updates so omitted secrets are preserved", async () => {
-    const instance = khotan({
+    const instance = khotanOpen({
       adapter,
       secret: "test-secret",
       plugs: [
@@ -4094,7 +4099,7 @@ describe("debug route", () => {
     const originalEnv = process.env["KHOTAN_DEBUG"];
     process.env["KHOTAN_DEBUG"] = "1";
     try {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -4195,7 +4200,7 @@ describe("debug route", () => {
         },
       };
 
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -4251,7 +4256,7 @@ describe("debug route", () => {
     const originalEnv = process.env["KHOTAN_DEBUG"];
     process.env["KHOTAN_DEBUG"] = "1";
     try {
-      const instance = khotan({
+      const instance = khotanOpen({
         adapter,
         plugs: [
           {
@@ -4408,10 +4413,52 @@ describe("authorize hook", () => {
     expect(seenHeader).toBe("session=valid");
   });
 
-  it("leaves the API open when no authorize hook is configured", async () => {
+  it("default-denies management routes in development when authorize is omitted", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const instance = khotan({ adapter, plugs: [makePlug()] });
     const res = await instance.handler(makeRequest("/api/khotan/plugs"));
+    expect(res.status).toBe(401);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("No `authorize`"),
+    );
+    warn.mockRestore();
+  });
+
+  it("allows management routes when authorize: false explicitly opts out in development", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const instance = khotan({ adapter, plugs: [makePlug()], authorize: false });
+    const res = await instance.handler(makeRequest("/api/khotan/plugs"));
     expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("`authorize: false`"),
+    );
+    warn.mockRestore();
+  });
+
+  it("throws in production when authorize is omitted", () => {
+    const previous = process.env["NODE_ENV"];
+    process.env["NODE_ENV"] = "production";
+    try {
+      expect(() => khotan({ adapter, plugs: [makePlug()] })).toThrow(
+        /`authorize` is required in production/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env["NODE_ENV"];
+      else process.env["NODE_ENV"] = previous;
+    }
+  });
+
+  it("throws in production when authorize: false is configured", () => {
+    const previous = process.env["NODE_ENV"];
+    process.env["NODE_ENV"] = "production";
+    try {
+      expect(() =>
+        khotan({ adapter, plugs: [makePlug()], authorize: false }),
+      ).toThrow(/`authorize: false` is not allowed in production/);
+    } finally {
+      if (previous === undefined) delete process.env["NODE_ENV"];
+      else process.env["NODE_ENV"] = previous;
+    }
   });
 });
 
