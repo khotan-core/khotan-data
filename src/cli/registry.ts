@@ -130,6 +130,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     outputFile: "khotan.ts",
     dependencies: {
       npmPackages: ["drizzle-orm"],
+      npmDevPackages: ["drizzle-kit"],
     },
   },
   cache: {

@@ -23,6 +23,9 @@ npx khotan init
 # Full setup (drizzle + shadcn + config in one go)
 npx khotan init --full
 
+# Initialize and scaffold khotan Drizzle tables
+npx khotan init --schema --yes
+
 # Skills only (install agent skills; skip config + core files + package install)
 npx khotan init --skills-only
 
@@ -33,6 +36,7 @@ npx khotan add plug      # Fetch wrapper with auth, retry, pagination
 npx khotan add inflow    # Workflow-backed flow for pulling data in
 npx khotan add outflow   # Workflow-backed flow for pushing data out
 npx khotan add relay     # Workflow-backed flow for moving data between plugs
+npx khotan add cron      # Vercel cron dispatcher for scheduled flows
 npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
 
 # Add blocks (sample pages composed from components)
@@ -115,6 +119,9 @@ authorize: async (request) => {
   exempt from `authorize` automatically.
 - `KHOTAN_DEBUG` is force-disabled when `NODE_ENV=production`. The cron route
   fails closed in production when `CRON_SECRET` is unset.
+- `npx khotan init` creates or appends `.env.template` with the khotan
+  environment variables. Generate `KHOTAN_SECRET` and `CRON_SECRET` with
+  `openssl rand -hex 32`.
 - Protect the Hub dashboard page (e.g. `/config`) with your app's middleware —
   `authorize` only guards the API.
 
