@@ -70,6 +70,16 @@
         "types": "./dist/plug-client.d.cts",
         "default": "./dist/plug-client.cjs"
       }
+    },
+    "./bootstrap": {
+      "import": {
+        "types": "./dist/bootstrap.d.ts",
+        "default": "./dist/bootstrap.js"
+      },
+      "require": {
+        "types": "./dist/bootstrap.d.cts",
+        "default": "./dist/bootstrap.cjs"
+      }
     }
   },
   "files": [
@@ -134,6 +144,7 @@
   "devDependencies": {
     "@changesets/cli": "^2.29.4",
     "@eslint/js": "^9.28.0",
+    "@types/node": "^26.0.1",
     "@types/prompts": "^2.4.9",
     "@vitest/coverage-v8": "^4.1.7",
     "drizzle-orm": "^0.45.2",

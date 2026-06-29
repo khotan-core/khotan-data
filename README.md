@@ -42,7 +42,19 @@ npx khotan add config-page-1   # /config page that renders the KhotanHub dashboa
 npx khotan add schema --force   # Overwrite existing files without prompting
 npx khotan add hub --yes        # Non-interactive mode: auto-accept all prompts
 npx khotan generate --force     # Regenerate schema (prompts before overwriting by default)
+
+# Ops guardrails
+npx khotan --env-file .env.customer whoami --assert-org org_123
+npx khotan databases bind primary neon/project/db --url-env DATABASE_URL
+npx khotan apps env prepare web --database primary
+npx khotan bootstrap            # Config + route bootstrap without package installs
 ```
+
+`whoami` resolves the current organization from `--org-id`, `KHOTAN_ORG_ID`, or
+an explicit `--env-file`, then fails fast when `--assert-org` does not match.
+Database and app env commands write `khotan.bindings.json` only; they do not
+call provider APIs or synthesize database URLs. Use the recorded `databaseId`
+with your platform-specific deployment tooling.
 
 ## Factory (Runtime Engine)
 
@@ -87,6 +99,16 @@ await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
   variant: "delta",
 });
 ```
+
+### Transaction Boundary
+
+`drizzleAdapter(db)` expects a normal Drizzle database handle for Khotan's own
+metadata writes. Khotan does not open `db.transaction()` internally, and
+generated starter code should not wrap Khotan factory boot, route handlers, or
+workflow-run bookkeeping inside an application transaction. Keep user-domain
+transactions around your own reads/writes; call Khotan flow starts, mapping
+updates, cache writes, and run tracking at the boundary after those transactions
+commit, or make those operations idempotent if they are coordinated externally.
 
 ## Security
 

@@ -9,6 +9,7 @@ const libraryEntries = {
   drizzle: "src/drizzle.ts",
   factory: "src/factory.ts",
   "plug-client": "src/plug-client.ts",
+  bootstrap: "src/bootstrap.ts",
 };
 
 export default defineConfig([

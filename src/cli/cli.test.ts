@@ -75,6 +75,10 @@ function writePkgJson(
   );
 }
 
+function parseCliJson(output: string): Record<string, unknown> {
+  return JSON.parse(output) as Record<string, unknown>;
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -233,6 +237,127 @@ describe("CLI", { timeout: 30_000 }, () => {
       const result = run("init --skills-only --full", tmpDir);
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("cannot be combined");
+    });
+  });
+
+  describe("ops/devx commands", () => {
+    it("loads --env-file and asserts the expected org", () => {
+      fs.writeFileSync(
+        path.join(tmpDir, ".env.khotan"),
+        "KHOTAN_ORG_ID=org_123\n",
+      );
+
+      const result = run(
+        "--env-file .env.khotan whoami --assert-org org_123",
+        tmpDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        organizationId: "org_123",
+        assertedOrganizationId: "org_123",
+      });
+    });
+
+    it("fails whoami when the resolved org does not match --assert-org", () => {
+      const result = run(
+        "whoami --org-id org_actual --assert-org org_expected",
+        tmpDir,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: false,
+        error: "org_mismatch",
+      });
+    });
+
+    it("stores local database bindings and prepares app env metadata", () => {
+      const bind = run(
+        "databases bind primary neon/project/db --url-env PRIMARY_DATABASE_URL",
+        tmpDir,
+      );
+      expect(bind.exitCode).toBe(0);
+      expect(parseCliJson(bind.output)).toMatchObject({
+        ok: true,
+        binding: {
+          alias: "primary",
+          id: "neon/project/db",
+          urlEnv: "PRIMARY_DATABASE_URL",
+        },
+      });
+
+      const prepare = run(
+        "apps env prepare web --database primary --key DATABASE_URL",
+        tmpDir,
+      );
+      expect(prepare.exitCode).toBe(0);
+      expect(parseCliJson(prepare.output)).toMatchObject({
+        ok: true,
+        binding: {
+          app: "web",
+          envKey: "DATABASE_URL",
+          databaseAlias: "primary",
+          databaseId: "neon/project/db",
+        },
+      });
+
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "khotan.bindings.json"), "utf-8"),
+      ) as {
+        databases: Record<string, unknown>;
+        apps: Record<string, { env: Record<string, unknown> }>;
+      };
+      expect(registry.databases["primary"]).toMatchObject({
+        id: "neon/project/db",
+      });
+      expect(registry.apps["web"]?.env["DATABASE_URL"]).toMatchObject({
+        databaseAlias: "primary",
+      });
+    });
+
+    it("bootstraps config, khotan instance, and route files without package installs", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+
+      const result = run("bootstrap", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        outputDir: "src/khotan",
+      });
+      expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            tmpDir,
+            "src",
+            "app",
+            "api",
+            "khotan",
+            "[...all]",
+            "route.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "package.json"))).toBe(false);
+    });
+
+    it("bootstraps empty projects with the shared outputDir default", () => {
+      const result = run("bootstrap", tmpDir);
+
+      expect(result.exitCode).toBe(0);
+      expect(parseCliJson(result.output)).toMatchObject({
+        ok: true,
+        outputDir: "src/khotan",
+      });
+      expect(
+        fs.existsSync(path.join(tmpDir, "src", "khotan", "khotan.ts")),
+      ).toBe(true);
     });
   });
 
