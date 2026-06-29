@@ -46,6 +46,7 @@ describe("plug factory", () => {
     const w = plug({ baseUrl: BASE });
     expect(typeof w.get).toBe("function");
     expect(typeof w.post).toBe("function");
+    expect(typeof w.batchPost).toBe("function");
     expect(typeof w.put).toBe("function");
     expect(typeof w.patch).toBe("function");
     expect(typeof w.delete).toBe("function");
@@ -115,6 +116,11 @@ describe("auth strategies", () => {
     expect(url).toContain("api_key=key_123");
   });
 
+  it("apiKey — exposes typed query auth metadata", () => {
+    const auth = apiKey("api_key", "key_123", { in: "query" });
+    expect(auth.queryParam).toEqual({ name: "api_key", value: "key_123" });
+  });
+
   it("custom — calls the provided function with headers", async () => {
     const fn = vi.fn((headers: Headers) => {
       headers.set("X-Signature", "sig_abc");
@@ -165,6 +171,20 @@ describe("auth strategies", () => {
     expect(headers.get("api-auth-signature")).toBe(
       'POST|https://api.example.com/orders?page=1&status=open|page=1&status=open|{"sku":"abc"}|shh',
     );
+  });
+
+  it("tokenExchange — reports its auth type without coercion", () => {
+    const w = plug({
+      baseUrl: BASE,
+      auth: tokenExchange({
+        getVariables: () => ({}),
+        tokenEndpoint: "/oauth/token",
+        buildTokenRequest: () => ({}),
+        parseTokenResponse: () => ({ accessToken: "token" }),
+      }),
+      retry: false,
+    });
+    expect(w.authType).toBe("tokenExchange");
   });
 });
 
@@ -218,6 +238,42 @@ describe("HTTP methods", () => {
     const w = plug({ baseUrl: BASE, retry: false });
     const result = await w.get<{ id: string }>("/users/123");
     expect(result).toEqual({ id: "123" });
+  });
+
+  it("batchPost posts records in fixed-size batches", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+    const w = plug({ baseUrl: BASE, retry: false });
+    const result = await w.batchPost<{ ok: true }, { id: number }>(
+      "/products",
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }],
+      { batchSize: 2 },
+    );
+
+    expect(result).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetch).mock.calls.map((call) => call[1]!.body)).toEqual([
+      '[{"id":1},{"id":2}]',
+      '[{"id":3},{"id":4}]',
+      '[{"id":5}]',
+    ]);
+  });
+
+  it("batchPost can shape each request body", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+    const w = plug({ baseUrl: BASE, retry: false });
+
+    await w.batchPost("/products", [{ id: 1 }, { id: 2 }], {
+      batchSize: 2,
+      buildBody: (records) => ({ products: records }),
+    });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]?.body).toBe(
+      '{"products":[{"id":1},{"id":2}]}',
+    );
   });
 });
 
@@ -821,7 +877,9 @@ describe("authorizationCode auth", () => {
   it("uses request vars for authorization-code credentials during a 401 refresh retry", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ error: "expired" }, { status: 401 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ error: "expired" }, { status: 401 }),
+      )
       .mockResolvedValueOnce(
         jsonResponse({ access_token: "tenant_fresh", expires_in: 3600 }),
       )
