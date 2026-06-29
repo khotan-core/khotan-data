@@ -179,6 +179,15 @@ async function shopifyProductsWorkflow(ctx: InflowContext) {
 }
 ```
 
+Return a `FlowRunResult` from the workflow or from the final `"use step"` call.
+Khotan observes the workflow return value and finalizes `khotan_runs` and
+`khotan_flows` automatically, including counters, duration, `partial` status
+when failures are non-zero, error text, and metadata. This returned
+`FlowRunResult` is the production-safe contract for durable workflows because
+hosted workflow contexts may be serialized and rehydrated. Inline `run(ctx)`
+handlers also expose `ctx.finalize(result)` as an explicit escape hatch when
+returning a final result is not practical.
+
 ## Quick Start
 
 ```typescript

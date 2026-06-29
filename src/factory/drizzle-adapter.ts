@@ -756,6 +756,7 @@ export function drizzleAdapter<
           variant: run.variant,
           source: run.source,
           status: run.status as KhotanRunStatus,
+          metadata: run.metadata ?? null,
         })
         .returning({ id: khotanRuns.id });
       return { id: rows[0]!.id };

@@ -192,6 +192,13 @@ export interface FlowRunContext {
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
   cache(cacheName: string): CacheInstance;
+  /**
+   * Explicitly finalize the current run using the same lifecycle write path as
+   * returning a FlowRunResult. Prefer returning a FlowRunResult from flow code;
+   * use this in inline run handlers only when returning a final result is not
+   * practical.
+   */
+  finalize(result?: FlowRunResult): Promise<void>;
 }
 
 export interface FlowWorkflowContext {
@@ -622,6 +629,7 @@ export interface KhotanAdapter {
     variant: string;
     source: RunSource;
     status: string;
+    metadata?: Record<string, unknown> | null;
   }): Promise<{ id: string }>;
   updateRun(
     runId: string,

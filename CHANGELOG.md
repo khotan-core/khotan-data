@@ -1,5 +1,16 @@
 # khotan-data
 
+## Unreleased
+
+### Patch Changes
+
+- Flow runs now finalize reliably from returned workflow `FlowRunResult` values
+  and expose inline `run(ctx)` `ctx.finalize(result)` as a race-idempotent
+  escape hatch. Durable workflow contexts rely on returned `FlowRunResult`
+  values as the production-safe contract. Manual start bodies are persisted as
+  initial run metadata and preserved unless the final result explicitly supplies
+  metadata.
+
 ## 0.9.2
 
 ### Patch Changes
