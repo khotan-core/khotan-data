@@ -209,19 +209,32 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   const { adapter, plugs, resources = [], caches = [], authorize } = config;
   const instanceId = deriveInstanceId(config);
 
+  if (authorize === false && process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "[khotan] `authorize: false` is not allowed in production. Pass an " +
+        "authorization hook to gate management routes before deploying.",
+    );
+  }
+
   if (authorize === undefined) {
     if (process.env["NODE_ENV"] === "production") {
       throw new Error(
         "[khotan] `authorize` is required in production. Pass an authorization hook to gate " +
-          "management routes, or pass `authorize: false` to explicitly opt into " +
-          "publicly accessible management routes (not recommended).",
+          "management routes.",
       );
     }
     console.warn(
-      "[khotan] No `authorize` hook configured: the management API " +
-        "(/api/khotan/*) is publicly accessible. Pass `authorize` to gate it " +
-        "behind your auth layer (e.g. better-auth), or `authorize: false` to " +
-        "silence this warning. This will throw in production.",
+      "[khotan] No `authorize` hook configured: management routes " +
+        "(/api/khotan/*) will reject requests with 401. Pass `authorize` to " +
+        "gate them behind your auth layer (e.g. better-auth), or pass " +
+        "`authorize: false` to explicitly opt into a public development API. " +
+        "Omitting `authorize` throws in production.",
+    );
+  } else if (authorize === false) {
+    console.warn(
+      "[khotan] `authorize: false` configured: management routes " +
+        "(/api/khotan/*) are publicly accessible. This is only allowed outside " +
+        "production; configure a real `authorize` hook before deploying.",
     );
   }
   const authorizeHook =
@@ -3029,14 +3042,17 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         break;
 
       case "authorize":
-        if (authorizeHook) {
+        {
           let allowed = await isCliRequestAuthorized(request, secret);
-          if (!allowed) {
+          if (!allowed && authorizeHook) {
             try {
               allowed = await authorizeHook(request);
             } catch {
               allowed = false;
             }
+          }
+          if (!allowed && authorize === false) {
+            allowed = true;
           }
           if (!allowed) {
             return Response.json(

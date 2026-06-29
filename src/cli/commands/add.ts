@@ -51,6 +51,8 @@ function resolveOutputBase(
       );
     case "appRoot":
       return path.resolve(cwd, hasSrcLayout(cwd) ? "src/app" : "app");
+    case "lib":
+      return path.resolve(cwd, hasSrcLayout(cwd) ? "src/lib" : "lib");
     case "projectRoot":
       return path.resolve(cwd);
     case "outputDir":
@@ -79,6 +81,64 @@ function isScaffolded(
     return fs.existsSync(path.join(cwd, outputDir, entry.outputFile));
   }
   return false;
+}
+
+function wireAuthHook(cwd: string, outputDir: string): boolean {
+  const khotanConfigPath = path.join(path.resolve(cwd, outputDir), "khotan.ts");
+  if (!fs.existsSync(khotanConfigPath)) {
+    console.warn(
+      "⚠ Could not wire auth automatically: khotan.ts was not found.",
+    );
+    return false;
+  }
+
+  const content = fs.readFileSync(khotanConfigPath, "utf-8");
+  const hasAuthImport =
+    /^import \{ authorizeKhotanRequest \} from "@\/lib\/auth";$/m.test(
+      content,
+    );
+  const hasWiredAuthorize =
+    /^\s*authorize\s*:\s*authorizeKhotanRequest\s*,?$/m.test(content);
+  if (hasAuthImport && hasWiredAuthorize) {
+    console.log("✓ khotan.ts already imports authorizeKhotanRequest");
+    return false;
+  }
+  if (/^\s*authorize\s*:/m.test(content)) {
+    console.warn(
+      "⚠ khotan.ts already has an authorize property. Leaving it unchanged.",
+    );
+    return false;
+  }
+
+  let updated = content;
+  const factoryImport =
+    'import { khotan, drizzleAdapter } from "khotan-data/factory";\n';
+  if (!hasAuthImport && updated.includes(factoryImport)) {
+    updated = updated.replace(
+      factoryImport,
+      (match) => `${match}import { authorizeKhotanRequest } from "@/lib/auth";\n`,
+    );
+  } else if (!hasAuthImport) {
+    updated = `import { authorizeKhotanRequest } from "@/lib/auth";\n${updated}`;
+  }
+
+  const adapterLine = "  adapter: drizzleAdapter(db),";
+  if (updated.includes(adapterLine)) {
+    updated = updated.replace(
+      adapterLine,
+      `${adapterLine}\n  authorize: authorizeKhotanRequest,`,
+    );
+  } else {
+    const factoryCall = "khotan({";
+    updated = updated.replace(
+      factoryCall,
+      `${factoryCall}\n  authorize: authorizeKhotanRequest,`,
+    );
+  }
+
+  fs.writeFileSync(khotanConfigPath, updated, "utf-8");
+  console.log(`✓ Wired authorize hook in ${path.relative(cwd, khotanConfigPath)}`);
+  return true;
 }
 
 async function scaffoldFile(
@@ -423,6 +483,10 @@ export const addCommand = new Command("add")
           for (const f of createdFiles) {
             console.log(`  ${f}`);
           }
+        }
+
+        if (componentName === "auth") {
+          wireAuthHook(cwd, config.outputDir);
         }
 
         if (component.requiresWorkflowIntegration) {

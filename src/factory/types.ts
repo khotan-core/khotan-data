@@ -705,11 +705,14 @@ export interface KhotanConfig {
    * mappings, caches, resources, webhook handlers/events) behind a custom
    * authorization check.
    *
-   * Pass a function to gate requests behind your auth layer (e.g. better-auth),
-   * or pass `false` to explicitly opt into publicly accessible management
-   * routes. Omitting this field in production (`NODE_ENV=production`) will
-   * throw — you must be explicit about your security posture. In development
-   * the field defaults to `false` with a warning. See {@link KhotanAuthorize}.
+   * Pass a function to gate requests behind your auth layer (e.g. better-auth).
+   * Omitting this field in development logs a warning and default-denies
+   * management routes with `401`; omitting it in production
+   * (`NODE_ENV=production`) throws at startup.
+   *
+   * Pass `false` only to explicitly opt into publicly accessible management
+   * routes during local development. `authorize: false` throws in production.
+   * See {@link KhotanAuthorize}.
    */
   authorize?: KhotanAuthorize | false;
 }
