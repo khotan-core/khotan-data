@@ -2004,7 +2004,10 @@ describe("khotan factory", () => {
       let capturedInstanceId: string | undefined;
       const startWorkflow = vi.fn(async (_workflowFn, args) => {
         capturedInstanceId = args[0].khotanInstanceId as string;
-        return { runId: "workflow-run-1", returnValue: Promise.resolve(undefined) };
+        return {
+          runId: "workflow-run-1",
+          returnValue: Promise.resolve(undefined),
+        };
       });
       __setWorkflowStartForTests(startWorkflow);
 
@@ -2044,15 +2047,15 @@ describe("khotan factory", () => {
             },
           },
         ],
-        caches: [
-          { name: "cin7-products-snapshot", scope: { plug: "cin7" } },
-        ],
+        caches: [{ name: "cin7-products-snapshot", scope: { plug: "cin7" } }],
       };
 
       // Instance A: original process. Start a flow to capture the serialized id.
       const instanceA = khotanOpen(config);
       const res = await instanceA.handler(
-        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { variant: "full" }),
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          variant: "full",
+        }),
       );
       expect(res.status).toBe(200);
       expect(capturedInstanceId).toBeDefined();
