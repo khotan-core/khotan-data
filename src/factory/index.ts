@@ -50,6 +50,21 @@ export type {
   FlowInstance,
   KhotanInstance,
 } from "./types.js";
+export type {
+  IngestConfig,
+  IngestHeaders,
+  IngestIdempotencyClaim,
+  IngestIdempotencyStore,
+  IngestMappingHelper,
+  IngestMappingStore,
+  IngestRegistration,
+  IngestRequestContext,
+  IngestResolvedContext,
+  IngestResponse,
+  IngestSchema,
+  IngestUnresolvedContext,
+  InferIngestBody,
+} from "./ingest.js";
 
 // Runtime helpers exported for workflow consumers
 export { bindWorkflowPlug, khotanCache, khotanMappings } from "./types.js";
@@ -80,3 +95,6 @@ export { khotan, toNextJsHandler } from "./runtime.js";
 
 // Batteries-included lifecycle hook helpers
 export { slackNotifier } from "./notifiers.js";
+
+// Inbound destination ingest endpoints
+export { ingest } from "./ingest.js";

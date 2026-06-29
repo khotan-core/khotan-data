@@ -150,6 +150,39 @@ const COMPONENTS: Record<string, ComponentEntry> = {
       },
     ],
   },
+  ingest: {
+    name: "ingest",
+    description: "Typed inbound destination endpoint with org resolution",
+    requires: ["schema"],
+    dependencies: {
+      npmPackages: ["drizzle-orm", "zod"],
+    },
+    files: [
+      {
+        templatePath: path.resolve(__dirname, "templates", "ingest.ts"),
+        outputFile: "ingests/ingest.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "ingest.example.ts",
+        ),
+        outputFile: "ingests/ingest.example.ts",
+        outputBase: "outputDir",
+      },
+      {
+        templatePath: path.resolve(
+          __dirname,
+          "templates",
+          "ingest-route.ts",
+        ),
+        outputFile: "api/internal/khotan/ingest/example/route.ts",
+        outputBase: "appRoot",
+      },
+    ],
+  },
   hub: {
     name: "hub",
     description: "Dashboard UI for managing plugs and flows",
