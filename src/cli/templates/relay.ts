@@ -87,9 +87,10 @@ export function relay(config: RelayConfig): FlowRegistration {
 //   const records = Array.isArray(response.data) ? response.data : [];
 //   await snapshotCache.set("latest", records);
 //
-//   for (const record of records) {
-//     await hubspot.post("/products", { body: record });
-//   }
+//   await hubspot.batchPost("/products", records, {
+//     batchSize: 200,
+//     concurrency: 2,
+//   });
 //
 //   return {
 //     extracted: records.length,

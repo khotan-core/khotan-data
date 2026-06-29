@@ -173,6 +173,91 @@ async function shopifyProductsWorkflow(ctx: InflowContext) {
 }
 ```
 
+## Load and write-back primitives
+
+Use `khotanUpsert` for natural-key Drizzle loads that need dedupe, enum
+coercion, and local-field preservation:
+
+```typescript
+import { khotanUpsert } from "khotan-data/drizzle";
+import { db } from "@/db";
+import { suppliers } from "@/db/schema";
+
+await khotanUpsert(db, {
+  table: suppliers,
+  records,
+  conflictKey: "code",
+  excludeOnUpdate: ["emailDomain", "embedding"],
+  dedupe: "first-wins",
+  coerceEnum: {
+    status: { active: "ACTIVE", inactive: "INACTIVE" },
+  },
+});
+```
+
+Use cache-backed helpers inside top-level `"use step"` functions for cursors,
+delta skips, and disappeared-record reconciliation. Register the cache on your
+`khotan(...)` instance first.
+
+```typescript
+import {
+  createCursorHelper,
+  deltaSkip,
+  khotanCache,
+} from "khotan-data/factory";
+
+const productCursor = createCursorHelper<string>("shopify-products-cursor");
+
+async function syncProducts(ctx: RelayContext) {
+  "use step";
+
+  const since = await productCursor.get(ctx);
+  const response = await shopify.get<{ data: Product[]; nextCursor?: string }>(
+    "/products",
+    { params: since ? { cursor: since } : undefined },
+  );
+
+  const delta = await deltaSkip(
+    ctx,
+    "shopify-products-delta",
+    response.data,
+    (record) => record.code,
+    { updateCache: false },
+  );
+
+  await hubspot.batchPost("/products", delta.changed, {
+    batchSize: 200,
+    concurrency: 2,
+  });
+  await delta.commit();
+
+  if (response.nextCursor) {
+    await productCursor.set(ctx, response.nextCursor);
+  }
+}
+```
+
+`deltaSkip` keeps the existing array return shape when `updateCache` is omitted.
+For write-back flows, pass `{ updateCache: false }` and call `commit()` only
+after the destination write succeeds, so failed writes do not advance the cached
+hash snapshot.
+
+For soft-delete or disappeared-record handling, keep a prior keyset in
+`khotanCache` after a successful write-back and compare it with the current run:
+
+```typescript
+const keyCache = khotanCache(ctx, "shopify-product-keys");
+const previousKeys = new Set((await keyCache.get<string[]>("last-success")) ?? []);
+const currentKeys = new Set(records.map((record) => record.code));
+const removed = [...previousKeys].filter((key) => !currentKeys.has(key));
+
+await hubspot.batchPost("/products/delete", removed, {
+  batchSize: 200,
+  buildBody: (codes) => ({ codes }),
+});
+await keyCache.set("last-success", [...currentKeys]);
+```
+
 ## Quick Start
 
 ```typescript

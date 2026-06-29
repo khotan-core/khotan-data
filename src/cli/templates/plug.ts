@@ -480,6 +480,17 @@ export interface RequestOptions {
   _skipHooks?: boolean;
 }
 
+export interface BatchPostOptions<TRecord = unknown> {
+  /** Records per POST body. Defaults to 100. */
+  batchSize?: number;
+  /** Number of batches to post in parallel. Defaults to 1. */
+  concurrency?: number;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** Shape each request body. Defaults to sending the batch array directly. */
+  buildBody?: (records: TRecord[], batchIndex: number) => unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Plug class
 // ---------------------------------------------------------------------------
@@ -536,6 +547,45 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
 
   async post<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>("POST", path, options);
+  }
+
+  async batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord>,
+  ): Promise<TResponse[]> {
+    const batchSize = options?.batchSize ?? 100;
+    const concurrency = options?.concurrency ?? 1;
+    if (batchSize < 1) throw new Error("batchSize must be at least 1");
+    if (concurrency < 1) throw new Error("concurrency must be at least 1");
+    if (records.length === 0) return [];
+
+    const batches: TRecord[][] = [];
+    for (let i = 0; i < records.length; i += batchSize) {
+      batches.push(records.slice(i, i + batchSize));
+    }
+
+    const results: TResponse[] = new Array<TResponse>(batches.length);
+    let next = 0;
+
+    const worker = async () => {
+      while (next < batches.length) {
+        const index = next++;
+        const batch = batches[index]!;
+        results[index] = await this.post<TResponse>(path, {
+          body: options?.buildBody ? options.buildBody(batch, index) : batch,
+          headers: options?.headers,
+          signal: options?.signal,
+        });
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, batches.length) }, () =>
+        worker(),
+      ),
+    );
+    return results;
   }
 
   async put<T>(path: string, options?: RequestOptions): Promise<T> {
