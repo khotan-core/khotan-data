@@ -73,14 +73,22 @@ The factory auto-upserts plugs, flows, and resources to the database on first AP
 
 ## Route Handler
 
-The catch-all route delegates all HTTP methods to the factory:
+The generated catch-all route binds the khotan instance directly with
+`toNextJsHandler` and a relative import computed from the route file to
+`{outputDir}/khotan.ts`:
 
 ```typescript
 import { toNextJsHandler } from "khotan-data/factory";
-import khotanData from "@/lib/khotan/khotan";
+import khotanData from "../../../../khotan/khotan";
 
-export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(khotanData.handler);
+export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(
+  khotanData.handler,
+);
 ```
+
+`khotan-data/next` remains available as a compatibility convenience for projects
+that expose the standard `@/khotan/khotan` instance, but generated routes use the
+direct form so custom `outputDir` values work.
 
 ## Database Setup
 

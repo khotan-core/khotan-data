@@ -23,6 +23,17 @@ export type {
   FlowHook,
   FlowVariant,
   FlowRegistration,
+  InflowContext,
+  OutflowContext,
+  RelayContext,
+  InflowWorkflow,
+  OutflowWorkflow,
+  RelayWorkflow,
+  InflowConfig,
+  OutflowConfig,
+  RelayConfig,
+  CatchConfig,
+  WireConfig,
   WireSubscribeContext,
   WireUnsubscribeContext,
   WireVerifyContext,
@@ -52,11 +63,17 @@ export type {
 } from "./factory/types.js";
 
 export {
+  inflow,
+  outflow,
+  relay,
+  catchEvent,
+  wire,
   bindWorkflowPlug,
   khotanCache,
   khotanMappings,
   khotanRuntimeRegistry,
 } from "./factory/types.js";
+export type { NextJsRequest, NextJsRouteHandlers } from "./factory/runtime.js";
 export type {
   WorkflowGetRunFn,
   WorkflowGetWritableFn,

@@ -1514,6 +1514,45 @@ describe("CLI", { timeout: 30_000 }, () => {
       );
       const content = fs.readFileSync(routePath, "utf-8");
       expect(content).toContain("PATCH");
+      expect(content).toContain(
+        'import { toNextJsHandler } from "khotan-data/factory"',
+      );
+      expect(content).toContain(
+        'import khotanData from "../../../../khotan/khotan"',
+      );
+      expect(content).toContain(
+        "export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(",
+      );
+      expect(content).not.toContain("khotan-data/next");
+      expect(content).not.toContain("@/khotan/khotan");
+    });
+
+    it("route template exposes PATCH method with a custom outputDir", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "khotan.config.ts"),
+        'export default { outputDir: "lib/custom" };',
+      );
+      run("init", tmpDir);
+
+      expect(
+        fs.existsSync(path.join(tmpDir, "lib", "custom", "khotan.ts")),
+      ).toBe(true);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "khotan",
+        "[...all]",
+        "route.ts",
+      );
+      const content = fs.readFileSync(routePath, "utf-8");
+      expect(content).toContain(
+        'import khotanData from "../../../../lib/custom/khotan"',
+      );
+      expect(content).not.toContain("khotan-data/next");
+      expect(content).not.toContain("@/khotan/khotan");
     });
 
     it("hub.tsx uses PATCH for flow toggles", () => {

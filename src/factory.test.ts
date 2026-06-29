@@ -4,13 +4,18 @@ import {
   __setWorkflowGetWritableForTests,
   __setWorkflowStartForTests,
   bindWorkflowPlug,
+  catchEvent,
   configureWorkflowRuntime,
+  inflow,
   khotanCache,
   khotanRuntimeRegistry,
   khotan,
+  outflow,
+  relay,
   deriveCliToken,
   sendUpdate,
   toNextJsHandler,
+  wire,
   type KhotanAdapter,
   type PlugRegistration,
   type ResourceRegistration,
@@ -1999,7 +2004,10 @@ describe("khotan factory", () => {
       let capturedInstanceId: string | undefined;
       const startWorkflow = vi.fn(async (_workflowFn, args) => {
         capturedInstanceId = args[0].khotanInstanceId as string;
-        return { runId: "workflow-run-1", returnValue: Promise.resolve(undefined) };
+        return {
+          runId: "workflow-run-1",
+          returnValue: Promise.resolve(undefined),
+        };
       });
       __setWorkflowStartForTests(startWorkflow);
 
@@ -2039,15 +2047,15 @@ describe("khotan factory", () => {
             },
           },
         ],
-        caches: [
-          { name: "cin7-products-snapshot", scope: { plug: "cin7" } },
-        ],
+        caches: [{ name: "cin7-products-snapshot", scope: { plug: "cin7" } }],
       };
 
       // Instance A: original process. Start a flow to capture the serialized id.
       const instanceA = khotan(config);
       const res = await instanceA.handler(
-        makeRequest("/api/khotan/flows/flow-1/runs", "POST", { variant: "full" }),
+        makeRequest("/api/khotan/flows/flow-1/runs", "POST", {
+          variant: "full",
+        }),
       );
       expect(res.status).toBe(200);
       expect(capturedInstanceId).toBeDefined();
@@ -4595,5 +4603,94 @@ describe("toNextJsHandler", () => {
     const res = await handlers.PATCH(req);
     expect(res.status).toBe(200);
     expect(mockHandler).toHaveBeenCalledWith(req);
+  });
+});
+
+describe("factory scaffold builders", () => {
+  it("builds flow registrations with normalized flow types", () => {
+    const inflowWorkflow = vi.fn(async (ctx: { flow: { type: "inflow" } }) => {
+      expect(ctx.flow.type).toBe("inflow");
+      return { extracted: 1 };
+    });
+    const outflowWorkflow = vi.fn(
+      async (ctx: { body?: { dryRun: boolean } }) => {
+        if (ctx.body?.dryRun) return { skipped: 1 };
+        return { created: 1 };
+      },
+    );
+    const relayWorkflow = vi.fn(async () => ({ transformed: 1 }));
+
+    const inflowRegistration = inflow({
+      name: "products-in",
+      resource: "products",
+      schedule: "0 * * * *",
+      workflow: inflowWorkflow,
+    });
+    const outflowRegistration = outflow<{ dryRun: boolean }>({
+      name: "products-out",
+      resource: "products",
+      variants: { full: {} },
+      workflow: outflowWorkflow,
+    });
+    const relayRegistration = relay({
+      name: "products-relay",
+      to: "hubspot",
+      workflow: relayWorkflow,
+    });
+
+    expect(inflowRegistration).toMatchObject({
+      name: "products-in",
+      type: "inflow",
+      resource: "products",
+      schedule: "0 * * * *",
+    });
+    expect(outflowRegistration).toMatchObject({
+      name: "products-out",
+      type: "outflow",
+      resource: "products",
+      variants: { full: {} },
+    });
+    expect(relayRegistration).toMatchObject({
+      name: "products-relay",
+      type: "relay",
+      to: "hubspot",
+    });
+    expect(inflowRegistration.workflow).toBe(inflowWorkflow);
+    expect(outflowRegistration.workflow).toBe(outflowWorkflow);
+    expect(relayRegistration.workflow).toBe(relayWorkflow);
+  });
+
+  it("builds webhook registrations from catchEvent and wire", async () => {
+    const catchRegistration = catchEvent<{ id: string }>({
+      name: "orders",
+      events: ["order.created"],
+      async workflow(ctx) {
+        expect(ctx.event.id).toBe("evt_1");
+      },
+    });
+    const wireRegistration = wire({
+      events: ["order.created"],
+      async onSubscribe() {
+        return { remoteId: "remote_1" };
+      },
+      async onUnsubscribe() {},
+    });
+
+    await catchRegistration.workflow({
+      event: { id: "evt_1" },
+      eventType: "order.created",
+      headers: {},
+      khotanRunId: "run_1",
+      khotanInstanceId: "instance_1",
+    });
+
+    expect(catchRegistration).toMatchObject({
+      type: "catch",
+      name: "orders",
+      events: ["order.created"],
+    });
+    expect(await wireRegistration.onSubscribe({} as never)).toEqual({
+      remoteId: "remote_1",
+    });
   });
 });

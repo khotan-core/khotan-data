@@ -49,7 +49,7 @@ npx khotan generate --force     # Regenerate schema (prompts before overwriting 
 Register plugs, caches, flows, and resources — the factory upserts them on boot and serves a REST API:
 
 ```typescript
-import { khotan, drizzleAdapter, toNextJsHandler } from "khotan-data/factory";
+import { khotan, drizzleAdapter } from "khotan-data/factory";
 import { db } from "@/db";
 import { shopifyPlug } from "@/lib/khotan/plugs/shopify";
 import { shopifyProductsInflow } from "@/lib/khotan/flows/shopify-products";
@@ -79,10 +79,26 @@ const khotanData = khotan({
   ],
 });
 
-// Next.js App Router: app/api/khotan/[...all]/route.ts
-export const { GET, POST, PUT, DELETE } = toNextJsHandler(khotanData.handler);
+export default khotanData;
+```
 
-// Start a flow through Khotan so run tracking + Workflow IDs are recorded
+`khotan init` also generates the catch-all route with `toNextJsHandler` and a relative import back to that instance:
+
+```typescript
+// Next.js App Router: app/api/khotan/[...all]/route.ts
+import { toNextJsHandler } from "khotan-data/factory";
+import khotanData from "../../../../khotan/khotan";
+
+export const { GET, POST, PUT, PATCH, DELETE } = toNextJsHandler(
+  khotanData.handler,
+);
+```
+
+`khotan-data/next` remains available as a compatibility helper for projects that expose the standard `@/khotan/khotan` instance, but generated routes use direct imports so custom output directories keep working.
+
+Start a flow through Khotan so run tracking and Workflow IDs are recorded:
+
+```typescript
 await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
   variant: "delta",
 });
@@ -341,6 +357,7 @@ pipeline.on((event) => {
 import { Pipeline } from "khotan-data/pipeline";
 import { map, filter } from "khotan-data/transform";
 import { fromQuery, toDrizzle } from "khotan-data/drizzle";
+import { inflow, outflow, relay, catchEvent, wire } from "khotan-data/factory";
 ```
 
 ## Development

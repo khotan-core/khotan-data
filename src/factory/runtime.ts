@@ -3111,11 +3111,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 // toNextJsHandler
 // ---------------------------------------------------------------------------
 
-interface NextJsRequest extends Request {
+export interface NextJsRequest extends Request {
   nextUrl?: URL;
 }
 
-interface NextJsRouteHandlers {
+export interface NextJsRouteHandlers {
   GET: (req: NextJsRequest) => Promise<Response>;
   POST: (req: NextJsRequest) => Promise<Response>;
   PUT: (req: NextJsRequest) => Promise<Response>;

@@ -8,6 +8,7 @@ const libraryEntries = {
   transform: "src/transform.ts",
   drizzle: "src/drizzle.ts",
   factory: "src/factory.ts",
+  next: "src/next.ts",
   "plug-client": "src/plug-client.ts",
 };
 
@@ -23,7 +24,7 @@ export default defineConfig([
     minify: false,
     outDir: "dist",
     target: "es2022",
-    external: ["drizzle-orm", "zod"],
+    external: ["@/khotan/khotan", "drizzle-orm", "zod"],
   },
   {
     entry: { cli: "src/cli/index.ts" },
