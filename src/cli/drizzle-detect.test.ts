@@ -6,6 +6,8 @@ import {
   resolveDrizzleSchemaDir,
   detectSingleFileSchema,
   updateDrizzleConfigSchema,
+  defaultDrizzleSchemaDir,
+  scaffoldDrizzleConfig,
 } from "./drizzle-detect.js";
 
 describe("resolveDrizzleSchemaDir", () => {
@@ -218,5 +220,45 @@ describe("updateDrizzleConfigSchema", () => {
     updateDrizzleConfigSchema(configPath, "./db/schema.ts", "./db/*");
     const content = fs.readFileSync(configPath, "utf-8");
     expect(content).toContain("'./db/*'");
+  });
+});
+
+describe("scaffoldDrizzleConfig", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "khotan-drizzle-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("defaults to src/db/schema for src app projects", () => {
+    fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+    expect(defaultDrizzleSchemaDir(tmpDir)).toBe("src/db/schema");
+  });
+
+  it("creates a minimal drizzle config without @next/env", () => {
+    const result = scaffoldDrizzleConfig(tmpDir, "db/schema");
+    expect(result.status).toBe("created");
+
+    const content = fs.readFileSync(
+      path.join(tmpDir, "drizzle.config.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('import { defineConfig } from "drizzle-kit"');
+    expect(content).toContain('schema: "./db/schema/*"');
+    expect(content).toContain("process.env.DATABASE_URL");
+    expect(content).not.toContain("@next/env");
+  });
+
+  it("skips an existing drizzle config", () => {
+    fs.writeFileSync(path.join(tmpDir, "drizzle.config.ts"), "existing");
+    const result = scaffoldDrizzleConfig(tmpDir, "db/schema");
+    expect(result.status).toBe("skipped");
+    expect(
+      fs.readFileSync(path.join(tmpDir, "drizzle.config.ts"), "utf-8"),
+    ).toBe("existing");
   });
 });

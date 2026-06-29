@@ -15,8 +15,10 @@ import {
   resolveDrizzleSchemaDir,
   detectSingleFileSchema,
   updateDrizzleConfigSchema,
+  defaultDrizzleSchemaDir,
+  scaffoldDrizzleConfig,
 } from "../drizzle-detect.js";
-import { runInit, scaffoldCoreFiles } from "./init.js";
+import { runInit, scaffoldCoreFiles, warnAboutWorkflowProxy } from "./init.js";
 import {
   checkNpmPackages,
   checkShadcnComponents,
@@ -29,6 +31,58 @@ import { loadConfigOutputDir } from "../cli-api.js";
 
 function hasSrcLayout(cwd: string): boolean {
   return fs.existsSync(path.join(cwd, "src", "app"));
+}
+
+interface CronConfigResult {
+  status: "created" | "updated" | "skipped" | "unsupported";
+  path: string;
+}
+
+function ensureCronVercelConfig(cwd: string): CronConfigResult {
+  const configPath = path.join(cwd, "vercel.json");
+  const cronEntry = { path: "/api/khotan/cron", schedule: "* * * * *" };
+
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(
+      configPath,
+      `${JSON.stringify({ crons: [cronEntry] }, null, 2)}\n`,
+      "utf-8",
+    );
+    return { status: "created", path: configPath };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } catch {
+    return { status: "unsupported", path: configPath };
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { status: "unsupported", path: configPath };
+  }
+
+  const config = parsed as Record<string, unknown>;
+  if (config["crons"] !== undefined && !Array.isArray(config["crons"])) {
+    return { status: "unsupported", path: configPath };
+  }
+
+  const crons = (config["crons"] as unknown[] | undefined) ?? [];
+  if (
+    crons.some(
+      (entry) =>
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        (entry as Record<string, unknown>)["path"] === cronEntry.path,
+    )
+  ) {
+    return { status: "skipped", path: configPath };
+  }
+
+  config["crons"] = [...crons, cronEntry];
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  return { status: "updated", path: configPath };
 }
 
 function resolveOutputBase(
@@ -51,6 +105,8 @@ function resolveOutputBase(
       );
     case "appRoot":
       return path.resolve(cwd, hasSrcLayout(cwd) ? "src/app" : "app");
+    case "lib":
+      return path.resolve(cwd, hasSrcLayout(cwd) ? "src/lib" : "lib");
     case "projectRoot":
       return path.resolve(cwd);
     case "outputDir":
@@ -81,10 +137,70 @@ function isScaffolded(
   return false;
 }
 
+function wireAuthHook(cwd: string, outputDir: string): boolean {
+  const khotanConfigPath = path.join(path.resolve(cwd, outputDir), "khotan.ts");
+  if (!fs.existsSync(khotanConfigPath)) {
+    console.warn(
+      "⚠ Could not wire auth automatically: khotan.ts was not found.",
+    );
+    return false;
+  }
+
+  const content = fs.readFileSync(khotanConfigPath, "utf-8");
+  const hasAuthImport =
+    /^import \{ authorizeKhotanRequest \} from "@\/lib\/auth";$/m.test(content);
+  const hasWiredAuthorize =
+    /^\s*authorize\s*:\s*authorizeKhotanRequest\s*,?$/m.test(content);
+  if (hasAuthImport && hasWiredAuthorize) {
+    console.log("✓ khotan.ts already imports authorizeKhotanRequest");
+    return false;
+  }
+  if (/^\s*authorize\s*:/m.test(content)) {
+    console.warn(
+      "⚠ khotan.ts already has an authorize property. Leaving it unchanged.",
+    );
+    return false;
+  }
+
+  let updated = content;
+  const factoryImport =
+    'import { khotan, drizzleAdapter } from "khotan-data/factory";\n';
+  if (!hasAuthImport && updated.includes(factoryImport)) {
+    updated = updated.replace(
+      factoryImport,
+      (match) =>
+        `${match}import { authorizeKhotanRequest } from "@/lib/auth";\n`,
+    );
+  } else if (!hasAuthImport) {
+    updated = `import { authorizeKhotanRequest } from "@/lib/auth";\n${updated}`;
+  }
+
+  const adapterLine = "  adapter: drizzleAdapter(db),";
+  if (updated.includes(adapterLine)) {
+    updated = updated.replace(
+      adapterLine,
+      `${adapterLine}\n  authorize: authorizeKhotanRequest,`,
+    );
+  } else {
+    const factoryCall = "khotan({";
+    updated = updated.replace(
+      factoryCall,
+      `${factoryCall}\n  authorize: authorizeKhotanRequest,`,
+    );
+  }
+
+  fs.writeFileSync(khotanConfigPath, updated, "utf-8");
+  console.log(
+    `✓ Wired authorize hook in ${path.relative(cwd, khotanConfigPath)}`,
+  );
+  return true;
+}
+
 async function scaffoldFile(
   templatePath: string,
   outputPath: string,
   force: boolean,
+  options: { outputDir?: string } = {},
 ): Promise<boolean> {
   if (fs.existsSync(outputPath) && !force) {
     // Non-interactive (no TTY): never block on a prompt. Skip the existing file
@@ -107,7 +223,17 @@ async function scaffoldFile(
   }
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  const content = fs.readFileSync(templatePath, "utf-8");
+  let content = fs.readFileSync(templatePath, "utf-8");
+  if (content.includes("__KHOTAN_INGEST_IMPORT__")) {
+    const outputDir = options.outputDir ?? "khotan";
+    const importBase = outputDir.startsWith("src/")
+      ? `@/${outputDir.slice(4)}`
+      : `@/${outputDir}`;
+    content = content.replace(
+      "__KHOTAN_INGEST_IMPORT__",
+      `${importBase}/ingests/ingest.example`,
+    );
+  }
   fs.writeFileSync(outputPath, content, "utf-8");
   return true;
 }
@@ -227,7 +353,7 @@ export const addCommand = new Command("add")
   .description("Add a component or block to your project")
   .argument(
     "<name>",
-    "Component or block to add (e.g., plug, inflow, outflow, relay, schema, hub, config-page-1)",
+    "Component or block to add (e.g., plug, inflow, outflow, relay, schema, cron, hub, config-page-1)",
   )
   .option("-f, --force", "Overwrite existing files without prompting")
   .option("-y, --yes", "Auto-accept all install prompts (non-interactive mode)")
@@ -258,6 +384,26 @@ export const addCommand = new Command("add")
 
       // Ensure core files (khotan.ts + route.ts) exist — create if missing, never overwrite
       scaffoldCoreFiles(cwd, config.outputDir);
+
+      if (componentName === "cron") {
+        const cronConfig = ensureCronVercelConfig(cwd);
+        const relPath = path.relative(cwd, cronConfig.path);
+        if (cronConfig.status === "created") {
+          console.log(`✓ Created ${relPath} with khotan cron dispatcher`);
+        } else if (cronConfig.status === "updated") {
+          console.log(`✓ Updated ${relPath} with khotan cron dispatcher`);
+        } else if (cronConfig.status === "skipped") {
+          console.log(`✓ ${relPath} already has khotan cron dispatcher`);
+        } else {
+          console.warn(
+            `⚠ Could not automatically update ${relPath}. Add {"path": "/api/khotan/cron", "schedule": "* * * * *"} to its crons array.`,
+          );
+        }
+        console.log(
+          "  Set CRON_SECRET in production so /api/khotan/cron is protected.",
+        );
+        return;
+      }
 
       const result = getEntry(componentName);
 
@@ -411,6 +557,7 @@ export const addCommand = new Command("add")
             file.templatePath,
             outputPath,
             opts.force ?? false,
+            { outputDir: config.outputDir },
           );
 
           if (created) {
@@ -423,6 +570,10 @@ export const addCommand = new Command("add")
           for (const f of createdFiles) {
             console.log(`  ${f}`);
           }
+        }
+
+        if (componentName === "auth") {
+          wireAuthHook(cwd, config.outputDir);
         }
 
         if (component.requiresWorkflowIntegration) {
@@ -439,6 +590,7 @@ export const addCommand = new Command("add")
               `⚠ Could not automatically update ${relPath} for Workflow integration. Wrap its default export with withWorkflow() from "workflow/next".`,
             );
           }
+          warnAboutWorkflowProxy(cwd);
         }
 
         if (componentName === "hub") {
@@ -468,9 +620,7 @@ export const addCommand = new Command("add")
         // Conventional fallback when no drizzle.config.ts is detected. Never
         // fall back to the factory `outputDir`, whose `khotan.ts` collides with
         // the factory config file of the same name.
-        const fallbackSchemaDir = hasSrcLayout(cwd)
-          ? "src/db/schema"
-          : "db/schema";
+        const fallbackSchemaDir = defaultDrizzleSchemaDir(cwd);
 
         if (schemaDir) {
           outputDir = path.resolve(cwd, schemaDir);
@@ -496,12 +646,25 @@ export const addCommand = new Command("add")
             schemaPath && schemaPath.length > 0
               ? schemaPath
               : fallbackSchemaDir;
+          const drizzleConfig = scaffoldDrizzleConfig(cwd, resolvedSchemaPath);
           outputDir = path.resolve(cwd, resolvedSchemaPath);
+          if (drizzleConfig.status === "created") {
+            console.log(
+              `✓ Created drizzle.config.ts with schema "./${resolvedSchemaPath}/*"`,
+            );
+          }
         } else {
+          const drizzleConfig = scaffoldDrizzleConfig(cwd, fallbackSchemaDir);
           outputDir = path.resolve(cwd, fallbackSchemaDir);
-          console.log(
-            `✓ No drizzle.config.ts detected; placing schema in ${fallbackSchemaDir}`,
-          );
+          if (drizzleConfig.status === "created") {
+            console.log(
+              `✓ Created drizzle.config.ts with schema "./${fallbackSchemaDir}/*"`,
+            );
+          } else {
+            console.log(
+              `✓ No drizzle.config.ts detected; placing schema in ${fallbackSchemaDir}`,
+            );
+          }
         }
       }
 
@@ -533,6 +696,7 @@ export const addCommand = new Command("add")
         component.templatePath,
         outputPath,
         opts.force ?? false,
+        { outputDir: config.outputDir },
       );
 
       if (!created) {
@@ -562,6 +726,7 @@ export const addCommand = new Command("add")
             `⚠ Could not automatically update ${relPath} for Workflow integration. Wrap its default export with withWorkflow() from "workflow/next".`,
           );
         }
+        warnAboutWorkflowProxy(cwd);
       }
 
       if (componentName === "schema") {

@@ -57,20 +57,49 @@ export interface BoundPlug {
   ): Promise<T>;
   post<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
+  batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord>,
+  ): Promise<TResponse[]>;
   put<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   patch<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   delete<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
+}
+
+export interface BatchPostOptions<TRecord = unknown> {
+  batchSize?: number;
+  concurrency?: number;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  buildBody?: (records: TRecord[], batchIndex: number) => unknown;
 }
 
 export interface BindablePlug {
@@ -79,6 +108,7 @@ export interface BindablePlug {
     options?: {
       params?: Record<string, unknown>;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -88,15 +118,25 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
   ): Promise<T>;
+  batchPost?<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord> & {
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<TResponse[]>;
   put<T>(
     path: string,
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -106,6 +146,7 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -115,6 +156,7 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -175,7 +217,7 @@ export interface FlowVariant {
   onComplete?: FlowHook;
 }
 
-export interface FlowRunContext {
+export interface FlowRunContext<TBody = unknown> {
   plug: BoundPlug;
   flow: {
     id: string;
@@ -188,13 +230,21 @@ export interface FlowRunContext {
   /** The active variant for this run. The variant name is the run mode — flow
    *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
   variant: string;
-  body?: unknown;
+  body?: TBody;
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
+  /**
+   * Explicitly finalize the current run using the same lifecycle write path as
+   * returning a FlowRunResult. Prefer returning a FlowRunResult from flow code;
+   * use this in inline run handlers only when returning a final result is not
+   * practical.
+   */
+  finalize(result?: FlowRunResult): Promise<void>;
 }
 
-export interface FlowWorkflowContext {
+export interface FlowWorkflowContext<TBody = unknown> {
   flow: {
     id: string;
     name: string;
@@ -206,7 +256,7 @@ export interface FlowWorkflowContext {
   /** The active variant for this run. The variant name is the run mode — flow
    *  code branches on this (e.g. "default", "delta", "full", "healthcheck"). */
   variant: string;
-  body?: unknown;
+  body?: TBody;
   vars: Record<string, string>;
   plugVarsByName?: Record<string, Record<string, string>>;
   khotanRunId: string;
@@ -226,7 +276,7 @@ export interface KhotanRunUpdate {
   metadata?: Record<string, unknown>;
 }
 
-export interface FlowRegistration {
+export interface FlowRegistration<TBody = unknown> {
   name: string;
   type: FlowType;
   /** Single cron schedule. Mutually exclusive with `variants`: a flow declares
@@ -239,8 +289,10 @@ export interface FlowRegistration {
   variants?: Record<string, FlowVariant>;
   resource?: string;
   to?: string;
-  workflow?: (ctx: FlowWorkflowContext) => Promise<FlowRunResult | undefined>;
-  run?: (ctx: FlowRunContext) => Promise<FlowRunResult | undefined>;
+  workflow?: (
+    ctx: FlowWorkflowContext<TBody>,
+  ) => Promise<FlowRunResult | undefined>;
+  run?(ctx: FlowRunContext<TBody>): Promise<FlowRunResult | undefined>;
 }
 
 export interface WireSubscribeContext {
@@ -312,18 +364,51 @@ export interface WireVerifyContext {
   wireVars: Record<string, string>;
 }
 
+export interface WireRenewContext extends WireSubscribeContext {
+  remoteId: string;
+  expiresAt?: string | null;
+}
+
+export interface WireSubscribeResult {
+  remoteId: string;
+  expiresAt?: string | Date | null;
+}
+
+export interface WireRenewResult {
+  remoteId?: string;
+  expiresAt?: string | Date | null;
+}
+
 export interface WireRegistration {
   events: string[];
-  onSubscribe(ctx: WireSubscribeContext): Promise<{ remoteId: string }>;
-  onUnsubscribe(ctx: WireUnsubscribeContext): Promise<void>;
+  mode?: "managed" | "manual";
+  onSubscribe?(ctx: WireSubscribeContext): Promise<WireSubscribeResult>;
+  onUnsubscribe?(ctx: WireUnsubscribeContext): Promise<void>;
+  onRenew?(ctx: WireRenewContext): Promise<WireRenewResult>;
   onVerify?(ctx: WireVerifyContext): Promise<boolean>;
 }
 
-export interface CatchRegistration {
+export interface WebhookEventSchema<TEvent> {
+  parse(input: unknown): TEvent;
+}
+
+export type WebhookEventFromSchema<TSchema> =
+  TSchema extends WebhookEventSchema<infer TEvent>
+    ? TEvent
+    : Record<string, unknown>;
+
+export interface CatchRegistration<
+  TSchema extends WebhookEventSchema<unknown> | undefined =
+    | WebhookEventSchema<unknown>
+    | undefined,
+> {
   type: "catch";
   name: string;
   events?: string[];
-  workflow: (ctx: CatchWorkflowContext) => Promise<void>;
+  schema?: TSchema;
+  workflow: (
+    ctx: CatchWorkflowContext<WebhookEventFromSchema<TSchema>>,
+  ) => Promise<void>;
 }
 
 export interface PassRegistration {
@@ -364,8 +449,40 @@ export interface CacheInstance {
   delete(key: string): Promise<void>;
 }
 
-export interface CatchWorkflowContext {
-  event: Record<string, unknown>;
+export interface MappingInstance {
+  list(params?: { limit?: number; offset?: number; search?: string }): Promise<{
+    items: Record<string, unknown>[];
+    page: {
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      prevOffset: number;
+      nextOffset: number;
+      total: number;
+    };
+  }>;
+  lookup(
+    connectValue: string | string[],
+  ): Promise<Record<string, unknown> | null>;
+  lookupByRef(
+    plugName: string,
+    ref: string,
+  ): Promise<Record<string, unknown> | null>;
+  upsert(mapping: {
+    connectValue: string | string[];
+    refs: Record<string, string>;
+    metadata?: Record<string, unknown> | null;
+    /**
+     * Defaults to true for natural-key upserts, preserving the existing
+     * partial-ref merge behavior. Pass false to replace the refs object.
+     */
+    mergeRefs?: boolean;
+  }): Promise<Record<string, unknown>>;
+  delete(id: string): Promise<void>;
+}
+
+export interface CatchWorkflowContext<TEvent = Record<string, unknown>> {
+  event: TEvent;
   eventType: string;
   headers: Record<string, string>;
   khotanRunId: string;
@@ -387,6 +504,7 @@ export interface KhotanWorkflowContextRef {
 
 export interface KhotanWorkflowRuntimeHelpers {
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
   listMappings: KhotanInstance["listMappings"];
   lookupMapping: KhotanInstance["lookupMapping"];
   upsertMapping: KhotanInstance["upsertMapping"];
@@ -540,6 +658,7 @@ export interface KhotanAdapter {
     connectValue: string;
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<{ id: string; created: boolean }>;
   getMapping(id: string): Promise<Record<string, unknown> | null>;
   listMappings(params: {
@@ -622,6 +741,7 @@ export interface KhotanAdapter {
     variant: string;
     source: RunSource;
     status: string;
+    metadata?: Record<string, unknown> | null;
   }): Promise<{ id: string }>;
   updateRun(
     runId: string,
@@ -705,11 +825,14 @@ export interface KhotanConfig {
    * mappings, caches, resources, webhook handlers/events) behind a custom
    * authorization check.
    *
-   * Pass a function to gate requests behind your auth layer (e.g. better-auth),
-   * or pass `false` to explicitly opt into publicly accessible management
-   * routes. Omitting this field in production (`NODE_ENV=production`) will
-   * throw — you must be explicit about your security posture. In development
-   * the field defaults to `false` with a warning. See {@link KhotanAuthorize}.
+   * Pass a function to gate requests behind your auth layer (e.g. better-auth).
+   * Omitting this field in development logs a warning and default-denies
+   * management routes with `401`; omitting it in production
+   * (`NODE_ENV=production`) throws at startup.
+   *
+   * Pass `false` only to explicitly opt into publicly accessible management
+   * routes during local development. `authorize: false` throws in production.
+   * See {@link KhotanAuthorize}.
    */
   authorize?: KhotanAuthorize | false;
 }
@@ -719,32 +842,37 @@ export type KhotanHandler = (request: Request) => Promise<Response>;
 export interface WireInstance {
   create(callbackUrl: string): Promise<Record<string, unknown>>;
   delete(wireId: string): Promise<void>;
+  renew(wireId?: string): Promise<Record<string, unknown>>;
   get(): Promise<Record<string, unknown> | null>;
 }
 
-export interface FlowStartOptions {
+export interface FlowStartOptions<TBody = unknown> {
   /** Named variant selecting the run mode. Defaults to `default`. Exposed to
    *  flow code as `ctx.variant`. */
   variant?: string | undefined;
   /** @deprecated Use `variant`. Accepted as an alias for one minor release. */
   runType?: string;
-  body?: unknown;
+  body?: TBody;
 }
 
 export interface FlowSelectorOptions {
   plugName?: string;
 }
 
-export interface FlowInstance {
-  start(options?: FlowStartOptions): Promise<Record<string, unknown>>;
+export interface FlowInstance<TBody = unknown> {
+  start(options?: FlowStartOptions<TBody>): Promise<Record<string, unknown>>;
 }
 
 export interface KhotanInstance {
   handler: KhotanHandler;
   init(): Promise<void>;
-  flow(flowNameOrId: string, options?: FlowSelectorOptions): FlowInstance;
+  flow<TBody = unknown>(
+    flowNameOrId: string,
+    options?: FlowSelectorOptions,
+  ): FlowInstance<TBody>;
   wire(plugName: string): WireInstance;
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
   listMappings(params: {
     resourceId: string;
     limit?: number;
@@ -778,6 +906,7 @@ export interface KhotanInstance {
     connectValue: string | string[];
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<Record<string, unknown>>;
   updateMapping(
     id: string,
@@ -786,6 +915,7 @@ export interface KhotanInstance {
       connectValue: string | string[];
       refs: Record<string, string>;
       metadata?: Record<string, unknown> | null;
+      mergeRefs?: boolean;
     },
   ): Promise<Record<string, unknown>>;
   deleteMapping(id: string): Promise<void>;
@@ -803,6 +933,166 @@ export interface KhotanInstance {
   dispose(): void;
 }
 
+export type InflowContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & { type: "inflow" };
+};
+
+export type OutflowContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & { type: "outflow" };
+};
+
+export type RelayContext<TBody = unknown> = FlowWorkflowContext<TBody> & {
+  flow: FlowWorkflowContext<TBody>["flow"] & {
+    type: "relay";
+    to?: string | null;
+  };
+};
+
+export type InflowWorkflow<TBody = unknown> = (
+  ctx: InflowContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+export type OutflowWorkflow<TBody = unknown> = (
+  ctx: OutflowContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+export type RelayWorkflow<TBody = unknown> = (
+  ctx: RelayContext<TBody>,
+) => Promise<FlowRunResult | undefined>;
+
+type DurableFlowWorkflow<TBody> = NonNullable<
+  FlowRegistration<TBody>["workflow"]
+>;
+
+export interface InflowConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Logical resource this flow feeds, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that extracts, transforms, and loads records */
+  workflow: InflowWorkflow<TBody>;
+}
+
+export interface OutflowConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Logical resource this flow publishes, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that reads app data and writes it to the plug */
+  workflow: OutflowWorkflow<TBody>;
+}
+
+export interface RelayConfig<TBody = unknown> {
+  /** Unique name for this flow (used for DB tracking and Hub display) */
+  name: string;
+  /** Name of the destination plug/system for humans and future tooling */
+  to: string;
+  /** Logical resource this flow moves, e.g. "products" */
+  resource?: string;
+  /** Optional cron schedule. Mutually exclusive with `variants`. */
+  schedule?: string;
+  /** Named run modes. Mutually exclusive with `schedule`. */
+  variants?: Record<string, FlowVariant>;
+  /** Durable workflow that reads from source and writes to destination */
+  workflow: RelayWorkflow<TBody>;
+}
+
+export interface CatchConfig<
+  TSchema extends WebhookEventSchema<unknown> | undefined =
+    | WebhookEventSchema<unknown>
+    | undefined,
+> {
+  /** Unique name for this catch handler (used for DB tracking and Hub display) */
+  name: string;
+  /** Event types this catch should receive */
+  events?: string[];
+  /** Optional schema that validates and types ctx.event for the workflow */
+  schema?: TSchema;
+  /** Workflow function that processes the event */
+  workflow: (
+    ctx: CatchWorkflowContext<WebhookEventFromSchema<TSchema>>,
+  ) => Promise<void>;
+}
+
+export type WireConfig = WireRegistration;
+
+export function inflow<TBody = unknown>(
+  config: InflowConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "inflow",
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function outflow<TBody = unknown>(
+  config: OutflowConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "outflow",
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function relay<TBody = unknown>(
+  config: RelayConfig<TBody>,
+): FlowRegistration<TBody> {
+  const registration: FlowRegistration<TBody> = {
+    name: config.name,
+    type: "relay",
+    to: config.to,
+    workflow: config.workflow as DurableFlowWorkflow<TBody>,
+  };
+  if (config.resource !== undefined) registration.resource = config.resource;
+  if (config.variants) {
+    registration.variants = config.variants;
+  } else if (config.schedule !== undefined) {
+    registration.schedule = config.schedule;
+  }
+  return registration;
+}
+
+export function catchEvent<
+  TSchema extends WebhookEventSchema<unknown> | undefined = undefined,
+>(config: CatchConfig<TSchema>): CatchRegistration<TSchema> {
+  const registration: CatchRegistration<TSchema> = {
+    type: "catch",
+    name: config.name,
+    workflow: config.workflow,
+  };
+  if (config.events !== undefined) registration.events = config.events;
+  if (config.schema !== undefined) registration.schema = config.schema;
+  return registration;
+}
+
+export function wire(config: WireConfig): WireRegistration {
+  return config;
+}
+
 // ---------------------------------------------------------------------------
 // Plug binding helpers
 // ---------------------------------------------------------------------------
@@ -816,6 +1106,7 @@ export function bindPlugWithVars(
     body?: unknown;
     headers?: Record<string, string>;
     params?: Record<string, unknown>;
+    signal?: AbortSignal;
   }) => ({
     ...extra,
     vars,
@@ -834,25 +1125,94 @@ export function bindPlugWithVars(
     },
     post<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.post<T>(path, opts(extra));
     },
+    async batchPost<TResponse = unknown, TRecord = unknown>(
+      path: string,
+      records: readonly TRecord[],
+      extra?: BatchPostOptions<TRecord>,
+    ) {
+      if (plug.batchPost) {
+        return plug.batchPost<TResponse, TRecord>(path, records, {
+          ...extra,
+          vars,
+          ...(setVars ? { _setVars: setVars } : {}),
+        });
+      }
+
+      const batchSize = extra?.batchSize ?? 100;
+      const concurrency = extra?.concurrency ?? 1;
+      if (batchSize < 1) throw new Error("batchSize must be at least 1");
+      if (concurrency < 1) throw new Error("concurrency must be at least 1");
+      if (records.length === 0) return [];
+
+      const batches: TRecord[][] = [];
+      for (let i = 0; i < records.length; i += batchSize) {
+        batches.push(records.slice(i, i + batchSize));
+      }
+
+      const results: TResponse[] = new Array<TResponse>(batches.length);
+      let next = 0;
+      const worker = async () => {
+        while (next < batches.length) {
+          const index = next++;
+          const batch = batches[index]!;
+          const requestOptions: {
+            body: unknown;
+            headers?: Record<string, string>;
+            signal?: AbortSignal;
+          } = {
+            body: extra?.buildBody ? extra.buildBody(batch, index) : batch,
+          };
+          if (extra?.headers) requestOptions.headers = extra.headers;
+          if (extra?.signal) requestOptions.signal = extra.signal;
+          results[index] = await plug.post<TResponse>(
+            path,
+            opts(requestOptions),
+          );
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, batches.length) }, () =>
+          worker(),
+        ),
+      );
+      return results;
+    },
     put<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.put<T>(path, opts(extra));
     },
     patch<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.patch<T>(path, opts(extra));
     },
     delete<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.delete<T>(path, opts(extra));
     },
@@ -921,6 +1281,8 @@ export function khotanCache(
 export function khotanMappings(ctx: KhotanWorkflowContextRef) {
   const helpers = getWorkflowRuntimeHelpers(ctx);
   return {
+    resource: (resourceName: string) => helpers.mapping(resourceName),
+    mapping: (resourceName: string) => helpers.mapping(resourceName),
     list: helpers.listMappings,
     lookup: helpers.lookupMapping,
     upsert: helpers.upsertMapping,

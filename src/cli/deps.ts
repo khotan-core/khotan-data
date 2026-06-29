@@ -10,6 +10,14 @@ interface PackageManagerInfo {
   devFlag: string;
 }
 
+/**
+ * When set to "1", `installPackages`/`installShadcnComponents` skip the real
+ * package-manager subprocess (npm install / npx shadcn). Package installs are
+ * still reflected in package.json so scaffolding stays accurate. Used by the
+ * test suite to avoid slow, flaky, network-bound installs.
+ */
+const SKIP_INSTALL = process.env["KHOTAN_SKIP_INSTALL"] === "1";
+
 const PM_INFO: Record<PackageManager, PackageManagerInfo> = {
   bun: { name: "bun", installCmd: "bun add", devFlag: "-d" },
   pnpm: { name: "pnpm", installCmd: "pnpm add", devFlag: "-D" },
@@ -100,12 +108,56 @@ export function checkShadcnComponents(
   });
 }
 
+/**
+ * Record installed packages in package.json without running a package manager.
+ * Mirrors the dependency side-effect of a real install for the SKIP_INSTALL
+ * fast path so callers and tests observe the expected manifest state.
+ */
+function recordPackagesInManifest(
+  cwd: string,
+  packages: string[],
+  devDependency: boolean,
+): void {
+  const pkgPath = path.join(cwd, "package.json");
+  let pkg: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(pkgPath)) {
+      pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+    }
+  } catch {
+    return;
+  }
+
+  const key = devDependency ? "devDependencies" : "dependencies";
+  const existing = (pkg[key] as Record<string, string> | undefined) ?? {};
+  for (const name of packages) {
+    if (!(name in existing)) {
+      existing[name] = "0.0.0-test";
+    }
+  }
+  pkg[key] = existing;
+
+  try {
+    fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } catch {
+    // best-effort; skipping persistence is acceptable in the fast path
+  }
+}
+
 export function installPackages(
   cwd: string,
   packages: string[],
   opts?: { devDependency?: boolean },
 ): { success: boolean; error?: string } {
   if (packages.length === 0) {
+    return { success: true };
+  }
+
+  if (SKIP_INSTALL) {
+    recordPackagesInManifest(cwd, packages, opts?.devDependency ?? false);
     return { success: true };
   }
 
@@ -130,6 +182,10 @@ export function installShadcnComponents(
   components: string[],
 ): { success: boolean; error?: string } {
   if (components.length === 0) {
+    return { success: true };
+  }
+
+  if (SKIP_INSTALL) {
     return { success: true };
   }
 

@@ -49,7 +49,7 @@ Scaffolds `{outputDir}/wires/wire.ts` (the builder) and `src/components/khotan/w
 ### Creating a Wire
 
 ```typescript
-import { wire } from "./wire";
+import { verifyHmacSha256, wire } from "./wire";
 
 export const stripeWire = wire({
   events: ["invoice.paid", "charge.succeeded"],
@@ -74,8 +74,25 @@ export const stripeWire = wire({
 
   async onVerify(ctx) {
     const signature = ctx.headers["stripe-signature"];
-    // Verify HMAC using ctx.wireVars.webhookSecret and ctx.body (raw text)
-    return isValidSignature(signature, ctx.body, ctx.wireVars.webhookSecret);
+    return verifyHmacSha256(ctx.body, signature, ctx.wireVars.webhookSecret, {
+      digest: "hex",
+      prefix: "sha256=",
+    });
+  },
+});
+```
+
+Providers that cannot be registered by API can declare manual mode:
+
+```typescript
+export const cin7Wire = wire({
+  mode: "manual",
+  events: ["order.created"],
+  async onVerify(ctx) {
+    return verifyHmacSha256(ctx.body, ctx.headers["x-cin7-signature"], ctx.wireVars.secret, {
+      digest: "hex",
+      prefix: "sha256=",
+    });
   },
 });
 ```
@@ -87,7 +104,7 @@ export const stripeWire = wire({
 - `ctx.callbackUrl` — The URL to register with the external service
 - `ctx.events` — Event types to subscribe to
 - `ctx.wireVars` / `ctx.setWireVars()` — Persist wire-specific data (secrets, tokens)
-- Must return `{ remoteId: string }`
+- Must return `{ remoteId: string, expiresAt?: string | Date }`
 
 **onUnsubscribe** receives:
 - `ctx.plug` — BoundPlug
@@ -99,6 +116,15 @@ export const stripeWire = wire({
 - `ctx.body` — Raw request body (for signature verification)
 - `ctx.wireVars` — Wire-specific vars
 - Must return `boolean`
+
+**onRenew** is optional and receives the subscribe context plus:
+- `ctx.remoteId` — Current provider subscription ID
+- `ctx.expiresAt` — Last expiry returned by subscribe or renew, if any
+- Return `{ remoteId?: string, expiresAt?: string | Date }`
+
+Khotan exposes renewal through `khotanData.wire("plug").renew()` and
+`POST /api/khotan/wires/:plugName/renew`. Automatic background renewal is not
+scheduled by the current toolkit; run renewal from your app scheduler or cron.
 
 ### Registering Wires
 
@@ -122,6 +148,7 @@ plugs: [
 const w = khotanData.wire("stripe");
 await w.create("https://your-domain.com/api/khotan/webhook/stripe");
 await w.get();           // Get wire status
+await w.renew(wireId);   // Renew expiring provider subscriptions
 await w.delete(wireId);  // Disconnect
 ```
 
@@ -144,19 +171,26 @@ data) as an argument. Nesting steps inside the `"use workflow"` function fails a
 runtime — closures over workflow scope cannot be hoisted.
 
 ```typescript
+import { z } from "zod";
 import { catchEvent, type CatchContext } from "./webhooks/catch";
 import { db } from "@/db";
 import { invoices } from "@/db/schema";
 
+const invoiceEventSchema = z.object({
+  type: z.literal("invoice.paid"),
+  data: z.object({ invoiceId: z.string() }),
+});
+
 // Step: top-level, full Node.js access, retried on failure.
-async function persistInvoice(ctx: CatchContext) {
+async function persistInvoice(ctx: CatchContext<z.infer<typeof invoiceEventSchema>>) {
   "use step";
-  await db.insert(invoices).values(ctx.event);
+  await db.insert(invoices).values({ externalId: ctx.event.data.invoiceId });
 }
 
 const processInvoice = catchEvent({
   name: "stripe-invoices",
   events: ["invoice.paid"],
+  schema: invoiceEventSchema,
   workflow: async (ctx) => {
     "use workflow";
     await persistInvoice(ctx);
