@@ -155,7 +155,7 @@
 
 - Add `dispose()` to `KhotanInstance` to remove the instance from the module-level runtime registry, preventing unbounded growth in tests, HMR, or multi-instance scenarios.
 
-- Require explicit security posture for `authorize`: omitting the field in production (`NODE_ENV=production`) now throws. In development it warns and defaults to no auth. Pass `authorize: false` to explicitly opt into publicly accessible management routes.
+- Require explicit security posture for `authorize`: omitting the field in production (`NODE_ENV=production`) throws. In current versions, omitting it in development warns and default-denies management routes with `401`; `authorize: false` is an explicit non-production opt-out for publicly accessible management routes.
 
 - Remove dual-casing fallback in `getRunWorkflowId` — only `workflowRunId` (camelCase) is checked, matching Drizzle's mapped column names.
 
