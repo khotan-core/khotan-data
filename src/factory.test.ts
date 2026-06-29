@@ -2479,6 +2479,7 @@ describe("khotan factory", () => {
     it("creates and deletes manual wires without subscription hooks", async () => {
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "cin7",
@@ -2522,6 +2523,7 @@ describe("khotan factory", () => {
       const slackUnsubscribe = vi.fn(async () => undefined);
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2590,6 +2592,7 @@ describe("khotan factory", () => {
       const slackUnsubscribe = vi.fn(async () => undefined);
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2666,6 +2669,7 @@ describe("khotan factory", () => {
       });
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2729,6 +2733,7 @@ describe("khotan factory", () => {
 
       const instance = khotan({
         adapter,
+        authorize: false,
         secret: "test-secret",
         plugs: [
           {
@@ -2775,6 +2780,7 @@ describe("khotan factory", () => {
       const slackRenew = vi.fn(async () => ({ remoteId: "slack-sub-2" }));
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2836,6 +2842,7 @@ describe("khotan factory", () => {
       const graphRenew = vi.fn(async () => ({ remoteId: "graph-sub-2" }));
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2906,6 +2913,7 @@ describe("khotan factory", () => {
       });
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "graph",
@@ -2977,6 +2985,7 @@ describe("khotan factory", () => {
 
       const instance = khotan({
         adapter,
+        authorize: false,
         plugs: [
           {
             name: "shopify",
