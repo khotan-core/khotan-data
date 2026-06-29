@@ -406,6 +406,95 @@ describe("CLI", { timeout: 30_000 }, () => {
       90_000,
     );
 
+    it("creates ingest helper, example handler, and internal route", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      run("init", tmpDir);
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const helperPath = path.join(tmpDir, "khotan", "ingests", "ingest.ts");
+      const examplePath = path.join(
+        tmpDir,
+        "khotan",
+        "ingests",
+        "ingest.example.ts",
+      );
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+
+      expect(fs.existsSync(helperPath)).toBe(true);
+      expect(fs.existsSync(examplePath)).toBe(true);
+      expect(fs.existsSync(routePath)).toBe(true);
+
+      expect(fs.readFileSync(helperPath, "utf-8")).toContain(
+        'from "khotan-data/factory"',
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "idempotencyStore",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "unresolved_intake",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "upsertProviderRef",
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        'from "@/khotan/ingests/ingest.example"',
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        "packiyoInventoryIngest.POST",
+      );
+    });
+
+    it("uses configured outputDir in the generated ingest route import", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "khotan.config.ts"),
+        `export default { outputDir: "lib/custom" };`,
+      );
+
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+      const routeContent = fs.readFileSync(routePath, "utf-8");
+
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "lib", "custom", "ingests", "ingest.example.ts"),
+        ),
+      ).toBe(true);
+      expect(routeContent).toContain(
+        'from "@/lib/custom/ingests/ingest.example"',
+      );
+      expect(routeContent).not.toContain("@/khotan/ingests/ingest.example");
+    });
+
     it("creates khotan.ts schema at outputDir when no drizzle config", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });

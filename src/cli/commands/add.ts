@@ -146,6 +146,7 @@ async function scaffoldFile(
   templatePath: string,
   outputPath: string,
   force: boolean,
+  options: { outputDir?: string } = {},
 ): Promise<boolean> {
   if (fs.existsSync(outputPath) && !force) {
     // Non-interactive (no TTY): never block on a prompt. Skip the existing file
@@ -168,7 +169,17 @@ async function scaffoldFile(
   }
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  const content = fs.readFileSync(templatePath, "utf-8");
+  let content = fs.readFileSync(templatePath, "utf-8");
+  if (content.includes("__KHOTAN_INGEST_IMPORT__")) {
+    const outputDir = options.outputDir ?? "khotan";
+    const importBase = outputDir.startsWith("src/")
+      ? `@/${outputDir.slice(4)}`
+      : `@/${outputDir}`;
+    content = content.replace(
+      "__KHOTAN_INGEST_IMPORT__",
+      `${importBase}/ingests/ingest.example`,
+    );
+  }
   fs.writeFileSync(outputPath, content, "utf-8");
   return true;
 }
@@ -472,6 +483,7 @@ export const addCommand = new Command("add")
             file.templatePath,
             outputPath,
             opts.force ?? false,
+            { outputDir: config.outputDir },
           );
 
           if (created) {
@@ -598,6 +610,7 @@ export const addCommand = new Command("add")
         component.templatePath,
         outputPath,
         opts.force ?? false,
+        { outputDir: config.outputDir },
       );
 
       if (!created) {

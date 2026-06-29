@@ -51,6 +51,21 @@ export type {
   FlowInstance,
   KhotanInstance,
 } from "./factory/types.js";
+export type {
+  IngestConfig,
+  IngestHeaders,
+  IngestIdempotencyClaim,
+  IngestIdempotencyStore,
+  IngestMappingHelper,
+  IngestMappingStore,
+  IngestRegistration,
+  IngestRequestContext,
+  IngestResolvedContext,
+  IngestResponse,
+  IngestSchema,
+  IngestUnresolvedContext,
+  InferIngestBody,
+} from "./factory/ingest.js";
 
 export {
   bindWorkflowPlug,
@@ -90,3 +105,4 @@ export {
 } from "./factory/workflow.js";
 export { khotan, toNextJsHandler } from "./factory/runtime.js";
 export { slackNotifier } from "./factory/notifiers.js";
+export { ingest } from "./factory/ingest.js";
