@@ -1,5 +1,5 @@
 import { and, eq, desc, sql, count, inArray } from "drizzle-orm";
-import type { PgDatabase } from "drizzle-orm/pg-core";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   khotanPlugs,
   khotanResources,
@@ -15,8 +15,18 @@ import {
 import type { FlowType, KhotanAdapter, KhotanRunStatus } from "./types.js";
 import { serializeConnectField, deserializeConnectField } from "./helpers.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
+export type KhotanDrizzleDatabase<
+  TQueryResult extends PgQueryResultHKT = PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown> = Record<string, never>,
+> = Pick<
+  PgDatabase<TQueryResult, TFullSchema>,
+  "select" | "insert" | "update" | "delete" | "execute"
+>;
+
+export function drizzleAdapter<
+  TQueryResult extends PgQueryResultHKT,
+  TFullSchema extends Record<string, unknown>,
+>(db: KhotanDrizzleDatabase<TQueryResult, TFullSchema>): KhotanAdapter {
   return {
     async upsertPlug(plug) {
       const rows = await db
@@ -24,13 +34,13 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         .values({
           name: plug.name,
           baseUrl: plug.baseUrl,
-          authType: plug.authType as "bearer" | "basic" | "apiKey" | "custom",
+          authType: plug.authType,
         })
         .onConflictDoUpdate({
           target: khotanPlugs.name,
           set: {
             baseUrl: plug.baseUrl,
-            authType: plug.authType as "bearer" | "basic" | "apiKey" | "custom",
+            authType: plug.authType,
             updatedAt: new Date(),
           },
         })
@@ -752,6 +762,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           variant: run.variant,
           source: run.source,
           status: run.status as KhotanRunStatus,
+          metadata: run.metadata ?? null,
         })
         .returning({ id: khotanRuns.id });
       return { id: rows[0]!.id };

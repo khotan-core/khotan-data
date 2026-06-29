@@ -28,6 +28,7 @@ npx khotan init --skills-only
 
 # Add components (reusable building blocks — never create pages)
 npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
+npx khotan add auth      # Better Auth setup + khotan authorize hook
 npx khotan add cache     # Durable key/value caches for workflows and relays
 npx khotan add plug      # Fetch wrapper with auth, retry, pagination
 npx khotan add inflow    # Workflow-backed flow for pulling data in
@@ -91,9 +92,14 @@ await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
 ## Security
 
 The management API (`/api/khotan/*`) exposes plug credentials and operational
-controls. It is **public unless you gate it**. Pass an `authorize` hook — it
-receives the raw `Request` and returns `true`/`false`, so it composes directly
-with session libraries like better-auth:
+controls. It is deny-by-default unless you wire an `authorize` hook. Omitting
+`authorize` rejects management requests with `401` in development and throws at
+startup in production. `authorize: false` explicitly opens management routes for
+local development only and is rejected in production.
+
+Run `npx khotan add auth` to scaffold a Better Auth setup and wire the hook, or
+pass your own function. The hook receives the raw `Request` and returns
+`true`/`false`, so it composes directly with session libraries like better-auth:
 
 ```typescript
 authorize: async (request) => {
@@ -172,6 +178,15 @@ async function shopifyProductsWorkflow(ctx: InflowContext) {
   return syncProducts(ctx);
 }
 ```
+
+Return a `FlowRunResult` from the workflow or from the final `"use step"` call.
+Khotan observes the workflow return value and finalizes `khotan_runs` and
+`khotan_flows` automatically, including counters, duration, `partial` status
+when failures are non-zero, error text, and metadata. This returned
+`FlowRunResult` is the production-safe contract for durable workflows because
+hosted workflow contexts may be serialized and rehydrated. Inline `run(ctx)`
+handlers also expose `ctx.finalize(result)` as an explicit escape hatch when
+returning a final result is not practical.
 
 ## Quick Start
 

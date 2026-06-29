@@ -193,6 +193,13 @@ export interface FlowRunContext {
   setVars(updates: Record<string, string>): Promise<void>;
   cache(cacheName: string): CacheInstance;
   mapping(resourceName: string): MappingInstance;
+  /**
+   * Explicitly finalize the current run using the same lifecycle write path as
+   * returning a FlowRunResult. Prefer returning a FlowRunResult from flow code;
+   * use this in inline run handlers only when returning a final result is not
+   * practical.
+   */
+  finalize(result?: FlowRunResult): Promise<void>;
 }
 
 export interface FlowWorkflowContext {
@@ -366,11 +373,7 @@ export interface CacheInstance {
 }
 
 export interface MappingInstance {
-  list(params?: {
-    limit?: number;
-    offset?: number;
-    search?: string;
-  }): Promise<{
+  list(params?: { limit?: number; offset?: number; search?: string }): Promise<{
     items: Record<string, unknown>[];
     page: {
       limit: number;
@@ -661,6 +664,7 @@ export interface KhotanAdapter {
     variant: string;
     source: RunSource;
     status: string;
+    metadata?: Record<string, unknown> | null;
   }): Promise<{ id: string }>;
   updateRun(
     runId: string,
@@ -744,11 +748,14 @@ export interface KhotanConfig {
    * mappings, caches, resources, webhook handlers/events) behind a custom
    * authorization check.
    *
-   * Pass a function to gate requests behind your auth layer (e.g. better-auth),
-   * or pass `false` to explicitly opt into publicly accessible management
-   * routes. Omitting this field in production (`NODE_ENV=production`) will
-   * throw — you must be explicit about your security posture. In development
-   * the field defaults to `false` with a warning. See {@link KhotanAuthorize}.
+   * Pass a function to gate requests behind your auth layer (e.g. better-auth).
+   * Omitting this field in development logs a warning and default-denies
+   * management routes with `401`; omitting it in production
+   * (`NODE_ENV=production`) throws at startup.
+   *
+   * Pass `false` only to explicitly opt into publicly accessible management
+   * routes during local development. `authorize: false` throws in production.
+   * See {@link KhotanAuthorize}.
    */
   authorize?: KhotanAuthorize | false;
 }
