@@ -21,10 +21,10 @@ interface WireRecord {
 
 export const wireCommand = new Command("wire")
   .description(
-    "Inspect, connect, and disconnect wires via the running Khotan API",
+    "Inspect, connect, renew, and disconnect wires via the running Khotan API",
   )
   .argument("[plugName]", "Name of the plug whose wire you want to manage")
-  .argument("[action]", "Action: info | connect | disconnect")
+  .argument("[action]", "Action: info | connect | renew | disconnect")
   .option("--port <port>", "Dev server port")
   .option("--base-path <path>", "API base path", "/api/khotan")
   .option(
@@ -36,7 +36,7 @@ export const wireCommand = new Command("wire")
   .option("--webhook-origin <url>", "Origin used to build default callback URL")
   .option(
     "--wire-id <id>",
-    "Explicit wire ID for disconnect (otherwise current wire is used)",
+    "Explicit wire ID for renew/disconnect (otherwise current wire is used)",
   )
   .action(
     async (
@@ -82,7 +82,7 @@ export const wireCommand = new Command("wire")
       if (!plugName) {
         fail(
           "missing_plug",
-          "Usage: khotan wire <plugName> [info|connect|disconnect] or khotan wire --list",
+          "Usage: khotan wire <plugName> [info|connect|renew|disconnect] or khotan wire --list",
         );
       }
 
@@ -166,9 +166,34 @@ export const wireCommand = new Command("wire")
         return;
       }
 
+      if (resolvedAction === "renew") {
+        const res = await cliFetch(`${baseUrl}/wires/${plugName}/renew`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(opts.wireId ? { wireId: opts.wireId } : {}),
+        });
+        const data = (await res.json()) as {
+          wire?: WireRecord;
+          error?: string;
+        };
+        if (!res.ok) {
+          fail(
+            "renew_failed",
+            data.error ?? `Failed to renew wire for "${plugName}"`,
+          );
+        }
+        output({
+          ok: true,
+          action: "renew",
+          plugName,
+          wire: data.wire ?? null,
+        });
+        return;
+      }
+
       fail(
         "invalid_action",
-        `Unknown action "${resolvedAction}". Use info, connect, disconnect, or --list.`,
+        `Unknown action "${resolvedAction}". Use info, connect, renew, disconnect, or --list.`,
       );
     },
   );
