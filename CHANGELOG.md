@@ -1,5 +1,48 @@
 # khotan-data
 
+## 0.10.0
+
+### Minor Changes
+
+- 662a76c: Expand the generated plug auth runtime with HMAC request-signing context,
+  durable token-exchange storage, authorization-code PKCE helpers, and OAuth
+  form-urlencoded examples.
+- 98f09f9: Improve CLI setup completeness: `init` now maintains `.env.template`, `add schema` scaffolds a minimal `drizzle.config.ts` when missing and ensures `drizzle-kit` is a dev dependency, Workflow-backed components add `serverExternalPackages`, and `add cron` manages the Vercel cron dispatcher.
+- b801ef2: Add CLI ops guardrails for local org pinning, database binding metadata, app env preparation, and bootstrap scaffolding. The new commands use local config/files only and document the transaction boundary for Drizzle-backed Khotan operations.
+- c445333: Remove the `khotan` bin alias. The CLI is now exposed only as `khotan-data` to avoid clashing with other packages that ship a `khotan` bin. Update any scripts that invoke `khotan` to use `khotan-data`.
+- a57be96: Add factory-level lifecycle hooks, stuck-run reconciliation helpers/routes, and a runtime-agnostic `khotan-data/retry` export with retry and SHA-256 dedupe helpers.
+- 9b4f1a4: Export first-class scaffold builders from `khotan-data/factory`: `inflow`, `outflow`, `relay`, `catchEvent`, and `wire`. Flow contexts and `flow().start()` now accept typed body generics, and generated scaffold templates re-export the real builders instead of re-declaring local pass-through implementations.
+
+  Add `khotan-data/next` as a compatibility Next.js App Router subpath for projects that expose the standard `@/khotan/khotan` instance. `khotan init` now scaffolds route handlers with `toNextJsHandler` and a computed relative import to the generated instance, so custom output directories work without relying on aliases.
+
+  Hub UI remains scaffolded source in this release. Publishing `@khotan/hub` is intentionally left as a scoped packaging project because the current vendored Hub surface is large and should be split with explicit component API, peer dependency, and stylesheet contracts rather than shipped as a placeholder package.
+
+- d1eed2b: Secure the management API by default. Omitting `authorize` now denies management requests in development and throws in production, while `authorize: false` is limited to non-production explicit opt-out. Added `khotan add auth` to scaffold Better Auth and wire the khotan authorize hook.
+- af0091a: Add a typed inbound ingest builder for destination endpoints plus `khotan add ingest` scaffolding with org resolution, idempotency hooks, unresolved-intake parking guidance, and mapping helper integration.
+- 1aba98a: Add webhook toolkit helpers: `verifyHmacSha256`, manual wire mode, explicit wire renewal hooks/API, and schema-typed catch events.
+
+### Patch Changes
+
+- c445333: Accept `--json` on the API-backed CLI read commands (`flows`, `mappings`, `plug`,
+  `wire`). Their output is already JSON, so the flag is explicit/no-op, but passing
+  it no longer errors with `unknown option '--json'`. (`plug vars --json <payload>`
+  keeps its existing value-taking meaning.)
+- 304d3ca: Add load/write-back primitives: natural-key Drizzle upserts, cache-backed delta and cursor helpers, and batched plug POSTs.
+- c445333: The `logs` component now declares `lucide-react` as an npm dependency. Its
+  `runs-table.tsx` imports an icon from `lucide-react`, so scaffolding `logs` into a
+  fresh app previously produced code that failed to typecheck/run until the package
+  was installed by hand.
+- 17d58c5: Add resource-name mapping helpers with `mapping(resourceName).upsert(...)`,
+  `lookup(...)`, and `lookupByRef(...)`, plus explicit `mergeRefs` control for
+  partial ref merges versus full replacement.
+- e909067: Expand the generated plug pagination and retry helpers with inline per-call pagination inspectors, link/JSON:API/envelope strategies, absolute next URL support, inter-page delays, and `shouldRetry(response, body)` for body-level throttles on successful HTTP responses.
+- c68d754: Widen the generated factory and persisted plug auth metadata so consumers can remove scaffold workarounds. `drizzleAdapter(db)` now accepts transaction-free Drizzle database subsets without the previous `as unknown as` double-cast, and custom auth types such as `tokenExchange` are stored as-is instead of being coerced to the built-in bearer/basic/apiKey/custom set.
+- 30d2df2: Flow runs now finalize reliably from returned workflow `FlowRunResult` values. Inline `run(ctx)` handlers expose `ctx.finalize(result)` as a race-idempotent escape hatch; durable workflow contexts rely on returned `FlowRunResult` values as the production-safe contract. Manual start bodies are persisted as initial run metadata and preserved unless the final result explicitly supplies metadata.
+- c445333: Scaffolded and rewritten Drizzle `schema` globs now target `*.ts` only (e.g.
+  `./db/schema/*.ts`) instead of `*`. This stops `drizzle-kit` from trying to parse
+  non-TypeScript files such as `AGENTS.md` in the schema directory, which crashed
+  `migrate` with a misleading `SyntaxError`.
+
 ## Unreleased
 
 ### Patch Changes
