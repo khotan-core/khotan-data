@@ -60,6 +60,28 @@ export function parseEnvFile(filePath: string): Record<string, string> {
   }
 }
 
+/**
+ * Load a dotenv-style file into process.env for the current CLI invocation.
+ * Explicit CLI env files intentionally override existing process values so a
+ * project-scoped command can pin the exact customer/org context it should use.
+ */
+export function loadEnvFileIntoProcess(
+  filePath: string,
+  opts: { cwd?: string } = {},
+): string {
+  const resolved = path.resolve(opts.cwd ?? process.cwd(), filePath);
+  if (!fs.existsSync(resolved)) {
+    fail("env_file_not_found", `Env file not found: ${resolved}`);
+  }
+
+  const values = parseEnvFile(resolved);
+  for (const [key, value] of Object.entries(values)) {
+    process.env[key] = value;
+  }
+
+  return resolved;
+}
+
 // ---------------------------------------------------------------------------
 // Port resolution
 // ---------------------------------------------------------------------------
