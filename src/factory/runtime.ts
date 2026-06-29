@@ -48,6 +48,7 @@ import type {
   WireInstance,
   CacheInstance,
   CacheEntryRecord,
+  MappingInstance,
   CacheRegistration,
   ResourceRegistration,
   FlowRegistration,
@@ -728,6 +729,26 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return resourceConfigById.get(resourceId) ?? null;
   }
 
+  async function resolveResourceId(resourceName: string): Promise<string> {
+    await init();
+    const resourceId = resourceIdByName.get(resourceName);
+    if (!resourceId) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return resourceId;
+  }
+
+  async function getRegisteredResourceByName(
+    resourceName: string,
+  ): Promise<{ id: string; resource: ResourceRegistration }> {
+    const id = await resolveResourceId(resourceName);
+    const resource = resourceConfigById.get(id);
+    if (!resource) {
+      throw new Error(`Resource "${resourceName}" is not registered`);
+    }
+    return { id, resource };
+  }
+
   async function resolveCacheState(cacheName: string) {
     await init();
     const cacheState = cacheStateByName.get(cacheName);
@@ -925,6 +946,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     connectValue: string | string[];
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<Record<string, unknown>> {
     const resource = await validateMappingPayload(mapping);
     const result = await adapter.upsertMapping({
@@ -932,6 +954,9 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(result.id);
     if (!saved) {
@@ -947,6 +972,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: string | string[];
       refs: Record<string, string>;
       metadata?: Record<string, unknown> | null;
+      mergeRefs?: boolean;
     },
   ): Promise<Record<string, unknown>> {
     const existing = await adapter.getMapping(id);
@@ -961,12 +987,55 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       connectValue: canonicalizeConnectValue(resource, mapping.connectValue),
       refs: mapping.refs,
       metadata: mapping.metadata ?? null,
+      ...(mapping.mergeRefs !== undefined
+        ? { mergeRefs: mapping.mergeRefs }
+        : {}),
     });
     const saved = await adapter.getMapping(id);
     if (!saved) {
       throw new Error(`Mapping "${id}" disappeared after update`);
     }
     return saved;
+  }
+
+  function createMappingInstance(resourceName: string): MappingInstance {
+    return {
+      async list(params = {}) {
+        const resourceId = await resolveResourceId(resourceName);
+        return listMappings({
+          resourceId,
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.search !== undefined ? { search: params.search } : {}),
+        });
+      },
+      async lookup(connectValue) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, connectValue });
+      },
+      async lookupByRef(plugName, ref) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return lookupMapping({ resourceId, plugName, ref });
+      },
+      async upsert(mapping) {
+        const { id: resourceId } =
+          await getRegisteredResourceByName(resourceName);
+        return upsertMapping({
+          resourceId,
+          connectValue: mapping.connectValue,
+          refs: mapping.refs,
+          ...(mapping.metadata !== undefined
+            ? { metadata: mapping.metadata }
+            : {}),
+          ...(mapping.mergeRefs !== undefined
+            ? { mergeRefs: mapping.mergeRefs }
+            : {}),
+        });
+      },
+      delete: deleteMapping,
+    };
   }
 
   async function deleteMapping(id: string): Promise<void> {
@@ -1471,6 +1540,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
             vars,
             setVars: setFlowVars,
             cache: createCacheInstance,
+            mapping: createMappingInstance,
           },
           finalizeRun,
         ),
@@ -3182,6 +3252,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
   khotanRuntimeRegistry.set(instanceId, {
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,
@@ -3199,6 +3270,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     flow,
     wire,
     cache: createCacheInstance,
+    mapping: createMappingInstance,
     listMappings,
     lookupMapping,
     upsertMapping,

@@ -435,12 +435,15 @@ export function drizzleAdapter<
 
     async upsertMapping(mapping) {
       if (mapping.id) {
+        const mergeRefs = mapping.mergeRefs ?? false;
         const rows = await db
           .update(khotanMappingsTable)
           .set({
             resourceId: mapping.resourceId,
             connectValue: mapping.connectValue,
-            refs: mapping.refs,
+            refs: mergeRefs
+              ? sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`
+              : mapping.refs,
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           })
@@ -457,6 +460,7 @@ export function drizzleAdapter<
         )
         .limit(1);
 
+      const mergeRefs = mapping.mergeRefs ?? true;
       const rows = await db
         .insert(khotanMappingsTable)
         .values({
@@ -471,7 +475,9 @@ export function drizzleAdapter<
             khotanMappingsTable.connectValue,
           ],
           set: {
-            refs: sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`,
+            refs: mergeRefs
+              ? sql`${khotanMappingsTable.refs} || ${JSON.stringify(mapping.refs)}::jsonb`
+              : mapping.refs,
             metadata: mapping.metadata ?? null,
             updatedAt: new Date(),
           },

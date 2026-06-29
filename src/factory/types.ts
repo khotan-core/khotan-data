@@ -192,6 +192,7 @@ export interface FlowRunContext {
   vars: Record<string, string>;
   setVars(updates: Record<string, string>): Promise<void>;
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
   /**
    * Explicitly finalize the current run using the same lifecycle write path as
    * returning a FlowRunResult. Prefer returning a FlowRunResult from flow code;
@@ -371,6 +372,38 @@ export interface CacheInstance {
   delete(key: string): Promise<void>;
 }
 
+export interface MappingInstance {
+  list(params?: { limit?: number; offset?: number; search?: string }): Promise<{
+    items: Record<string, unknown>[];
+    page: {
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      prevOffset: number;
+      nextOffset: number;
+      total: number;
+    };
+  }>;
+  lookup(
+    connectValue: string | string[],
+  ): Promise<Record<string, unknown> | null>;
+  lookupByRef(
+    plugName: string,
+    ref: string,
+  ): Promise<Record<string, unknown> | null>;
+  upsert(mapping: {
+    connectValue: string | string[];
+    refs: Record<string, string>;
+    metadata?: Record<string, unknown> | null;
+    /**
+     * Defaults to true for natural-key upserts, preserving the existing
+     * partial-ref merge behavior. Pass false to replace the refs object.
+     */
+    mergeRefs?: boolean;
+  }): Promise<Record<string, unknown>>;
+  delete(id: string): Promise<void>;
+}
+
 export interface CatchWorkflowContext {
   event: Record<string, unknown>;
   eventType: string;
@@ -394,6 +427,7 @@ export interface KhotanWorkflowContextRef {
 
 export interface KhotanWorkflowRuntimeHelpers {
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
   listMappings: KhotanInstance["listMappings"];
   lookupMapping: KhotanInstance["lookupMapping"];
   upsertMapping: KhotanInstance["upsertMapping"];
@@ -547,6 +581,7 @@ export interface KhotanAdapter {
     connectValue: string;
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<{ id: string; created: boolean }>;
   getMapping(id: string): Promise<Record<string, unknown> | null>;
   listMappings(params: {
@@ -756,6 +791,7 @@ export interface KhotanInstance {
   flow(flowNameOrId: string, options?: FlowSelectorOptions): FlowInstance;
   wire(plugName: string): WireInstance;
   cache(cacheName: string): CacheInstance;
+  mapping(resourceName: string): MappingInstance;
   listMappings(params: {
     resourceId: string;
     limit?: number;
@@ -789,6 +825,7 @@ export interface KhotanInstance {
     connectValue: string | string[];
     refs: Record<string, string>;
     metadata?: Record<string, unknown> | null;
+    mergeRefs?: boolean;
   }): Promise<Record<string, unknown>>;
   updateMapping(
     id: string,
@@ -797,6 +834,7 @@ export interface KhotanInstance {
       connectValue: string | string[];
       refs: Record<string, string>;
       metadata?: Record<string, unknown> | null;
+      mergeRefs?: boolean;
     },
   ): Promise<Record<string, unknown>>;
   deleteMapping(id: string): Promise<void>;
@@ -932,6 +970,8 @@ export function khotanCache(
 export function khotanMappings(ctx: KhotanWorkflowContextRef) {
   const helpers = getWorkflowRuntimeHelpers(ctx);
   return {
+    resource: (resourceName: string) => helpers.mapping(resourceName),
+    mapping: (resourceName: string) => helpers.mapping(resourceName),
     list: helpers.listMappings,
     lookup: helpers.lookupMapping,
     upsert: helpers.upsertMapping,
