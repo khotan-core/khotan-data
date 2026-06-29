@@ -60,9 +60,38 @@ CLI signs an HMAC token from `KHOTAN_SECRET`).
 Inside a flow step, resolve or record the cross-service link as you upsert:
 
 ```typescript
-// 1. Look up the canonical mapping by the source service's ref.
-// 2. If absent, upsert a mapping with this plug's ref under the connect value.
-// 3. Use the canonical value as the dedupe key for your DB upsert.
+const products = ctx.mapping("products");
+
+const existing = await products.lookupByRef("shopify", shopifyProduct.id);
+
+const mapping =
+  existing ??
+  (await products.upsert({
+    connectValue: shopifyProduct.sku,
+    refs: { shopify: shopifyProduct.id },
+  }));
+
+// Later, attach another system's id without replacing the Shopify ref.
+await products.upsert({
+  connectValue: shopifyProduct.sku,
+  refs: { cin7: cin7Product.id },
+});
+```
+
+`ctx.mapping("<resource>")` resolves the resource id internally, so flows should
+not query `khotan_resources` or handwrite `refs->>'plug' = id` JSONB filters.
+Use `lookup(connectValue)` for canonical keys and `lookupByRef(plug, ref)` for
+service ids.
+
+`upsert` merges partial `refs` by default. Pass `mergeRefs: false` to replace the
+refs object for that connect value:
+
+```typescript
+await ctx.mapping("products").upsert({
+  connectValue: "SKU-123",
+  refs: { cin7: "P-456" },
+  mergeRefs: false,
+});
 ```
 
 This keeps upserts idempotent across full/delta/backfill runs.

@@ -370,7 +370,12 @@ function createMockAdapter(): KhotanAdapter {
       if (mapping.id) {
         const existing = mappingStore.get(mapping.id);
         if (existing) {
-          existing.refs = mapping.refs;
+          existing.resourceId = mapping.resourceId;
+          existing.connectValue = mapping.connectValue;
+          existing.refs =
+            mapping.mergeRefs === true
+              ? { ...existing.refs, ...mapping.refs }
+              : mapping.refs;
           existing.metadata = mapping.metadata ?? null;
           return { id: existing.id, created: false };
         }
@@ -381,7 +386,10 @@ function createMockAdapter(): KhotanAdapter {
           m.connectValue === mapping.connectValue,
       );
       if (existing) {
-        existing.refs = { ...existing.refs, ...mapping.refs };
+        existing.refs =
+          mapping.mergeRefs === false
+            ? mapping.refs
+            : { ...existing.refs, ...mapping.refs };
         existing.metadata = mapping.metadata ?? null;
         return { id: existing.id, created: false };
       }
@@ -3379,6 +3387,128 @@ describe("khotan factory", () => {
         shopify: "prod_123",
         cin7: "P-456",
       });
+    });
+
+    it("mapping(resource).upsert resolves resource name and lookupByRef finds refs", async () => {
+      const saved = await instance.mapping("products").upsert({
+        connectValue: "SKU-001",
+        refs: { shopify: "prod_123" },
+      });
+
+      expect(saved).toMatchObject({
+        resourceId: "resource-1",
+        connectValue: "SKU-001",
+        refs: { shopify: "prod_123" },
+      });
+
+      const found = await instance
+        .mapping("products")
+        .lookupByRef("shopify", "prod_123");
+      expect(found?.["id"]).toBe(saved["id"]);
+    });
+
+    it("mapping(resource).upsert merges partial refs by default and can replace refs", async () => {
+      await instance.mapping("products").upsert({
+        connectValue: "SKU-001",
+        refs: { shopify: "prod_123" },
+      });
+
+      const merged = await instance.mapping("products").upsert({
+        connectValue: "SKU-001",
+        refs: { cin7: "P-456" },
+      });
+      expect(merged.refs).toEqual({
+        shopify: "prod_123",
+        cin7: "P-456",
+      });
+
+      const replaced = await instance.mapping("products").upsert({
+        connectValue: "SKU-001",
+        refs: { cin7: "P-789" },
+        mergeRefs: false,
+      });
+      expect(replaced.refs).toEqual({ cin7: "P-789" });
+    });
+
+    it("updateMapping replaces refs by default but can merge refs when requested", async () => {
+      const created = await instance.upsertMapping({
+        resourceId: "resource-1",
+        connectValue: "SKU-001",
+        refs: { shopify: "prod_123" },
+      });
+
+      const merged = await instance.updateMapping(created["id"] as string, {
+        resourceId: "resource-1",
+        connectValue: "SKU-001",
+        refs: { cin7: "P-456" },
+        mergeRefs: true,
+      });
+      expect(merged.refs).toEqual({
+        shopify: "prod_123",
+        cin7: "P-456",
+      });
+
+      const replaced = await instance.updateMapping(created["id"] as string, {
+        resourceId: "resource-1",
+        connectValue: "SKU-001",
+        refs: { shopify: "prod_999" },
+      });
+      expect(replaced.refs).toEqual({ shopify: "prod_999" });
+    });
+
+    it("flow run contexts expose mapping(resource) helpers", async () => {
+      const flowInstance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "shopify",
+            plug: { baseUrl: "https://shopify.com", authType: "bearer" },
+            flows: [
+              {
+                name: "sync-products",
+                type: "inflow",
+                resource: "products",
+                run: async (ctx) => {
+                  await ctx.mapping("products").upsert({
+                    connectValue: "SKU-001",
+                    refs: { shopify: "prod_123" },
+                  });
+                  const found = await ctx
+                    .mapping("products")
+                    .lookupByRef("shopify", "prod_123");
+
+                  return {
+                    status: found ? "completed" : "failed",
+                    created: found ? 1 : 0,
+                    failed: found ? 0 : 1,
+                  };
+                },
+              },
+            ],
+          },
+        ],
+        resources: [
+          {
+            name: "products",
+            mapping: {
+              connectField: "sku",
+              plugs: {
+                shopify: { uniqueIdentifier: "id" },
+              },
+            },
+          },
+        ],
+      });
+
+      const result = await flowInstance.flow("sync-products").start();
+
+      expect(result).toMatchObject({
+        status: "completed",
+        created: 1,
+      });
+      await expect(
+        flowInstance.mapping("products").lookup("SKU-001"),
+      ).resolves.toMatchObject({ refs: { shopify: "prod_123" } });
     });
 
     it("POST .../mappings rejects refs for undeclared plugs", async () => {
