@@ -13,6 +13,7 @@ export type {
   KhotanTerminalRunStatus,
   FlowRunResult,
   BoundPlug,
+  BatchPostOptions,
   BindablePlug,
   FlowRunContext,
   FlowWorkflowContext,
@@ -57,6 +58,21 @@ export {
   khotanMappings,
   khotanRuntimeRegistry,
 } from "./factory/types.js";
+export {
+  contentHash,
+  createCursorHelper,
+  deltaSkip,
+  detectChanges,
+  stableStringify,
+} from "./factory/load.js";
+export type {
+  ChangeDetectionOptions,
+  ChangeDetectionResult,
+  CursorHelper,
+  DeltaKey,
+  DeltaSkipOptions,
+  DeltaSkipResult,
+} from "./factory/load.js";
 export type {
   WorkflowGetRunFn,
   WorkflowGetWritableFn,

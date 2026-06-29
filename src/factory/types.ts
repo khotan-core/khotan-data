@@ -57,20 +57,49 @@ export interface BoundPlug {
   ): Promise<T>;
   post<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
+  batchPost<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord>,
+  ): Promise<TResponse[]>;
   put<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   patch<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
   delete<T>(
     path: string,
-    options?: { body?: unknown; headers?: Record<string, string> },
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
   ): Promise<T>;
+}
+
+export interface BatchPostOptions<TRecord = unknown> {
+  batchSize?: number;
+  concurrency?: number;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  buildBody?: (records: TRecord[], batchIndex: number) => unknown;
 }
 
 export interface BindablePlug {
@@ -79,6 +108,7 @@ export interface BindablePlug {
     options?: {
       params?: Record<string, unknown>;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -88,15 +118,25 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
   ): Promise<T>;
+  batchPost?<TResponse = unknown, TRecord = unknown>(
+    path: string,
+    records: readonly TRecord[],
+    options?: BatchPostOptions<TRecord> & {
+      vars?: Record<string, string>;
+      _setVars?: (updates: Record<string, string>) => Promise<void>;
+    },
+  ): Promise<TResponse[]>;
   put<T>(
     path: string,
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -106,6 +146,7 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -115,6 +156,7 @@ export interface BindablePlug {
     options?: {
       body?: unknown;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
       vars?: Record<string, string>;
       _setVars?: (updates: Record<string, string>) => Promise<void>;
     },
@@ -865,6 +907,7 @@ export function bindPlugWithVars(
     body?: unknown;
     headers?: Record<string, string>;
     params?: Record<string, unknown>;
+    signal?: AbortSignal;
   }) => ({
     ...extra,
     vars,
@@ -883,25 +926,94 @@ export function bindPlugWithVars(
     },
     post<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.post<T>(path, opts(extra));
     },
+    async batchPost<TResponse = unknown, TRecord = unknown>(
+      path: string,
+      records: readonly TRecord[],
+      extra?: BatchPostOptions<TRecord>,
+    ) {
+      if (plug.batchPost) {
+        return plug.batchPost<TResponse, TRecord>(path, records, {
+          ...extra,
+          vars,
+          ...(setVars ? { _setVars: setVars } : {}),
+        });
+      }
+
+      const batchSize = extra?.batchSize ?? 100;
+      const concurrency = extra?.concurrency ?? 1;
+      if (batchSize < 1) throw new Error("batchSize must be at least 1");
+      if (concurrency < 1) throw new Error("concurrency must be at least 1");
+      if (records.length === 0) return [];
+
+      const batches: TRecord[][] = [];
+      for (let i = 0; i < records.length; i += batchSize) {
+        batches.push(records.slice(i, i + batchSize));
+      }
+
+      const results: TResponse[] = new Array<TResponse>(batches.length);
+      let next = 0;
+      const worker = async () => {
+        while (next < batches.length) {
+          const index = next++;
+          const batch = batches[index]!;
+          const requestOptions: {
+            body: unknown;
+            headers?: Record<string, string>;
+            signal?: AbortSignal;
+          } = {
+            body: extra?.buildBody ? extra.buildBody(batch, index) : batch,
+          };
+          if (extra?.headers) requestOptions.headers = extra.headers;
+          if (extra?.signal) requestOptions.signal = extra.signal;
+          results[index] = await plug.post<TResponse>(
+            path,
+            opts(requestOptions),
+          );
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, batches.length) }, () =>
+          worker(),
+        ),
+      );
+      return results;
+    },
     put<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.put<T>(path, opts(extra));
     },
     patch<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.patch<T>(path, opts(extra));
     },
     delete<T>(
       path: string,
-      extra?: { body?: unknown; headers?: Record<string, string> },
+      extra?: {
+        body?: unknown;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) {
       return plug.delete<T>(path, opts(extra));
     },

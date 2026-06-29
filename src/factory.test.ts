@@ -764,6 +764,53 @@ describe("bindWorkflowPlug", () => {
     expect(ctx.plugVarsByName["pollinate"]).toEqual({ _token: "token-1" });
   });
 
+  it("batchPost falls back to bound post calls when the plug has no native batchPost", async () => {
+    const post = vi.fn(
+      async (_path: string, options?: Record<string, unknown>) => ({
+        body: options?.["body"],
+        vars: options?.["vars"],
+      }),
+    );
+    const plug = {
+      get: vi.fn(),
+      post,
+      put: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+    const ctx = {
+      flow: {
+        id: "flow-1",
+        name: "relay-products",
+        plugName: "pollinate",
+        type: "relay" as const,
+        resource: "products",
+      },
+      variant: "full",
+      vars: { token: "token-1" },
+      khotanRunId: "run-1",
+    };
+
+    const boundPlug = bindWorkflowPlug(plug, ctx);
+    const result = await boundPlug.batchPost(
+      "/products",
+      [{ id: 1 }, { id: 2 }, { id: 3 }],
+      {
+        batchSize: 2,
+        buildBody: (records) => ({ products: records }),
+      },
+    );
+
+    expect(result).toEqual([
+      {
+        body: { products: [{ id: 1 }, { id: 2 }] },
+        vars: { token: "token-1" },
+      },
+      { body: { products: [{ id: 3 }] }, vars: { token: "token-1" } },
+    ]);
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
   it("forwards a request body on delete for batch soft-delete", async () => {
     const del = vi.fn(async () => ({ ok: true }));
     const plug = {

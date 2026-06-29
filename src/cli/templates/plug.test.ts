@@ -44,6 +44,7 @@ describe("plug factory", () => {
     const w = plug({ baseUrl: BASE });
     expect(typeof w.get).toBe("function");
     expect(typeof w.post).toBe("function");
+    expect(typeof w.batchPost).toBe("function");
     expect(typeof w.put).toBe("function");
     expect(typeof w.patch).toBe("function");
     expect(typeof w.delete).toBe("function");
@@ -194,6 +195,42 @@ describe("HTTP methods", () => {
     const w = plug({ baseUrl: BASE, retry: false });
     const result = await w.get<{ id: string }>("/users/123");
     expect(result).toEqual({ id: "123" });
+  });
+
+  it("batchPost posts records in fixed-size batches", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+    const w = plug({ baseUrl: BASE, retry: false });
+    const result = await w.batchPost<{ ok: true }, { id: number }>(
+      "/products",
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }],
+      { batchSize: 2 },
+    );
+
+    expect(result).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetch).mock.calls.map((call) => call[1]!.body)).toEqual([
+      '[{"id":1},{"id":2}]',
+      '[{"id":3},{"id":4}]',
+      '[{"id":5}]',
+    ]);
+  });
+
+  it("batchPost can shape each request body", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+    const w = plug({ baseUrl: BASE, retry: false });
+
+    await w.batchPost("/products", [{ id: 1 }, { id: 2 }], {
+      batchSize: 2,
+      buildBody: (records) => ({ products: records }),
+    });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]?.body).toBe(
+      '{"products":[{"id":1},{"id":2}]}',
+    );
   });
 });
 
