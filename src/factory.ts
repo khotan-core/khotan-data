@@ -26,7 +26,12 @@ export type {
   WireSubscribeContext,
   WireUnsubscribeContext,
   WireVerifyContext,
+  WireRenewContext,
+  WireSubscribeResult,
+  WireRenewResult,
   WireRegistration,
+  WebhookEventSchema,
+  WebhookEventFromSchema,
   CatchRegistration,
   PassRegistration,
   WebhookRegistration,
@@ -65,6 +70,8 @@ export type {
 } from "./factory/workflow.js";
 export { deriveCliToken } from "./factory/cli-auth.js";
 export { drizzleAdapter } from "./factory/drizzle-adapter.js";
+export { verifyHmacSha256 } from "./factory/crypto.js";
+export type { VerifyHmacSha256Options } from "./factory/crypto.js";
 export {
   configureWorkflowRuntime,
   __setWorkflowStartForTests,

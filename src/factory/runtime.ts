@@ -89,6 +89,20 @@ interface RouteMatch {
   params: Record<string, string>;
 }
 
+class KhotanInternalNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanInternalNotFoundError";
+  }
+}
+
+class KhotanWireRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KhotanWireRequestError";
+  }
+}
+
 function matchRoute(
   method: string,
   pathSegments: string[],
@@ -952,6 +966,8 @@ export function khotan(config: KhotanConfig): KhotanInstance {
   // Wire management
   // -------------------------------------------------------------------------
 
+  const WIRE_EXPIRES_AT_VAR = "__khotan_expires_at";
+
   function wire(plugName: string): WireInstance {
     const plugReg = plugs.find((p) => p.name === plugName);
     if (!plugReg) {
@@ -985,6 +1001,24 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         ? await encryptVars(serialized, secret)
         : serialized;
       await adapter.updateWireMetadata(wireId, toStore);
+    }
+
+    function normalizeWireExpiry(expiresAt: string | Date | null | undefined) {
+      if (!expiresAt) return null;
+      return expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt;
+    }
+
+    function getWireString(
+      record: Record<string, unknown>,
+      camelKey: string,
+      snakeKey?: string,
+    ): string {
+      const value = record[camelKey] ?? (snakeKey ? record[snakeKey] : null);
+      return typeof value === "string" ? value : "";
+    }
+
+    function getWirePlugId(record: Record<string, unknown>): string {
+      return getWireString(record, "plugId", "plug_id");
     }
 
     return {
@@ -1021,16 +1055,33 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           : undefined;
         const boundPlug = createBoundPlug(vars, _setVars);
 
-        const wireVars = await getWireVars(wireId);
+        let wireVars = await getWireVars(wireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(wireId, wireVars);
+        };
 
-        const result = await wireConfig.onSubscribe({
-          plug: boundPlug,
-          callbackUrl,
-          events: wireConfig.events,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        const isManual = wireConfig.mode === "manual";
+        if (!isManual && !wireConfig.onSubscribe) {
+          throw new Error(
+            `Plug "${plugName}" wire is managed but does not define onSubscribe`,
+          );
+        }
+
+        const result = isManual
+          ? { remoteId: `manual:${plugName}` }
+          : await wireConfig.onSubscribe!({
+              plug: boundPlug,
+              callbackUrl,
+              events: wireConfig.events,
+              wireVars,
+              setWireVars: persistWireVars,
+            });
+
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
 
         kd(
           "wire",
@@ -1051,13 +1102,23 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       async delete(wireId: string) {
         await init();
         kd("wire", `${plugName}: deleting wire ${wireId}`);
-        const wireRecord = await adapter.getWire(wireId);
-        if (!wireRecord) {
-          throw new Error(`Wire "${wireId}" not found`);
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
         }
 
-        const remoteId = (wireRecord["remoteId"] ??
-          wireRecord["remote_id"]) as string;
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = await adapter.getWire(wireId);
+        if (!wireRecord || getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
         kd("wire", `${plugName}: remoteId=${remoteId}`);
         if (!remoteId) {
           await adapter.updateWireStatus(wireId, "disabled");
@@ -1073,16 +1134,101 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         const wireVars = await getWireVars(wireId);
 
-        await wireConfig.onUnsubscribe({
-          plug: boundPlug,
-          remoteId,
-          wireVars,
-          setWireVars: (updates) =>
-            setWireVars(wireId, { ...wireVars, ...updates }),
-        });
+        if (wireConfig.mode !== "manual" && wireConfig.onUnsubscribe) {
+          let currentWireVars = wireVars;
+          await wireConfig.onUnsubscribe({
+            plug: boundPlug,
+            remoteId,
+            wireVars,
+            setWireVars: async (updates) => {
+              currentWireVars = { ...currentWireVars, ...updates };
+              await setWireVars(wireId, currentWireVars);
+            },
+          });
+        }
 
         kd("wire", `${plugName}: unsubscribed successfully`);
         await adapter.updateWireStatus(wireId, "disabled");
+      },
+
+      async renew(wireId?: string) {
+        await init();
+        if (!wireConfig.onRenew) {
+          throw new KhotanWireRequestError(
+            `Plug "${plugName}" wire does not define onRenew`,
+          );
+        }
+
+        const allPlugs = await adapter.listPlugs();
+        const dbPlug = allPlugs.find((p) => p["name"] === plugName);
+        if (!dbPlug) {
+          throw new KhotanInternalNotFoundError(
+            `Plug "${plugName}" not found in database`,
+          );
+        }
+
+        const plugId = dbPlug["id"] as string;
+        const wireRecord = wireId
+          ? await adapter.getWire(wireId)
+          : await adapter.getPlugWire(plugId);
+        if (!wireRecord) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+        if (wireId && getWirePlugId(wireRecord) !== plugId) {
+          throw new KhotanInternalNotFoundError(
+            `Wire for plug "${plugName}" not found`,
+          );
+        }
+
+        const resolvedWireId = wireRecord["id"] as string;
+        const remoteId = getWireString(wireRecord, "remoteId", "remote_id");
+        if (!remoteId) {
+          throw new KhotanWireRequestError(
+            `Wire "${resolvedWireId}" has no remoteId to renew`,
+          );
+        }
+
+        const vars = secret ? await getVars(plugName).catch(() => ({})) : {};
+        const _setVars = secret
+          ? (updates: Record<string, string>) =>
+              setVars(plugName, { ...vars, ...updates })
+          : undefined;
+        const boundPlug = createBoundPlug(vars, _setVars);
+
+        let wireVars = await getWireVars(resolvedWireId);
+        const persistWireVars = async (updates: Record<string, string>) => {
+          wireVars = { ...wireVars, ...updates };
+          await setWireVars(resolvedWireId, wireVars);
+        };
+
+        const callbackUrl = getWireString(wireRecord, "callbackUrl");
+        const result = await wireConfig.onRenew({
+          plug: boundPlug,
+          callbackUrl,
+          events: wireConfig.events,
+          remoteId,
+          expiresAt: wireVars[WIRE_EXPIRES_AT_VAR] ?? null,
+          wireVars,
+          setWireVars: persistWireVars,
+        });
+
+        const nextRemoteId = result.remoteId ?? remoteId;
+        const expiresAt = normalizeWireExpiry(result.expiresAt);
+        if (expiresAt) {
+          await persistWireVars({ [WIRE_EXPIRES_AT_VAR]: expiresAt });
+        }
+
+        await adapter.updateWireDetails(resolvedWireId, {
+          remoteId: nextRemoteId,
+          callbackUrl,
+          eventTypes: wireConfig.events,
+          status: "active",
+        });
+
+        const record = await adapter.getWire(resolvedWireId);
+        return record!;
       },
 
       async get() {
@@ -1795,6 +1941,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     }
 
     try {
+      const eventForWorkflow =
+        handler.type === "catch" && handler.schema
+          ? handler.schema.parse(ctx.event)
+          : ctx.event;
       const workflowCtx =
         handler.type === "pass"
           ? {
@@ -1806,7 +1956,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
               khotanInstanceId: instanceId,
             }
           : {
-              event: ctx.event,
+              event: eventForWorkflow,
               eventType: ctx.eventType,
               headers: ctx.headers,
               khotanRunId,
@@ -2690,6 +2840,38 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     },
     {
       method: "POST",
+      pattern: "wires/:plugName/renew",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const plugName = params["plugName"]!;
+        if (!plugNames.has(plugName)) {
+          return Response.json({ error: "Plug not found" }, { status: 404 });
+        }
+        const body = (await request.json().catch(() => ({}))) as {
+          wireId?: string;
+        };
+        try {
+          const record = await wire(plugName).renew(body.wireId);
+          return Response.json({ wire: record });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          kd("wire", `${plugName}: renew failed:`, message);
+          const status =
+            error instanceof KhotanInternalNotFoundError
+              ? 404
+              : error instanceof KhotanWireRequestError
+                ? 400
+                : 500;
+          return Response.json(
+            { error: message },
+            { status },
+          );
+        }
+      },
+    },
+    {
+      method: "POST",
       pattern: "wires/:plugName",
       auth: "authorize",
       handler: async ({ params, request }) => {
@@ -2938,7 +3120,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           const message =
             error instanceof Error ? error.message : "Unknown error";
           kd("wire", `${plugName}: delete failed: ${message}`);
-          return Response.json({ error: message }, { status: 500 });
+          return Response.json(
+            { error: message },
+            { status: error instanceof KhotanInternalNotFoundError ? 404 : 500 },
+          );
         }
       },
     },

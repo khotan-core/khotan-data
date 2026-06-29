@@ -2187,6 +2187,553 @@ describe("khotan factory", () => {
       ).resolves.toEqual({ seen: true });
     });
 
+    it("creates and deletes manual wires without subscription hooks", async () => {
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "cin7",
+            plug: {
+              baseUrl: "https://api.cin7.com",
+              authType: "basic",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                mode: "manual",
+                events: ["order.created"],
+              },
+            ],
+          },
+        ],
+      });
+
+      const wireRecord = await instance
+        .wire("cin7")
+        .create("https://app.example.com/api/khotan/webhook/cin7");
+
+      expect(wireRecord).toMatchObject({
+        remoteId: "manual:cin7",
+        callbackUrl: "https://app.example.com/api/khotan/webhook/cin7",
+        status: "active",
+      });
+
+      await instance.wire("cin7").delete(String(wireRecord["id"]));
+      await expect(instance.wire("cin7").get()).resolves.toMatchObject({
+        status: "disabled",
+      });
+    });
+
+    it("rejects deleting an explicit wire id from another plug", async () => {
+      const graphUnsubscribe = vi.fn(async () => undefined);
+      const slackUnsubscribe = vi.fn(async () => undefined);
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: graphUnsubscribe,
+              },
+            ],
+          },
+          {
+            name: "slack",
+            plug: {
+              baseUrl: "https://slack.com/api",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "slack-sub-1" })),
+                onUnsubscribe: slackUnsubscribe,
+              },
+            ],
+          },
+        ],
+      });
+
+      await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      const slackWire = await instance
+        .wire("slack")
+        .create("https://app.example.com/api/khotan/webhook/slack");
+      vi.mocked(adapter.updateWireStatus).mockClear();
+
+      await expect(
+        instance.wire("graph").delete(String(slackWire["id"])),
+      ).rejects.toThrow('Wire for plug "graph" not found');
+      expect(graphUnsubscribe).not.toHaveBeenCalled();
+      expect(slackUnsubscribe).not.toHaveBeenCalled();
+      expect(adapter.updateWireStatus).not.toHaveBeenCalled();
+      await expect(instance.wire("slack").get()).resolves.toMatchObject({
+        id: slackWire["id"],
+        remoteId: "slack-sub-1",
+        status: "active",
+      });
+    });
+
+    it("DELETE /api/khotan/wires/:plugName returns 404 for another plug's wire id", async () => {
+      const graphUnsubscribe = vi.fn(async () => undefined);
+      const slackUnsubscribe = vi.fn(async () => undefined);
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: graphUnsubscribe,
+              },
+            ],
+          },
+          {
+            name: "slack",
+            plug: {
+              baseUrl: "https://slack.com/api",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "slack-sub-1" })),
+                onUnsubscribe: slackUnsubscribe,
+              },
+            ],
+          },
+        ],
+      });
+
+      await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      const slackWire = await instance
+        .wire("slack")
+        .create("https://app.example.com/api/khotan/webhook/slack");
+      vi.mocked(adapter.updateWireStatus).mockClear();
+
+      const response = await instance.handler(
+        makeRequest("/api/khotan/wires/graph", "DELETE", {
+          wireId: slackWire["id"],
+        }),
+      );
+
+      await expect(response.json()).resolves.toEqual({
+        error: 'Wire for plug "graph" not found',
+      });
+      expect(response.status).toBe(404);
+      expect(graphUnsubscribe).not.toHaveBeenCalled();
+      expect(slackUnsubscribe).not.toHaveBeenCalled();
+      expect(adapter.updateWireStatus).not.toHaveBeenCalled();
+      await expect(instance.wire("slack").get()).resolves.toMatchObject({
+        id: slackWire["id"],
+        remoteId: "slack-sub-1",
+        status: "active",
+      });
+    });
+
+    it("DELETE /api/khotan/wires/:plugName keeps provider disconnect errors non-404", async () => {
+      const graphUnsubscribe = vi.fn(async () => {
+        throw new Error("Provider subscription not found");
+      });
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: graphUnsubscribe,
+              },
+            ],
+          },
+        ],
+      });
+
+      const graphWire = await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      vi.mocked(adapter.updateWireStatus).mockClear();
+
+      const response = await instance.handler(
+        makeRequest("/api/khotan/wires/graph", "DELETE", {
+          wireId: graphWire["id"],
+        }),
+      );
+
+      await expect(response.json()).resolves.toEqual({
+        error: "Provider subscription not found",
+      });
+      expect(response.status).toBe(500);
+      expect(graphUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(adapter.updateWireStatus).not.toHaveBeenCalled();
+      await expect(instance.wire("graph").get()).resolves.toMatchObject({
+        id: graphWire["id"],
+        remoteId: "graph-sub-1",
+        status: "active",
+      });
+    });
+
+    it("renews managed wires and carries expiry through wire metadata", async () => {
+      const onRenew = vi.fn(async (ctx) => {
+        expect(ctx.remoteId).toBe("graph-sub-1");
+        expect(ctx.callbackUrl).toBe(
+          "https://app.example.com/api/khotan/webhook/graph",
+        );
+        expect(ctx.expiresAt).toBe("2026-07-01T00:00:00.000Z");
+        await ctx.setWireVars({ renewalToken: "next-token" });
+        return {
+          remoteId: "graph-sub-2",
+          expiresAt: "2026-07-02T00:00:00.000Z",
+        };
+      });
+
+      const instance = khotan({
+        adapter,
+        secret: "test-secret",
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({
+                  remoteId: "graph-sub-1",
+                  expiresAt: new Date("2026-07-01T00:00:00.000Z"),
+                })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew,
+              },
+            ],
+          },
+        ],
+      });
+
+      const created = await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      const renewed = await instance.wire("graph").renew(String(created["id"]));
+
+      expect(onRenew).toHaveBeenCalledTimes(1);
+      expect(renewed).toMatchObject({
+        id: created["id"],
+        remoteId: "graph-sub-2",
+        status: "active",
+      });
+    });
+
+    it("rejects renewing an explicit wire id from another plug", async () => {
+      const graphRenew = vi.fn(async () => ({ remoteId: "graph-sub-2" }));
+      const slackRenew = vi.fn(async () => ({ remoteId: "slack-sub-2" }));
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew: graphRenew,
+              },
+            ],
+          },
+          {
+            name: "slack",
+            plug: {
+              baseUrl: "https://slack.com/api",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "slack-sub-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew: slackRenew,
+              },
+            ],
+          },
+        ],
+      });
+
+      await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      const slackWire = await instance
+        .wire("slack")
+        .create("https://app.example.com/api/khotan/webhook/slack");
+
+      await expect(
+        instance.wire("graph").renew(String(slackWire["id"])),
+      ).rejects.toThrow('Wire for plug "graph" not found');
+      expect(graphRenew).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/khotan/wires/:plugName/renew returns 404 for another plug's wire id", async () => {
+      const graphRenew = vi.fn(async () => ({ remoteId: "graph-sub-2" }));
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew: graphRenew,
+              },
+            ],
+          },
+          {
+            name: "slack",
+            plug: {
+              baseUrl: "https://slack.com/api",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "slack-sub-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew: vi.fn(async () => ({ remoteId: "slack-sub-2" })),
+              },
+            ],
+          },
+        ],
+      });
+
+      await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      const slackWire = await instance
+        .wire("slack")
+        .create("https://app.example.com/api/khotan/webhook/slack");
+
+      const response = await instance.handler(
+        makeRequest("/api/khotan/wires/graph/renew", "POST", {
+          wireId: slackWire["id"],
+        }),
+      );
+
+      await expect(response.json()).resolves.toEqual({
+        error: 'Wire for plug "graph" not found',
+      });
+      expect(response.status).toBe(404);
+      expect(graphRenew).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/khotan/wires/:plugName/renew keeps provider renewal errors non-404", async () => {
+      const graphRenew = vi.fn(async () => {
+        throw new Error("Provider subscription not found");
+      });
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "graph",
+            plug: {
+              baseUrl: "https://graph.microsoft.com",
+              authType: "bearer",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["message.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "graph-sub-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onRenew: graphRenew,
+              },
+            ],
+          },
+        ],
+      });
+
+      const graphWire = await instance
+        .wire("graph")
+        .create("https://app.example.com/api/khotan/webhook/graph");
+      vi.mocked(adapter.updateWireDetails).mockClear();
+
+      const response = await instance.handler(
+        makeRequest("/api/khotan/wires/graph/renew", "POST", {
+          wireId: graphWire["id"],
+        }),
+      );
+
+      await expect(response.json()).resolves.toEqual({
+        error: "Provider subscription not found",
+      });
+      expect(response.status).toBe(500);
+      expect(graphRenew).toHaveBeenCalledTimes(1);
+      expect(adapter.updateWireDetails).not.toHaveBeenCalled();
+      await expect(instance.wire("graph").get()).resolves.toMatchObject({
+        id: graphWire["id"],
+        remoteId: "graph-sub-1",
+        status: "active",
+      });
+    });
+
+    it("passes schema-parsed events to catch workflows", async () => {
+      const schema = z.object({
+        type: z.literal("order.created"),
+        data: z.object({ orderId: z.string() }),
+      });
+      const catchWorkflow = vi.fn(
+        async (ctx: {
+          event: z.infer<typeof schema>;
+          eventType: string;
+          khotanInstanceId: string;
+        }) => {
+          expect(ctx.event.data.orderId).toBe("ord_123");
+        },
+      );
+      __setWorkflowStartForTests(
+        vi.fn(async (workflowFn, args) => ({
+          runId: "workflow-run-1",
+          returnValue: Promise.resolve(workflowFn(args[0])),
+        })),
+      );
+
+      const instance = khotan({
+        adapter,
+        plugs: [
+          {
+            name: "shopify",
+            plug: {
+              baseUrl: "https://shopify.example",
+              authType: "custom",
+              get: vi.fn(),
+              post: vi.fn(),
+              put: vi.fn(),
+              patch: vi.fn(),
+              delete: vi.fn(),
+            },
+            wires: [
+              {
+                events: ["order.created"],
+                onSubscribe: vi.fn(async () => ({ remoteId: "remote-1" })),
+                onUnsubscribe: vi.fn(async () => undefined),
+                onVerify: vi.fn(async () => true),
+              },
+            ],
+            catches: [
+              {
+                type: "catch",
+                name: "shopify-order-created",
+                events: ["order.created"],
+                schema,
+                workflow: catchWorkflow,
+              },
+            ],
+          },
+        ],
+      });
+
+      const response = await instance.handler(
+        makeRequest("/api/khotan/webhook/shopify", "POST", {
+          type: "order.created",
+          data: { orderId: "ord_123" },
+        }),
+      );
+
+      expect(response.status).toBe(202);
+      await waitForBackgroundTasks();
+      await waitForBackgroundTasks();
+      expect(catchWorkflow).toHaveBeenCalledTimes(1);
+    });
+
     it("POST /api/khotan/flows/:id/runs reconciles failed workflow runs", async () => {
       const workflow = vi.fn(async () => undefined);
       const returnValue = Promise.reject(new Error("workflow boom"));
