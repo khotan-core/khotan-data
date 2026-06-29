@@ -46,6 +46,14 @@ export default defineConfig([
         path.resolve(templatesDir, "plug.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "auth.ts"),
+        path.resolve(templatesDir, "auth.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "auth-route.ts"),
+        path.resolve(templatesDir, "auth-route.ts"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "plug.example.ts"),
         path.resolve(templatesDir, "plug.example.ts"),
       );

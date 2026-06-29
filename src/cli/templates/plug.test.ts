@@ -114,6 +114,11 @@ describe("auth strategies", () => {
     expect(url).toContain("api_key=key_123");
   });
 
+  it("apiKey — exposes typed query auth metadata", () => {
+    const auth = apiKey("api_key", "key_123", { in: "query" });
+    expect(auth.queryParam).toEqual({ name: "api_key", value: "key_123" });
+  });
+
   it("custom — calls the provided function with headers", async () => {
     const fn = vi.fn((headers: Headers) => {
       headers.set("X-Signature", "sig_abc");
@@ -123,6 +128,20 @@ describe("auth strategies", () => {
     expect(fn).toHaveBeenCalled();
     const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
     expect(headers.get("X-Signature")).toBe("sig_abc");
+  });
+
+  it("tokenExchange — reports its auth type without coercion", () => {
+    const w = plug({
+      baseUrl: BASE,
+      auth: tokenExchange({
+        getVariables: () => ({}),
+        tokenEndpoint: "/oauth/token",
+        buildTokenRequest: () => ({}),
+        parseTokenResponse: () => ({ accessToken: "token" }),
+      }),
+      retry: false,
+    });
+    expect(w.authType).toBe("tokenExchange");
   });
 });
 

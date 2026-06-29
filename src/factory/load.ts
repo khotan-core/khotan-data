@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { khotanCache } from "./types.js";
 import type { CacheInstance, KhotanWorkflowContextRef } from "./types.js";
 
@@ -20,8 +19,9 @@ export interface ChangeDetectionResult<TRecord> {
   hashes: Record<string, string>;
 }
 
-export interface DeltaSkipResult<TRecord>
-  extends ChangeDetectionResult<TRecord> {
+export interface DeltaSkipResult<
+  TRecord,
+> extends ChangeDetectionResult<TRecord> {
   commit(): Promise<Record<string, string>>;
 }
 
@@ -73,7 +73,25 @@ export function stableStringify(value: unknown): string {
 }
 
 export function contentHash(value: unknown): string {
-  return createHash("sha256").update(stableStringify(value)).digest("hex");
+  return fnv1a128Hex(stableStringify(value));
+}
+
+/**
+ * FNV-1a 128-bit hash returned as a 32-char lowercase hex string. Used for
+ * content-based change detection. Dependency-free (no `node:crypto`) so the
+ * helper runs unchanged across Node, edge, and bundler targets and keeps the
+ * declaration build free of ambient node type resolution.
+ */
+function fnv1a128Hex(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  const PRIME = 0x0000000001000000000000000000013bn;
+  const MASK = (1n << 128n) - 1n;
+  let hash = 0x6c62272e07bb014262b821756295c58dn;
+  for (const byte of bytes) {
+    hash ^= BigInt(byte);
+    hash = (hash * PRIME) & MASK;
+  }
+  return hash.toString(16).padStart(32, "0");
 }
 
 /**

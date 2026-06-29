@@ -39,6 +39,11 @@ export class PlugError extends Error {
 // Auth strategies
 // ---------------------------------------------------------------------------
 
+export interface QueryParamAuth {
+  name: string;
+  value: string;
+}
+
 export interface AuthStrategy {
   type: string;
   /** Mutate the outgoing request headers. Receives the plug's bound vars
@@ -47,6 +52,7 @@ export interface AuthStrategy {
   apply(headers: Headers, vars?: Record<string, string>): void | Promise<void>;
   onUnauthorized?: () => void | Promise<void>;
   baseUrl?: string;
+  queryParam?: QueryParamAuth;
 }
 
 export function bearer(
@@ -85,7 +91,7 @@ export function apiKey(
       }
     },
     ...(location === "query" ? { queryParam: { name, value } } : {}),
-  } as AuthStrategy & { queryParam?: { name: string; value: string } };
+  };
 }
 
 export function custom(
@@ -431,10 +437,8 @@ export interface PlugHooks<Vars = Record<string, string>> {
 
 export interface EndpointSchema {
   parse(data: unknown): unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _def?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  shape?: any;
+  _def?: unknown;
+  shape?: Record<string, unknown>;
 }
 
 export interface EndpointDef {
@@ -631,15 +635,10 @@ export class Plug<V extends readonly VarField[] = VarField[]> {
       await this.config.auth.apply(headers, options?.vars);
     }
 
-    const authWithQuery = this.config.auth as AuthStrategy & {
-      queryParam?: { name: string; value: string };
-    };
-    if (authWithQuery?.queryParam) {
+    const queryParam = this.config.auth?.queryParam;
+    if (queryParam) {
       const u = new URL(url);
-      u.searchParams.set(
-        authWithQuery.queryParam.name,
-        authWithQuery.queryParam.value,
-      );
+      u.searchParams.set(queryParam.name, queryParam.value);
       return this._fetchWithAuthRetry<T>(
         method,
         u.toString(),
