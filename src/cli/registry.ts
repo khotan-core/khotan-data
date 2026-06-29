@@ -187,20 +187,12 @@ const COMPONENTS: Record<string, ComponentEntry> = {
         outputBase: "outputDir",
       },
       {
-        templatePath: path.resolve(
-          __dirname,
-          "templates",
-          "ingest.example.ts",
-        ),
+        templatePath: path.resolve(__dirname, "templates", "ingest.example.ts"),
         outputFile: "ingests/ingest.example.ts",
         outputBase: "outputDir",
       },
       {
-        templatePath: path.resolve(
-          __dirname,
-          "templates",
-          "ingest-route.ts",
-        ),
+        templatePath: path.resolve(__dirname, "templates", "ingest-route.ts"),
         outputFile: "api/internal/khotan/ingest/example/route.ts",
         outputBase: "appRoot",
       },

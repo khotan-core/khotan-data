@@ -90,7 +90,9 @@ const mappings: IngestMappingStore = {
   },
 };
 
-async function resolveOrg(event: PackiyoInventoryEvent): Promise<OrgRef | null> {
+async function resolveOrg(
+  event: PackiyoInventoryEvent,
+): Promise<OrgRef | null> {
   // Replace with your tenant lookup, for example:
   // const org = await db.query.organizations.findFirst({
   //   where: eq(organizations.packiyoOrgKey, event.orgKey),
