@@ -8,8 +8,11 @@ import {
   bearer,
   cursorPagination,
   custom,
+  envelopePagination,
   hmacSignature,
+  jsonApiPagination,
   keysetPagination,
+  linkPagination,
   offsetPagination,
   plug,
   tokenExchange,
@@ -356,6 +359,51 @@ describe("retry logic", () => {
     await expect(w.get("/test")).rejects.toThrow(PlugError);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("retries when shouldRetry marks a 200 response as throttled", async () => {
+    const mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: null,
+          extensions: {
+            cost: { throttleStatus: { currentlyAvailable: 10 } },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: { products: [] },
+          extensions: {
+            cost: { throttleStatus: { currentlyAvailable: 100 } },
+          },
+        }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: { attempts: 3, backoff: 1 },
+      shouldRetry: (_response, body) =>
+        (
+          (body as Record<string, unknown>)["extensions"] as {
+            cost?: { throttleStatus?: { currentlyAvailable?: number } };
+          }
+        )?.cost?.throttleStatus?.currentlyAvailable !== undefined &&
+        ((
+          (body as Record<string, unknown>)["extensions"] as {
+            cost?: { throttleStatus?: { currentlyAvailable?: number } };
+          }
+        ).cost?.throttleStatus?.currentlyAvailable ?? 0) < 50,
+    });
+
+    await expect(w.get("/graphql")).resolves.toEqual({
+      data: { products: [] },
+      extensions: {
+        cost: { throttleStatus: { currentlyAvailable: 100 } },
+      },
+    });
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("timeout", () => {
@@ -578,6 +626,163 @@ describe("pagination", () => {
 
     const secondUrl = vi.mocked(fetch).mock.calls[1][0] as string;
     expect(secondUrl).toContain("starting_after=b");
+  });
+
+  it("supports an inline inspector with an absolute next URL", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [{ id: 1 }],
+          links: { next: "https://api.example.com/v2/items?cursor=abc" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 2 }], links: { next: null } }),
+      );
+
+    const w = plug({ baseUrl: BASE, retry: false });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items", {
+      getItems: (response) => response["data"] as unknown[],
+      hasMore: (response) =>
+        Boolean((response["links"] as { next?: string | null }).next),
+      getNext: (response) =>
+        (response["links"] as { next?: string | null }).next,
+    })) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[{ id: 1 }], [{ id: 2 }]]);
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe(
+      "https://api.example.com/v2/items?cursor=abc",
+    );
+  });
+
+  it("waits interPageDelayMs between page requests", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          jsonResponse({
+            data: [{ id: 1 }],
+            links: { next: "/items?page=2" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ data: [{ id: 2 }], links: { next: null } }),
+        );
+
+      const w = plug({
+        baseUrl: BASE,
+        retry: false,
+        pagination: linkPagination({
+          linksPath: "links.next",
+          dataPath: "data",
+          interPageDelayMs: 100,
+        }),
+      });
+
+      const iterator = w.paginate("/items")[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toEqual({
+        done: false,
+        value: [{ id: 1 }],
+      });
+
+      const second = iterator.next();
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(second).resolves.toEqual({
+        done: false,
+        value: [{ id: 2 }],
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("link pagination follows next links", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 1 }], links: { next: "/items?page=2" } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 2 }], links: { next: null } }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      pagination: linkPagination({ linksPath: "links.next", dataPath: "data" }),
+    });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items")) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[{ id: 1 }], [{ id: 2 }]]);
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe(`${BASE}/items?page=2`);
+  });
+
+  it("jsonApi pagination increments the configured page param", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 1 }], meta: { page: { lastPage: 2 } } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [{ id: 2 }], meta: { page: { lastPage: 2 } } }),
+      );
+
+    const w = plug({
+      baseUrl: BASE,
+      retry: false,
+      pagination: jsonApiPagination({
+        pageParam: "page[number]",
+        lastPagePath: "meta.page.lastPage",
+      }),
+    });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items")) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[{ id: 1 }], [{ id: 2 }]]);
+    const secondUrl = vi.mocked(fetch).mock.calls[1][0] as string;
+    expect(secondUrl).toContain("page%5Bnumber%5D=2");
+  });
+
+  it("envelope pagination advances offsets while hasMore is true", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 1 }], hasMore: true }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 2 }], hasMore: false }),
+      );
+
+    const w = plug({ baseUrl: BASE, retry: false });
+
+    const pages: unknown[][] = [];
+    for await (const page of w.paginate("/items", {
+      params: { limit: 1 },
+      pagination: envelopePagination({
+        itemsPath: "items",
+        hasMorePath: "hasMore",
+        offsetParam: "offset",
+      }),
+    })) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[{ id: 1 }], [{ id: 2 }]]);
+    const secondUrl = vi.mocked(fetch).mock.calls[1][0] as string;
+    expect(secondUrl).toContain("limit=1");
+    expect(secondUrl).toContain("offset=1");
   });
 
   it("throws when paginate is called without a pagination strategy", async () => {
