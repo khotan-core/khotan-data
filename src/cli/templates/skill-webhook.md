@@ -41,7 +41,7 @@ function.
 ## Wire (Webhook Subscriptions)
 
 ```bash
-npx khotan add wire --yes
+npx khotan-data add wire --yes
 ```
 
 Scaffolds `{outputDir}/wires/wire.ts` (the builder) and `src/components/khotan/wire.tsx` (UI panel).
@@ -161,7 +161,7 @@ For local dev, use ngrok or similar tunnel and set `KHOTAN_WEBHOOK_URL`.
 ## Catch (Durable Event Processing)
 
 ```bash
-npx khotan add catch --yes
+npx khotan-data add catch --yes
 ```
 
 Process webhook events durably via Vercel Workflow:
@@ -207,7 +207,7 @@ Register on the source plug:
 ## Pass (Event Forwarding)
 
 ```bash
-npx khotan add pass --yes
+npx khotan-data add pass --yes
 ```
 
 Forward webhook events to another service:

@@ -20,7 +20,7 @@ checkpoint cursor, or a dedupe marker.
 ## Scaffold
 
 ```bash
-npx khotan add cache --yes
+npx khotan-data add cache --yes
 ```
 
 Requires the `schema` component. Creates `{outputDir}/caches/cache.ts` (the
@@ -74,13 +74,14 @@ async function syncProducts(ctx: RelayContext) {
   const previous = (await snapshot.get<Record<string, unknown>[]>("latest")) ?? [];
   const current = await fetchCurrentProducts(ctx);
 
-  await snapshot.set("latest", current, { ttl: "6h" });
+  await snapshot.set("latest", current);
   // diff previous vs current for delta handling...
 }
 ```
 
-API: `.get<T>(key)`, `.set(key, value, { ttl })`, `.delete(key)`. Available in
-flow, relay, catch, and pass workflows.
+API: `.get<T>(key)`, `.set(key, value)`, `.delete(key)`. Available in flow,
+relay, catch, and pass workflows. TTL is not a per-`set()` argument — it is
+configured once on the cache definition (`ttl` in `cache({ ... })`).
 
 ## Cursor helpers and delta skips
 

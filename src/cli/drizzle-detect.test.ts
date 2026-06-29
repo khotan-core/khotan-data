@@ -125,7 +125,7 @@ describe("detectSingleFileSchema", () => {
     const result = detectSingleFileSchema(tmpDir);
     expect(result).not.toBeNull();
     expect(result!.currentValue).toBe("./src/db/schema.ts");
-    expect(result!.globValue).toBe("./src/db/*");
+    expect(result!.globValue).toBe("./src/db/*.ts");
   });
 
   it("returns null for glob schema", () => {
@@ -154,7 +154,7 @@ describe("detectSingleFileSchema", () => {
       `export default { schema: "./db/schema.ts" };`,
     );
     const result = detectSingleFileSchema(tmpDir);
-    expect(result!.globValue).toBe("./db/*");
+    expect(result!.globValue).toBe("./db/*.ts");
   });
 
   it("handles path without ./ prefix", () => {
@@ -164,7 +164,7 @@ describe("detectSingleFileSchema", () => {
     );
     const result = detectSingleFileSchema(tmpDir);
     expect(result!.currentValue).toBe("src/db/schema.ts");
-    expect(result!.globValue).toBe("src/db/*");
+    expect(result!.globValue).toBe("src/db/*.ts");
   });
 });
 

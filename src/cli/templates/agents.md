@@ -12,7 +12,7 @@ whole workflow and points to the focused skills below at each step.
 | [khotan-build](skills/khotan-build/SKILL.md) | Integrating a service end to end — owns the order of operations and the consent gates. Start here. |
 | [khotan-setup](skills/khotan-setup/SKILL.md) | Foundation: initializing khotan, schema/migrations, factory, securing the API, middleware/workflow fixes |
 | [khotan-plug](skills/khotan-plug/SKILL.md) | Connecting to a new API, defining endpoint contracts, configuring authentication |
-| [khotan-probe](skills/khotan-probe/SKILL.md) | Verifying endpoint shapes via CLI with `khotan plug` (legacy alias: `probe`) — GET-first, consent before mutations |
+| [khotan-probe](skills/khotan-probe/SKILL.md) | Verifying endpoint shapes via CLI with `khotan-data plug` (legacy alias: `probe`) — GET-first, consent before mutations |
 | [khotan-flow](skills/khotan-flow/SKILL.md) | Building/running inflows, outflows, relays; triggering and scheduling flows |
 | [khotan-webhook](skills/khotan-webhook/SKILL.md) | Receiving webhooks, registering callback URLs, processing/forwarding events |
 | [khotan-cache](skills/khotan-cache/SKILL.md) | Durable caching of upstream snapshots, checkpoints, and dedupe markers |
@@ -22,12 +22,12 @@ whole workflow and points to the focused skills below at each step.
 ## Quick Reference
 
 ```bash
-npx khotan init              # Initialize project
-npx khotan add plug --yes    # Add HTTP client component
-npx khotan add hub --yes     # Add dashboard UI
-npx khotan generate          # Scaffold Drizzle schema
-npx khotan migrate           # Apply database migrations
-npx khotan plug --list       # Debug: list registered plugs
+npx khotan-data init              # Initialize project
+npx khotan-data add plug --yes    # Add HTTP client component
+npx khotan-data add hub --yes     # Add dashboard UI
+npx khotan-data generate          # Scaffold Drizzle schema
+npx khotan-data migrate           # Apply database migrations
+npx khotan-data plug --list       # Debug: list registered plugs
 ```
 
 ## Key Files

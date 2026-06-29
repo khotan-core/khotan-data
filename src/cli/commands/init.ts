@@ -670,8 +670,12 @@ export const initCommand = new Command("init")
         console.log("\nNext steps:");
         console.log("  1. Fill in .env.template values in .env.local");
         console.log("  2. Update the db import in your khotan config file");
-        console.log("  3. Run `npx khotan add plug` to add the HTTP client");
-        console.log("  4. Run `npx khotan migrate` to create database tables");
+        console.log(
+          "  3. Run `npx khotan-data add plug` to add the HTTP client",
+        );
+        console.log(
+          "  4. Run `npx khotan-data migrate` to create database tables",
+        );
       }
 
       if (opts.schema) {

@@ -248,6 +248,7 @@ const COMPONENTS: Record<string, ComponentEntry> = {
     description: "Paginated UI tables for runs and webhook events",
     requiresShadcn: true,
     dependencies: {
+      npmPackages: ["lucide-react"],
       shadcnComponents: ["card", "table", "badge", "button"],
     },
     files: [

@@ -48,9 +48,9 @@ Confirm khotan is initialized and a plug component is installed. If not, run the
 setup path. → See `khotan-setup`.
 
 ```bash
-npx khotan init --yes      # if khotan.config.ts / factory / route are missing
-npx khotan add schema --yes && npx khotan migrate   # if tables not set up
-npx khotan add plug --yes  # if no plug component exists
+npx khotan-data init --yes      # if khotan.config.ts / factory / route are missing
+npx khotan-data add schema --yes && npx khotan-data migrate   # if tables not set up
+npx khotan-data add plug --yes  # if no plug component exists
 ```
 
 ### Phase 1 — Read the docs, triage credentials & env
@@ -81,9 +81,9 @@ fire every relevant `GET` endpoint to learn the real request/response shapes.
 **Mutation gate** applies. → See `khotan-probe`.
 
 ```bash
-npx khotan plug --list
-npx khotan plug <plugName> --info
-npx khotan plug <plugName> --endpoint listX --compare
+npx khotan-data plug --list
+npx khotan-data plug <plugName> --info
+npx khotan-data plug <plugName> --endpoint listX --compare
 ```
 
 ### Phase 4 — Fix the plug and verify
@@ -101,9 +101,9 @@ handlers they want, unless already told. Then build only those, lean
 - If they asked for record matching/dedupe → `khotan-mappings`
 
 ```bash
-npx khotan flows trigger <flowName>        # default variant
-npx khotan flows trigger <flowName> delta  # a specific variant (run mode)
-npx khotan flows runs <flowName>
+npx khotan-data flows trigger <flowName>        # default variant
+npx khotan-data flows trigger <flowName> delta  # a specific variant (run mode)
+npx khotan-data flows runs <flowName>
 ```
 
 ### Phase 6 — Frontend (GATE)
@@ -113,7 +113,7 @@ page, a debug page, logs, or nothing. Never add UI/routes unprompted.
 
 ## Done checklist
 
-- [ ] Plug registered and visible via `npx khotan plug --list`
+- [ ] Plug registered and visible via `npx khotan-data plug --list`
 - [ ] GET endpoint shapes verified with `--compare`
 - [ ] No mutations fired without explicit consent
 - [ ] Requested flows/webhooks built and triggered once successfully

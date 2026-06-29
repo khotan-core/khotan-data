@@ -18,41 +18,41 @@ Scaffold components into your Next.js + Drizzle project:
 
 ```bash
 # Initialize khotan config
-npx khotan init
+npx khotan-data init
 
 # Full setup (drizzle + shadcn + config in one go)
-npx khotan init --full
+npx khotan-data init --full
 
 # Initialize and scaffold khotan Drizzle tables
-npx khotan init --schema --yes
+npx khotan-data init --schema --yes
 
 # Skills only (install agent skills; skip config + core files + package install)
-npx khotan init --skills-only
+npx khotan-data init --skills-only
 
 # Add components (reusable building blocks — never create pages)
-npx khotan add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
-npx khotan add auth      # Better Auth setup + khotan authorize hook
-npx khotan add cache     # Durable key/value caches for workflows and relays
-npx khotan add plug      # Fetch wrapper with auth, retry, pagination
-npx khotan add inflow    # Workflow-backed flow for pulling data in
-npx khotan add outflow   # Workflow-backed flow for pushing data out
-npx khotan add relay     # Workflow-backed flow for moving data between plugs
-npx khotan add cron      # Vercel cron dispatcher for scheduled flows
-npx khotan add hub       # Dashboard UI + API route + config (requires shadcn)
+npx khotan-data add schema    # Drizzle table definitions (plugs, flows, runs, resources, mappings)
+npx khotan-data add auth      # Better Auth setup + khotan authorize hook
+npx khotan-data add cache     # Durable key/value caches for workflows and relays
+npx khotan-data add plug      # Fetch wrapper with auth, retry, pagination
+npx khotan-data add inflow    # Workflow-backed flow for pulling data in
+npx khotan-data add outflow   # Workflow-backed flow for pushing data out
+npx khotan-data add relay     # Workflow-backed flow for moving data between plugs
+npx khotan-data add cron      # Vercel cron dispatcher for scheduled flows
+npx khotan-data add hub       # Dashboard UI + API route + config (requires shadcn)
 
 # Add blocks (sample pages composed from components)
-npx khotan add config-page-1   # /config page that renders the KhotanHub dashboard
+npx khotan-data add config-page-1   # /config page that renders the KhotanHub dashboard
 
 # Options
-npx khotan add schema --force   # Overwrite existing files without prompting
-npx khotan add hub --yes        # Non-interactive mode: auto-accept all prompts
-npx khotan generate --force     # Regenerate schema (prompts before overwriting by default)
+npx khotan-data add schema --force   # Overwrite existing files without prompting
+npx khotan-data add hub --yes        # Non-interactive mode: auto-accept all prompts
+npx khotan-data generate --force     # Regenerate schema (prompts before overwriting by default)
 
 # Ops guardrails
-npx khotan --env-file .env.customer whoami --assert-org org_123
-npx khotan databases bind primary neon/project/db --url-env DATABASE_URL
-npx khotan apps env prepare web --database primary
-npx khotan bootstrap            # Config + route bootstrap without package installs
+npx khotan-data --env-file .env.customer whoami --assert-org org_123
+npx khotan-data databases bind primary neon/project/db --url-env DATABASE_URL
+npx khotan-data apps env prepare web --database primary
+npx khotan-data bootstrap            # Config + route bootstrap without package installs
 ```
 
 `whoami` resolves the current organization from `--org-id`, `KHOTAN_ORG_ID`, or
@@ -99,7 +99,7 @@ const khotanData = khotan({
 export default khotanData;
 ```
 
-`khotan init` also generates the catch-all route with `toNextJsHandler` and a relative import back to that instance:
+`khotan-data init` also generates the catch-all route with `toNextJsHandler` and a relative import back to that instance:
 
 ```typescript
 // Next.js App Router: app/api/khotan/[...all]/route.ts
@@ -180,7 +180,7 @@ controls. It is deny-by-default unless you wire an `authorize` hook. Omitting
 startup in production. `authorize: false` explicitly opens management routes for
 local development only and is rejected in production.
 
-Run `npx khotan add auth` to scaffold a Better Auth setup and wire the hook, or
+Run `npx khotan-data add auth` to scaffold a Better Auth setup and wire the hook, or
 pass your own function. The hook receives the raw `Request` and returns
 `true`/`false`, so it composes directly with session libraries like better-auth:
 
@@ -204,7 +204,7 @@ authorize: async (request) => {
   exempt from `authorize` automatically.
 - `KHOTAN_DEBUG` is force-disabled when `NODE_ENV=production`. The cron route
   fails closed in production when `CRON_SECRET` is unset.
-- `npx khotan init` creates or appends `.env.template` with the khotan
+- `npx khotan-data init` creates or appends `.env.template` with the khotan
   environment variables. Generate `KHOTAN_SECRET` and `CRON_SECRET` with
   `openssl rand -hex 32`.
 - Protect the Hub dashboard page (e.g. `/config`) with your app's middleware —

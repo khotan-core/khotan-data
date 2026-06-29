@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { khotan, drizzleAdapter } from "khotan-data/factory";
-// Run `npx khotan add auth` to scaffold Better Auth and wire this hook:
+// Run `npx khotan-data add auth` to scaffold Better Auth and wire this hook:
 // import { authorizeKhotanRequest } from "@/lib/auth";
 // TODO: Update this import to your Drizzle database instance
 import { db } from "@/db";
@@ -25,7 +25,7 @@ const khotanData = khotan({
   // management API for local development only and is rejected in production.
   //
   // To scaffold a Better Auth setup and wire this file automatically:
-  //   npx khotan add auth
+  //   npx khotan-data add auth
   //
   // Inbound webhooks, the cron dispatcher (CRON_SECRET), and debug routes are
   // exempt automatically.

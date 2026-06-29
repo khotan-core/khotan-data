@@ -596,7 +596,7 @@ export const addCommand = new Command("add")
         if (componentName === "hub") {
           console.log("\nNext steps:");
           console.log(
-            "  1. Render <KhotanHub /> on a page, or `npx khotan add config-page-1` for a ready-made /config route",
+            "  1. Render <KhotanHub /> on a page, or `npx khotan-data add config-page-1` for a ready-made /config route",
           );
         }
 
@@ -686,7 +686,7 @@ export const addCommand = new Command("add")
             `  Add a drizzle.config.ts with a schema dir (e.g. schema: "./src/db/schema/*") and re-run,`,
           );
           console.error(
-            `  or run \`npx khotan init --full\` to scaffold Drizzle.`,
+            `  or run \`npx khotan-data init --full\` to scaffold Drizzle.`,
           );
           process.exit(1);
         }

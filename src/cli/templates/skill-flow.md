@@ -37,9 +37,9 @@ use `khotan-webhook`).
 
 | Type | Direction | Scaffold |
 |---|---|---|
-| `inflow` | service → your app/DB | `npx khotan add inflow --yes` |
-| `outflow` | your app/DB → service | `npx khotan add outflow --yes` |
-| `relay` | service → service | `npx khotan add relay --yes` |
+| `inflow` | service → your app/DB | `npx khotan-data add inflow --yes` |
+| `outflow` | your app/DB → service | `npx khotan-data add outflow --yes` |
+| `relay` | service → service | `npx khotan-data add relay --yes` |
 
 All three require `plug` + `schema` and the `workflow` package, and integrate
 with Vercel Workflow.
@@ -135,12 +135,12 @@ and scheduled runs alike.
 ### From the CLI (dev)
 
 ```bash
-npx khotan flows list
-npx khotan flows trigger <flowName>            # runs the "default" variant
-npx khotan flows trigger <flowName> delta      # runs the "delta" variant
-npx khotan flows trigger <flowName> --variant healthcheck
-npx khotan flows runs <flowName>
-npx khotan flows cancel <runId>
+npx khotan-data flows list
+npx khotan-data flows trigger <flowName>            # runs the "default" variant
+npx khotan-data flows trigger <flowName> delta      # runs the "delta" variant
+npx khotan-data flows trigger <flowName> --variant healthcheck
+npx khotan-data flows runs <flowName>
+npx khotan-data flows cancel <runId>
 ```
 
 The CLI signs a short-lived HMAC token from `KHOTAN_SECRET` (the `KhotanCLI`
@@ -222,7 +222,7 @@ await khotanData.flow("pronto-items-inflow").start({ variant: "delta" });
 ```
 
 ```bash
-npx khotan flows trigger pronto-items-inflow delta
+npx khotan-data flows trigger pronto-items-inflow delta
 ```
 
 If a flow declares variants and none is named `default`, triggering without a

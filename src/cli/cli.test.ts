@@ -863,7 +863,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "drizzle.config.ts"),
         "utf-8",
       );
-      expect(drizzleConfig).toContain("./db/*");
+      expect(drizzleConfig).toContain("./db/*.ts");
       expect(drizzleConfig).not.toContain("./db/schema.ts");
     });
 
@@ -1082,6 +1082,26 @@ describe("CLI", { timeout: 30_000 }, () => {
           tmpDir,
         );
         expect(result.exitCode).toBe(0);
+        const data = JSON.parse(result.output) as {
+          ok: boolean;
+          flows: unknown[];
+        };
+        expect(data.ok).toBe(true);
+        expect(data.flows).toHaveLength(3);
+      } finally {
+        await api.close();
+      }
+    });
+
+    it("accepts --json on flows list (no unknown-option error)", async () => {
+      const api = await startServer();
+      try {
+        const result = await runAsync(
+          ["flows", "list", "--json", "--port", String(api.port)],
+          tmpDir,
+        );
+        expect(result.exitCode).toBe(0);
+        expect(result.output).not.toContain("unknown option");
         const data = JSON.parse(result.output) as {
           ok: boolean;
           flows: unknown[];
@@ -2612,7 +2632,7 @@ describe("CLI", { timeout: 30_000 }, () => {
         path.join(tmpDir, "drizzle.config.ts"),
         "utf-8",
       );
-      expect(drizzleConfig).toContain("./db/*");
+      expect(drizzleConfig).toContain("./db/*.ts");
     });
 
     it("appends khotan re-export to barrel file", () => {
