@@ -110,17 +110,120 @@ await api.paginate("/products", {
 | `basic(user, pass)` | `Authorization: Basic <base64>` |
 | `apiKey(name, value)` | Custom header (default) or query param with `{ in: "query" }` |
 | `custom(fn)` | Full control: `(headers) => { headers.set(...) }` |
-| `tokenExchange(config)` | OAuth-style: exchanges variables for bearer token, caches, auto-refreshes on 401 |
+| `hmacSignature(config)` | Signs with resolved `{ url, query, method, body, vars }` context |
+| `tokenExchange(config)` | OAuth-style: exchanges variables for bearer token, caches, optional `tokenStore`, auto-refreshes on 401 |
+| `authorizationCode(config)` | OAuth authorization-code strategy with optional PKCE and refresh-token support |
+
+`onUnauthorized` is part of an auth strategy, not `hooks`. The plug calls it
+after a 401 with the same request vars/context used by `auth.apply`, then
+re-applies auth and retries the request once.
 
 ### Token Exchange Example
 
 ```typescript
 const auth = tokenExchange({
-  tokenUrl: "/oauth/token",
-  buildBody: (vars) => ({ grant_type: "client_credentials", client_id: vars.clientId, client_secret: vars.clientSecret }),
-  parseToken: (res) => ({ token: res.access_token, expiresIn: res.expires_in }),
+  getVariables: () => ({
+    clientId: process.env.OAUTH_CLIENT_ID!,
+    clientSecret: process.env.OAUTH_CLIENT_SECRET!,
+  }),
+  tokenEndpoint: "/oauth/token",
+  buildTokenRequest: (vars) => ({
+    body: {
+      grant_type: "client_credentials",
+      client_id: vars.clientId,
+      client_secret: vars.clientSecret,
+    },
+  }),
+  parseTokenResponse: (res) => ({
+    accessToken: res.access_token,
+    expiresIn: res.expires_in,
+  }),
 });
 ```
+
+For OAuth servers that require `application/x-www-form-urlencoded`, pass a
+`URLSearchParams` body and set the content type. The plug sends strings and
+`URLSearchParams` verbatim; only plain objects are JSON encoded.
+
+```typescript
+const auth = tokenExchange({
+  getVariables: () => ({
+    clientId: process.env.OAUTH_CLIENT_ID!,
+    clientSecret: process.env.OAUTH_CLIENT_SECRET!,
+  }),
+  tokenEndpoint: "/oauth/token",
+  buildTokenRequest: (vars) => ({
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: vars.clientId,
+      client_secret: vars.clientSecret,
+    }),
+  }),
+  parseTokenResponse: (res) => ({
+    accessToken: res.access_token,
+    expiresIn: res.expires_in,
+  }),
+});
+```
+
+Use `tokenStore` when the token must survive cold starts. In a khotan app,
+back this with `khotanCache` or another durable store.
+
+```typescript
+const auth = tokenExchange({
+  // ...
+  tokenStore: {
+    get: () => khotanCache.get("fresh:oauth-token"),
+    set: (token) => khotanCache.set("fresh:oauth-token", token),
+    clear: () => khotanCache.delete("fresh:oauth-token"),
+  },
+});
+```
+
+### HMAC Signature Example
+
+```typescript
+const auth = hmacSignature({
+  algorithm: "sha256",
+  header: "api-auth-signature",
+  sign: ({ method, url, query, body, vars }) =>
+    hmacSha256(vars.apiSecret, [
+      method,
+      new URL(url).pathname,
+      query,
+      JSON.stringify(body ?? ""),
+    ].join("\n")),
+});
+```
+
+### Authorization Code + PKCE Example
+
+```typescript
+const graphAuth = authorizationCode({
+  authorizationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+  tokenEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  clientId: process.env.MS_GRAPH_CLIENT_ID!,
+  redirectUri: process.env.MS_GRAPH_REDIRECT_URI!,
+  scopes: ["offline_access", "User.Read"],
+  pkce: true,
+  tokenStore: {
+    get: () => khotanCache.get("graph:oauth-token"),
+    set: (token) => khotanCache.set("graph:oauth-token", token),
+    clear: () => khotanCache.delete("graph:oauth-token"),
+  },
+});
+
+const { url, codeVerifier } = await graphAuth.getAuthorizationUrl({
+  state: crypto.randomUUID(),
+});
+// Redirect the user to url, store codeVerifier with the state, then:
+await graphAuth.exchangeCode(callbackCode, { codeVerifier });
+```
+
+If a provider requires `redirect_uri` on refresh-token requests, set
+`includeRedirectUriOnRefresh: true`; it resolves from the same vars used by the
+request that triggered the refresh.
 
 ## Vars (Runtime Variables)
 
@@ -213,9 +316,6 @@ const myPlug = plug({
     },
     afterResponse: async (response, ctx) => {
       // inspect/transform response
-    },
-    onUnauthorized: async (ctx) => {
-      // refresh token, update vars
     },
   },
 });

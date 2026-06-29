@@ -274,6 +274,47 @@ describe("CLI", { timeout: 30_000 }, () => {
       expect(fs.existsSync(path.join(tmpDir, "khotan.config.ts"))).toBe(true);
     });
 
+    it("scaffolds Better Auth and wires khotan authorize", () => {
+      fs.mkdirSync(path.join(tmpDir, "src", "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "better-auth": "^1.0.0",
+        "khotan-data": "^0.0.1",
+      });
+      run("init", tmpDir);
+
+      const result = run("add auth --yes", tmpDir);
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("Created 2 files");
+      expect(result.output).toContain("Wired authorize hook");
+
+      const authPath = path.join(tmpDir, "src", "lib", "auth.ts");
+      const authRoutePath = path.join(
+        tmpDir,
+        "src",
+        "app",
+        "api",
+        "auth",
+        "[...all]",
+        "route.ts",
+      );
+      const khotanPath = path.join(tmpDir, "src", "khotan", "khotan.ts");
+
+      expect(fs.existsSync(authPath)).toBe(true);
+      expect(fs.existsSync(authRoutePath)).toBe(true);
+
+      const authContent = fs.readFileSync(authPath, "utf-8");
+      expect(authContent).toContain("betterAuth");
+      expect(authContent).toContain("genericOAuth");
+      expect(authContent).toContain("oAuthProxy");
+      expect(authContent).toContain("authorizeKhotanRequest");
+
+      const khotanContent = fs.readFileSync(khotanPath, "utf-8");
+      expect(khotanContent).toContain(
+        'import { authorizeKhotanRequest } from "@/lib/auth";',
+      );
+      expect(khotanContent).toContain("authorize: authorizeKhotanRequest");
+    });
+
     it("creates khotan.ts schema at detected Drizzle schema dir", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
       writePkgJson(tmpDir, { "drizzle-orm": "^0.35.0" });
@@ -364,6 +405,95 @@ describe("CLI", { timeout: 30_000 }, () => {
       },
       90_000,
     );
+
+    it("creates ingest helper, example handler, and internal route", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      run("init", tmpDir);
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const helperPath = path.join(tmpDir, "khotan", "ingests", "ingest.ts");
+      const examplePath = path.join(
+        tmpDir,
+        "khotan",
+        "ingests",
+        "ingest.example.ts",
+      );
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+
+      expect(fs.existsSync(helperPath)).toBe(true);
+      expect(fs.existsSync(examplePath)).toBe(true);
+      expect(fs.existsSync(routePath)).toBe(true);
+
+      expect(fs.readFileSync(helperPath, "utf-8")).toContain(
+        'from "khotan-data/factory"',
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "idempotencyStore",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "unresolved_intake",
+      );
+      expect(fs.readFileSync(examplePath, "utf-8")).toContain(
+        "upsertProviderRef",
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        'from "@/khotan/ingests/ingest.example"',
+      );
+      expect(fs.readFileSync(routePath, "utf-8")).toContain(
+        "packiyoInventoryIngest.POST",
+      );
+    });
+
+    it("uses configured outputDir in the generated ingest route import", () => {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      writePkgJson(tmpDir, {
+        "drizzle-orm": "^0.35.0",
+        zod: "^3.22.0",
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "khotan.config.ts"),
+        `export default { outputDir: "lib/custom" };`,
+      );
+
+      const result = run("add ingest --yes", tmpDir, 90_000);
+      expect(result.exitCode).toBe(0);
+
+      const routePath = path.join(
+        tmpDir,
+        "app",
+        "api",
+        "internal",
+        "khotan",
+        "ingest",
+        "example",
+        "route.ts",
+      );
+      const routeContent = fs.readFileSync(routePath, "utf-8");
+
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, "lib", "custom", "ingests", "ingest.example.ts"),
+        ),
+      ).toBe(true);
+      expect(routeContent).toContain(
+        'from "@/lib/custom/ingests/ingest.example"',
+      );
+      expect(routeContent).not.toContain("@/khotan/ingests/ingest.example");
+    });
 
     it("creates khotan.ts schema at outputDir when no drizzle config", () => {
       fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });

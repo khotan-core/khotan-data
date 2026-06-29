@@ -46,6 +46,14 @@ export default defineConfig([
         path.resolve(templatesDir, "plug.ts"),
       );
       copyFileSync(
+        path.resolve("src", "cli", "templates", "auth.ts"),
+        path.resolve(templatesDir, "auth.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "auth-route.ts"),
+        path.resolve(templatesDir, "auth-route.ts"),
+      );
+      copyFileSync(
         path.resolve("src", "cli", "templates", "plug.example.ts"),
         path.resolve(templatesDir, "plug.example.ts"),
       );
@@ -60,6 +68,18 @@ export default defineConfig([
       copyFileSync(
         path.resolve("src", "cli", "templates", "cache.example.ts"),
         path.resolve(templatesDir, "cache.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest.ts"),
+        path.resolve(templatesDir, "ingest.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest.example.ts"),
+        path.resolve(templatesDir, "ingest.example.ts"),
+      );
+      copyFileSync(
+        path.resolve("src", "cli", "templates", "ingest-route.ts"),
+        path.resolve(templatesDir, "ingest-route.ts"),
       );
       copyFileSync(
         path.resolve("src", "cli", "templates", "wire.ts"),
