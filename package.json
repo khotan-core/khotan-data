@@ -70,6 +70,16 @@
         "types": "./dist/plug-client.d.cts",
         "default": "./dist/plug-client.cjs"
       }
+    },
+    "./retry": {
+      "import": {
+        "types": "./dist/retry.d.ts",
+        "default": "./dist/retry.js"
+      },
+      "require": {
+        "types": "./dist/retry.d.cts",
+        "default": "./dist/retry.cjs"
+      }
     }
   },
   "files": [

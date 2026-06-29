@@ -61,6 +61,11 @@ import type {
   FlowHookContext,
   RunSource,
   RunSummary,
+  StuckRunReconcileOptions,
+  StuckRunReconcileResult,
+  StuckRunReconcileItem,
+  KhotanRunStatus,
+  KhotanTerminalRunUpdate,
 } from "./types.js";
 import { bindPlugWithVars, khotanRuntimeRegistry } from "./types.js";
 
@@ -206,7 +211,16 @@ function deriveInstanceId(config: KhotanConfig): string {
 }
 
 export function khotan(config: KhotanConfig): KhotanInstance {
-  const { adapter, plugs, resources = [], caches = [], authorize } = config;
+  const {
+    adapter,
+    plugs,
+    resources = [],
+    caches = [],
+    authorize,
+    onFlowRunComplete,
+    onFlowRunFailed,
+    onWebhookReceived,
+  } = config;
   const instanceId = deriveInstanceId(config);
 
   if (authorize === undefined) {
@@ -1202,10 +1216,11 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       variant,
     };
 
-    // Invoke the active variant's terminal-state hook. `onComplete` fires on
-    // success, `onError` on `failed`/`partial`. A throwing hook is caught and
-    // logged and never changes the recorded run status.
-    async function runVariantHook(
+    // Invoke terminal-state hooks. Variant hooks preserve the existing
+    // per-variant behavior; factory hooks observe every registered flow run.
+    // Throwing hooks are caught and logged and never change the recorded run
+    // status.
+    async function runTerminalHooks(
       status: KhotanTerminalRunStatus,
       counters: ReturnType<typeof getFlowRunCounters>,
       error: string | null,
@@ -1217,7 +1232,6 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           : status === "failed" || status === "partial"
             ? activeVariant?.onError
             : undefined;
-      if (!hook) return;
 
       const summary: RunSummary = {
         id: runId,
@@ -1228,10 +1242,27 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         ...counters,
         error,
       };
-      try {
-        await hook(hookContext, summary);
-      } catch (err) {
-        kd("flow", `variant hook for "${variant}" threw`, err);
+
+      if (hook) {
+        try {
+          await hook(hookContext, summary);
+        } catch (err) {
+          kd("flow", `variant hook for "${variant}" threw`, err);
+        }
+      }
+
+      const factoryHook =
+        status === "completed" ? onFlowRunComplete : onFlowRunFailed;
+      if (factoryHook) {
+        try {
+          await factoryHook(hookContext, summary);
+        } catch (err) {
+          kd(
+            "flow",
+            `factory lifecycle hook for "${hookContext.flow.name}" threw`,
+            err,
+          );
+        }
       }
     }
 
@@ -1241,7 +1272,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
       const status = resolveTerminalRunStatus(result, counters);
       const durationMs = Date.now() - startedAt;
 
-      await adapter.updateRun(runId, {
+      const transitioned = await claimTerminalRun(runId, {
         status,
         completedAt,
         durationMs,
@@ -1249,14 +1280,22 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         error: result?.error ?? null,
         metadata: result?.metadata ?? null,
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
 
-      await runVariantHook(status, counters, result?.error ?? null, durationMs);
+      if (transitioned) {
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: completedAt,
+          lastRunStatus: status,
+        });
 
-      return { completedAt, counters, status };
+        await runTerminalHooks(
+          status,
+          counters,
+          result?.error ?? null,
+          durationMs,
+        );
+      }
+
+      return { completedAt, counters, status, transitioned };
     }
 
     async function completeRunFailed(error: unknown) {
@@ -1270,18 +1309,20 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         ...getFlowRunCounters(undefined),
         failed: status === "failed" ? 1 : 0,
       };
-      await adapter.updateRun(runId, {
+      const transitioned = await claimTerminalRun(runId, {
         status,
         completedAt,
         durationMs,
         failed: counters.failed,
         error: message,
       });
-      await adapter.updateFlowLastRun(flowId, {
-        lastRunAt: completedAt,
-        lastRunStatus: status,
-      });
-      await runVariantHook(status, counters, message, durationMs);
+      if (transitioned) {
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: completedAt,
+          lastRunStatus: status,
+        });
+        await runTerminalHooks(status, counters, message, durationMs);
+      }
       return message;
     }
 
@@ -1688,6 +1729,10 @@ export function khotan(config: KhotanConfig): KhotanInstance {
 
         return payload as Record<string, unknown>;
       },
+      async reconcileStuck(options = {}) {
+        const flowId = await resolveFlowId(flowNameOrId, selectorOptions);
+        return reconcileStuckRuns({ ...options, flowId });
+      },
     };
   }
 
@@ -1728,6 +1773,357 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     return typeof run["workflowRunId"] === "string"
       ? run["workflowRunId"]
       : null;
+  }
+
+  function getRunId(run: Record<string, unknown>): string | null {
+    return typeof run["id"] === "string" ? run["id"] : null;
+  }
+
+  function getRunFlowId(run: Record<string, unknown>): string | null {
+    return typeof run["flowId"] === "string" ? run["flowId"] : null;
+  }
+
+  function coerceRunSource(value: unknown): RunSource {
+    return value === "scheduled" || value === "webhook" ? value : "manual";
+  }
+
+  function coerceRunStatus(value: unknown): KhotanRunStatus | null {
+    return value === "pending" ||
+      value === "running" ||
+      value === "completed" ||
+      value === "partial" ||
+      value === "failed" ||
+      value === "cancelled"
+      ? value
+      : null;
+  }
+
+  const NON_TERMINAL_RUN_STATUSES: ("pending" | "running")[] = [
+    "pending",
+    "running",
+  ];
+
+  function isNonTerminalRunStatus(
+    status: KhotanRunStatus | null,
+  ): status is "pending" | "running" {
+    return status === "pending" || status === "running";
+  }
+
+  async function claimTerminalRun(
+    runId: string,
+    updates: KhotanTerminalRunUpdate,
+  ): Promise<boolean> {
+    if (adapter.claimRunTerminal) {
+      return adapter.claimRunTerminal({
+        runId,
+        fromStatuses: NON_TERMINAL_RUN_STATUSES,
+        updates,
+      });
+    }
+
+    const current = await adapter.getRun(runId);
+    if (!current || !isNonTerminalRunStatus(coerceRunStatus(current["status"]))) {
+      return false;
+    }
+
+    await adapter.updateRun(runId, updates);
+    return true;
+  }
+
+  function isStuckCandidate(
+    run: Record<string, unknown>,
+    olderThan: Date,
+    statuses: ("pending" | "running")[],
+  ): boolean {
+    const status = coerceRunStatus(run["status"]);
+    const startedAt = coerceDate(run["startedAt"]);
+    return (
+      !!status &&
+      statuses.includes(status as "pending" | "running") &&
+      !!startedAt &&
+      startedAt.getTime() <= olderThan.getTime()
+    );
+  }
+
+  async function getStuckRunCandidates(params: {
+    flowId?: string;
+    olderThan: Date;
+    statuses: ("pending" | "running")[];
+    limit: number;
+  }): Promise<Record<string, unknown>[]> {
+    if (adapter.listStuckRuns) {
+      return adapter.listStuckRuns({
+        flowId: params.flowId ?? null,
+        olderThan: params.olderThan,
+        statuses: params.statuses,
+        limit: params.limit,
+      });
+    }
+
+    if (params.flowId) {
+      return (await adapter.listRuns(params.flowId))
+        .filter((run) =>
+          isStuckCandidate(run, params.olderThan, params.statuses),
+        )
+        .slice(0, params.limit);
+    }
+
+    const candidates: Record<string, unknown>[] = [];
+    const pageSize = 100;
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore && candidates.length < params.limit) {
+      const page = await adapter.listRunsPage({ limit: pageSize, offset });
+      for (const run of page.items) {
+        if (isStuckCandidate(run, params.olderThan, params.statuses)) {
+          candidates.push(run);
+          if (candidates.length >= params.limit) break;
+        }
+      }
+      hasMore = page.hasMore;
+      offset += pageSize;
+    }
+    return candidates;
+  }
+
+  async function getFlowHookContextForRun(
+    run: Record<string, unknown>,
+  ): Promise<FlowHookContext | null> {
+    const flowId = getRunFlowId(run);
+    if (!flowId) return null;
+    const flow = await adapter.getFlow(flowId);
+    if (!flow) return null;
+    const flowConfig = getRegisteredFlowConfig(flow);
+    if (!flowConfig) return null;
+    const plugName =
+      typeof flow["plugName"] === "string" ? flow["plugName"] : null;
+    if (!plugName) return null;
+    return {
+      flow: {
+        id: flowId,
+        name: flowConfig.name,
+        plugName,
+        type: flowConfig.type,
+        resource: flowConfig.resource ?? null,
+        to: flowConfig.to ?? null,
+      },
+      variant:
+        typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT,
+    };
+  }
+
+  async function emitFactoryFlowHook(
+    ctx: FlowHookContext | null,
+    summary: RunSummary,
+  ): Promise<void> {
+    if (!ctx) return;
+    const hook =
+      summary.status === "completed" ? onFlowRunComplete : onFlowRunFailed;
+    if (!hook) return;
+    try {
+      await hook(ctx, summary);
+    } catch (error) {
+      kd("flow", `factory lifecycle hook for "${ctx.flow.name}" threw`, error);
+    }
+  }
+
+  function getRunCountersFromRecord(run: Record<string, unknown>) {
+    const numberOrZero = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) ? value : 0;
+    return {
+      extracted: numberOrZero(run["extracted"]),
+      transformed: numberOrZero(run["transformed"]),
+      created: numberOrZero(run["created"]),
+      updated: numberOrZero(run["updated"]),
+      deleted: numberOrZero(run["deleted"]),
+      failed: numberOrZero(run["failed"]),
+      skipped: numberOrZero(run["skipped"]),
+    };
+  }
+
+  async function reconcileStuckRuns(
+    options: StuckRunReconcileOptions = {},
+  ): Promise<StuckRunReconcileResult> {
+    await init();
+
+    const now = options.now ?? new Date();
+    const olderThanMs = Math.max(options.olderThanMs ?? 30 * 60_000, 1);
+    const olderThan = new Date(now.getTime() - olderThanMs);
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 500);
+    const statuses = (
+      options.statuses && options.statuses.length > 0
+        ? options.statuses
+        : ["pending", "running"]
+    ).filter(
+      (status): status is "pending" | "running" =>
+        status === "pending" || status === "running",
+    );
+    const toStatus = options.status ?? "failed";
+    const dryRun = options.dryRun ?? false;
+    const error =
+      options.error ??
+      `Marked ${toStatus} by khotan stuck-run reconciliation after ${String(
+        olderThanMs,
+      )}ms`;
+
+    if (statuses.length === 0) {
+      return {
+        ok: true,
+        dryRun,
+        checked: 0,
+        reconciled: 0,
+        skipped: 0,
+        olderThan: olderThan.toISOString(),
+        items: [],
+      };
+    }
+
+    const candidateOptions: {
+      flowId?: string;
+      olderThan: Date;
+      statuses: ("pending" | "running")[];
+      limit: number;
+    } = {
+      olderThan,
+      statuses,
+      limit,
+    };
+    if (options.flowId) candidateOptions.flowId = options.flowId;
+    const candidates = await getStuckRunCandidates(candidateOptions);
+
+    const items: StuckRunReconcileItem[] = [];
+    let reconciled = 0;
+    let skipped = 0;
+
+    for (const run of candidates) {
+      const runId = getRunId(run);
+      if (!runId) {
+        skipped++;
+        continue;
+      }
+      const previousStatus = coerceRunStatus(run["status"]);
+      if (previousStatus !== "pending" && previousStatus !== "running") {
+        skipped++;
+        continue;
+      }
+
+      const startedAt = coerceDate(run["startedAt"]);
+      const durationMs = startedAt ? now.getTime() - startedAt.getTime() : null;
+      const flowId = getRunFlowId(run);
+      const item: StuckRunReconcileItem = {
+        id: runId,
+        flowId,
+        workflowRunId: getRunWorkflowId(run),
+        variant:
+          typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT,
+        source: coerceRunSource(run["source"]),
+        previousStatus,
+        status: toStatus,
+        startedAt,
+        completedAt: now,
+        durationMs,
+        error,
+        dryRun,
+        reconciled: false,
+      };
+
+      if (dryRun) {
+        items.push(item);
+        continue;
+      }
+
+      const claimed = adapter.claimStuckRun
+        ? await adapter.claimStuckRun({
+            runId,
+            olderThan,
+            fromStatuses: statuses,
+            toStatus,
+            completedAt: now,
+            durationMs,
+            error,
+          })
+        : await (async () => {
+            const current = await adapter.getRun(runId);
+            if (!current || !isStuckCandidate(current, olderThan, statuses)) {
+              return false;
+            }
+            await adapter.updateRun(runId, {
+              status: toStatus,
+              completedAt: now,
+              ...(durationMs !== null ? { durationMs } : {}),
+              failed: toStatus === "failed" ? 1 : 0,
+              error,
+            });
+            return true;
+          })();
+
+      if (!claimed) {
+        skipped++;
+        items.push(item);
+        continue;
+      }
+
+      item.reconciled = true;
+      reconciled++;
+      items.push(item);
+
+      if (flowId) {
+        await adapter.updateFlowLastRun(flowId, {
+          lastRunAt: now,
+          lastRunStatus: toStatus,
+        });
+      }
+
+      const hookContext = await getFlowHookContextForRun(run);
+      await emitFactoryFlowHook(hookContext, {
+        id: runId,
+        status: toStatus,
+        variant: item.variant,
+        source: item.source,
+        durationMs: durationMs ?? 0,
+        ...getRunCountersFromRecord(run),
+        failed:
+          toStatus === "failed" ? 1 : getRunCountersFromRecord(run).failed,
+        error,
+      });
+    }
+
+    return {
+      ok: true,
+      dryRun,
+      checked: candidates.length,
+      reconciled,
+      skipped,
+      olderThan: olderThan.toISOString(),
+      items,
+    };
+  }
+
+  function parseStuckRunReconcileBody(body: unknown): StuckRunReconcileOptions {
+    if (!isPlainObject(body)) return {};
+    const options: StuckRunReconcileOptions = {};
+    if (typeof body["olderThanMs"] === "number") {
+      options.olderThanMs = body["olderThanMs"];
+    }
+    if (typeof body["limit"] === "number") {
+      options.limit = body["limit"];
+    }
+    if (body["status"] === "failed" || body["status"] === "cancelled") {
+      options.status = body["status"];
+    }
+    if (typeof body["error"] === "string") {
+      options.error = body["error"];
+    }
+    if (typeof body["dryRun"] === "boolean") {
+      options.dryRun = body["dryRun"];
+    }
+    if (Array.isArray(body["statuses"])) {
+      options.statuses = body["statuses"].filter(
+        (status): status is "pending" | "running" =>
+          status === "pending" || status === "running",
+      );
+    }
+    return options;
   }
 
   // -------------------------------------------------------------------------
@@ -2418,6 +2814,25 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const eventType =
           typeof event["type"] === "string" ? event["type"] : "unknown";
 
+        if (onWebhookReceived) {
+          try {
+            await onWebhookReceived({
+              plug: {
+                id: plugId,
+                name: plugName,
+              },
+              wireId,
+              eventType,
+              event,
+              headers,
+              receivedAt: new Date(),
+              rawBody,
+            });
+          } catch (err) {
+            kd("webhook", `${plugName}: onWebhookReceived hook threw`, err);
+          }
+        }
+
         const webhookHandlers = getWebhookHandlersForPlug(plugReg);
 
         const processingWork = (async () => {
@@ -2629,30 +3044,70 @@ export function khotan(config: KhotanConfig): KhotanInstance {
           );
         }
 
+        const currentStatus = coerceRunStatus(run["status"]);
+        if (currentStatus && !isNonTerminalRunStatus(currentStatus)) {
+          const currentError =
+            typeof run["error"] === "string" ? run["error"] : null;
+          return Response.json({
+            ok: true,
+            id: runId,
+            workflowRunId,
+            status: currentStatus,
+            ...(currentError !== null ? { error: currentError } : {}),
+          });
+        }
+
         const getRun = await importWorkflowGetRun();
         const workflowRun = getRun(workflowRunId);
         await workflowRun.cancel?.();
 
         const completedAt = new Date();
-        await adapter.updateRun(runId, {
+        const transitioned = await claimTerminalRun(runId, {
           status: "cancelled",
           completedAt,
           error: "Cancelled",
         });
         const flowId = typeof run["flowId"] === "string" ? run["flowId"] : null;
-        if (flowId) {
+        if (transitioned && flowId) {
           await adapter.updateFlowLastRun(flowId, {
             lastRunAt: completedAt,
             lastRunStatus: "cancelled",
           });
         }
+        if (transitioned) {
+          const startedAt = coerceDate(run["startedAt"]);
+          await emitFactoryFlowHook(await getFlowHookContextForRun(run), {
+            id: runId,
+            status: "cancelled",
+            variant:
+              typeof run["variant"] === "string"
+                ? run["variant"]
+                : DEFAULT_VARIANT,
+            source: coerceRunSource(run["source"]),
+            durationMs: startedAt
+              ? Math.max(completedAt.getTime() - startedAt.getTime(), 0)
+              : 0,
+            ...getRunCountersFromRecord(run),
+            error: "Cancelled",
+          });
+        }
+
+        const latestRun = transitioned ? null : await adapter.getRun(runId);
+        const responseRun = latestRun ?? run;
+        const responseStatus =
+          transitioned ? "cancelled" : coerceRunStatus(responseRun["status"]) ?? "cancelled";
+        const responseError = transitioned
+          ? "Cancelled"
+          : typeof responseRun["error"] === "string"
+            ? responseRun["error"]
+            : null;
 
         return Response.json({
           ok: true,
           id: runId,
           workflowRunId,
-          status: "cancelled",
-          error: "Cancelled",
+          status: responseStatus,
+          ...(responseError !== null ? { error: responseError } : {}),
         });
       },
     },
@@ -2676,6 +3131,40 @@ export function khotan(config: KhotanConfig): KhotanInstance {
         const variant =
           typeof run["variant"] === "string" ? run["variant"] : DEFAULT_VARIANT;
         return triggerFlowRun(flowId, { variant }, "manual");
+      },
+    },
+    {
+      method: "POST",
+      pattern: "runs/reconcile-stuck",
+      auth: "authorize",
+      handler: async ({ request }) => {
+        const body: unknown = await request.json().catch(() => ({}));
+        return Response.json(
+          await reconcileStuckRuns(parseStuckRunReconcileBody(body)),
+        );
+      },
+    },
+    {
+      method: "POST",
+      pattern: "flows/:flowId/runs/reconcile-stuck",
+      auth: "authorize",
+      handler: async ({ params, request }) => {
+        const body: unknown = await request.json().catch(() => ({}));
+        const flowId = params["flowId"]!;
+        const flow = await adapter.getFlow(flowId);
+        if (
+          !flow ||
+          typeof flow["plugName"] !== "string" ||
+          !plugNames.has(flow["plugName"])
+        ) {
+          return Response.json({ error: "Flow not found" }, { status: 404 });
+        }
+        return Response.json(
+          await reconcileStuckRuns({
+            ...parseStuckRunReconcileBody(body),
+            flowId,
+          }),
+        );
       },
     },
     {
@@ -3090,6 +3579,7 @@ export function khotan(config: KhotanConfig): KhotanInstance {
     handler,
     init,
     flow,
+    reconcileStuckRuns,
     wire,
     cache: createCacheInstance,
     listMappings,

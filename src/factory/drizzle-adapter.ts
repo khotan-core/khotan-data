@@ -1,4 +1,4 @@
-import { and, eq, desc, sql, count, inArray } from "drizzle-orm";
+import { and, eq, desc, sql, count, inArray, lte } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import {
   khotanPlugs,
@@ -242,6 +242,79 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
         }),
         hasMore,
       };
+    },
+
+    async listStuckRuns({ flowId, olderThan, statuses, limit }) {
+      const filters = [
+        inArray(khotanRuns.status, statuses),
+        lte(khotanRuns.startedAt, olderThan),
+      ];
+      if (flowId) {
+        filters.push(eq(khotanRuns.flowId, flowId));
+      }
+
+      return db
+        .select()
+        .from(khotanRuns)
+        .where(and(...filters))
+        .orderBy(khotanRuns.startedAt)
+        .limit(limit);
+    },
+
+    async claimStuckRun({
+      runId,
+      olderThan,
+      fromStatuses,
+      toStatus,
+      completedAt,
+      durationMs,
+      error,
+    }) {
+      const rows = await db
+        .update(khotanRuns)
+        .set({
+          status: toStatus,
+          completedAt,
+          durationMs: durationMs ?? null,
+          failed: toStatus === "failed" ? 1 : 0,
+          error,
+        })
+        .where(
+          and(
+            eq(khotanRuns.id, runId),
+            inArray(khotanRuns.status, fromStatuses),
+            lte(khotanRuns.startedAt, olderThan),
+          ),
+        )
+        .returning({ id: khotanRuns.id });
+      return rows.length > 0;
+    },
+
+    async claimRunTerminal({ runId, fromStatuses, updates }) {
+      const rows = await db
+        .update(khotanRuns)
+        .set({
+          status: updates.status,
+          completedAt: updates.completedAt,
+          durationMs: updates.durationMs,
+          extracted: updates.extracted,
+          transformed: updates.transformed,
+          created: updates.created,
+          updated: updates.updated,
+          deleted: updates.deleted,
+          failed: updates.failed,
+          skipped: updates.skipped,
+          error: updates.error,
+          metadata: updates.metadata,
+        })
+        .where(
+          and(
+            eq(khotanRuns.id, runId),
+            inArray(khotanRuns.status, fromStatuses),
+          ),
+        )
+        .returning({ id: khotanRuns.id });
+      return rows.length > 0;
     },
 
     async upsertResource(resource) {

@@ -352,6 +352,37 @@ describe("trigger variant resolution", () => {
 // ---------------------------------------------------------------------------
 
 describe("variant lifecycle hooks", () => {
+  it("fires factory-level onFlowRunComplete without requiring a variant hook", async () => {
+    const { adapter } = createMockAdapter();
+    const onFlowRunComplete = vi.fn();
+    const instance = khotan({
+      adapter,
+      authorize: false,
+      onFlowRunComplete,
+      plugs: [
+        makePlug([
+          {
+            name: "items-inflow",
+            type: "inflow",
+            run: vi.fn(async () => ({ extracted: 2 })),
+          },
+        ]),
+      ],
+    });
+
+    await instance.flow("items-inflow").start();
+
+    expect(onFlowRunComplete).toHaveBeenCalledTimes(1);
+    const [ctx, summary] = onFlowRunComplete.mock.calls[0]!;
+    expect(ctx.flow.name).toBe("items-inflow");
+    expect(summary).toMatchObject({
+      status: "completed",
+      extracted: 2,
+      source: "manual",
+    });
+    instance.dispose();
+  });
+
   it("fires onComplete on success with a run summary", async () => {
     const { adapter } = createMockAdapter();
     const onComplete = vi.fn();
@@ -390,9 +421,11 @@ describe("variant lifecycle hooks", () => {
     const { adapter } = createMockAdapter();
     const onComplete = vi.fn();
     const onError = vi.fn();
+    const onFlowRunFailed = vi.fn();
     const instance = khotan({
       adapter,
       authorize: false,
+      onFlowRunFailed,
       plugs: [
         makePlug([
           {
@@ -414,6 +447,11 @@ describe("variant lifecycle hooks", () => {
     expect(onError).toHaveBeenCalledTimes(1);
     const [, summary] = onError.mock.calls[0]!;
     expect(summary).toMatchObject({ status: "failed", error: "boom" });
+    expect(onFlowRunFailed).toHaveBeenCalledTimes(1);
+    expect(onFlowRunFailed.mock.calls[0]![1]).toMatchObject({
+      status: "failed",
+      error: "boom",
+    });
     instance.dispose();
   });
 
@@ -485,6 +523,109 @@ describe("variant lifecycle hooks", () => {
     const result = await instance.flow("items-inflow").start();
     expect(result["status"]).toBe("completed");
     expect([...runStore.values()][0]?.status).toBe("completed");
+    instance.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stuck-run reconciliation
+// ---------------------------------------------------------------------------
+
+describe("stuck-run reconciliation", () => {
+  it("marks stale running flow runs failed and emits the factory failure hook", async () => {
+    const { adapter, runStore } = createMockAdapter();
+    const onFlowRunFailed = vi.fn();
+    const instance = khotan({
+      adapter,
+      authorize: false,
+      onFlowRunFailed,
+      plugs: [
+        makePlug([
+          {
+            name: "items-inflow",
+            type: "inflow",
+            run: vi.fn(async () => ({})),
+          },
+        ]),
+      ],
+    });
+
+    await instance.init();
+    const { id } = await adapter.insertRun({
+      flowId: "flow-1",
+      variant: "default",
+      source: "manual",
+      status: "running",
+    });
+    runStore.get(id)!.startedAt = new Date(Date.now() - 60 * 60_000);
+
+    const result = await instance.flow("items-inflow").reconcileStuck({
+      olderThanMs: 10 * 60_000,
+      error: "stale worker",
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      reconciled: 1,
+      skipped: 0,
+    });
+    expect(runStore.get(id)).toMatchObject({
+      status: "failed",
+      error: "stale worker",
+      failed: 1,
+    });
+    expect(onFlowRunFailed).toHaveBeenCalledTimes(1);
+    expect(onFlowRunFailed.mock.calls[0]![1]).toMatchObject({
+      id,
+      status: "failed",
+      error: "stale worker",
+    });
+    instance.dispose();
+  });
+
+  it("supports dry-run reconciliation through the flow route", async () => {
+    const { adapter, runStore } = createMockAdapter();
+    const instance = khotan({
+      adapter,
+      authorize: false,
+      plugs: [
+        makePlug([
+          {
+            name: "items-inflow",
+            type: "inflow",
+            run: vi.fn(async () => ({})),
+          },
+        ]),
+      ],
+    });
+
+    await instance.init();
+    const { id } = await adapter.insertRun({
+      flowId: "flow-1",
+      variant: "default",
+      source: "manual",
+      status: "pending",
+    });
+    runStore.get(id)!.startedAt = new Date(Date.now() - 60 * 60_000);
+
+    const res = await instance.handler(
+      new Request(
+        "http://localhost/api/khotan/flows/flow-1/runs/reconcile-stuck",
+        {
+          method: "POST",
+          body: JSON.stringify({ olderThanMs: 10 * 60_000, dryRun: true }),
+        },
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      dryRun: true,
+      checked: 1,
+      reconciled: 0,
+      items: [{ id, dryRun: true, reconciled: false }],
+    });
+    expect(runStore.get(id)?.status).toBe("pending");
     instance.dispose();
   });
 });

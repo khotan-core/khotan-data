@@ -88,6 +88,47 @@ await khotanData.flow("products-inflow", { plugName: "shopify" }).start({
 });
 ```
 
+### Lifecycle Hooks And Stuck Runs
+
+Use factory-level hooks when operational logging or notifications should cover
+every flow and accepted webhook without adding manual event-log calls to each
+step:
+
+```typescript
+const khotanData = khotan({
+  adapter: drizzleAdapter(db),
+  authorize,
+  onFlowRunComplete: async (ctx, run) => {
+    await eventLog.info("flow.completed", { flow: ctx.flow.name, run });
+  },
+  onFlowRunFailed: async (ctx, run) => {
+    await eventLog.error("flow.failed", { flow: ctx.flow.name, run });
+  },
+  onWebhookReceived: async (event) => {
+    await eventLog.info("webhook.received", {
+      plug: event.plug.name,
+      eventType: event.eventType,
+    });
+  },
+  plugs,
+});
+```
+
+If a worker is interrupted and leaves a run in `pending` or `running`, reconcile
+stale rows programmatically or through the management API. The Drizzle adapter
+uses a guarded update so concurrent reconcilers do not double-claim the same
+run.
+
+```typescript
+await khotanData.flow("products-inflow").reconcileStuck({
+  olderThanMs: 30 * 60_000,
+});
+
+// Also available:
+// POST /api/khotan/runs/reconcile-stuck
+// POST /api/khotan/flows/{flowId}/runs/reconcile-stuck
+```
+
 ## Security
 
 The management API (`/api/khotan/*`) exposes plug credentials and operational
@@ -202,6 +243,26 @@ const result = await Pipeline.create("user-analytics")
     ),
   )
   .run();
+```
+
+## Retry And Dedup
+
+For non-Next.js workers or plug internals, `khotan-data/retry` exports
+runtime-agnostic retry and SHA-256 dedupe helpers:
+
+```typescript
+import { createDedupKey, retry } from "khotan-data/retry";
+
+const order = await retry(() => fetchOrder(orderId), {
+  attempts: 5,
+  baseDelayMs: 250,
+  maxDelayMs: 5_000,
+});
+
+const dedupeKey = await createDedupKey(
+  { provider: "stripe", eventId: "evt_123" },
+  { prefix: "webhook" },
+);
 ```
 
 ## Extractors

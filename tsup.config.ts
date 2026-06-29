@@ -9,6 +9,7 @@ const libraryEntries = {
   drizzle: "src/drizzle.ts",
   factory: "src/factory.ts",
   "plug-client": "src/plug-client.ts",
+  retry: "src/retry.ts",
 };
 
 export default defineConfig([
