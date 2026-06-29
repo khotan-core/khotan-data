@@ -15,6 +15,10 @@ import {
 import { getComponent, isMultiFile } from "../registry.js";
 import { installSkills, type SkillDefinition } from "../agent-detect.js";
 import { resolveOutputDir } from "../cli-api.js";
+import {
+  defaultDrizzleSchemaDir,
+  scaffoldDrizzleConfig,
+} from "../drizzle-detect.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +47,94 @@ interface StepResult {
 const DRIZZLE_PACKAGES = ["drizzle-orm", "postgres"];
 const DRIZZLE_DEV_PACKAGES = ["drizzle-kit"];
 const SHADCN_COMPONENTS = ["card", "badge", "table", "switch"];
+
+const ENV_TEMPLATE_ENTRIES = [
+  {
+    key: "DATABASE_URL",
+    value: "postgres://user:password@localhost:5432/app",
+    comment: "Postgres connection string used by Drizzle and khotan.",
+  },
+  {
+    key: "KHOTAN_SECRET",
+    value: "",
+    comment:
+      "AES-256-GCM key for encrypted plug vars. Generate with: openssl rand -hex 32",
+  },
+  {
+    key: "KHOTAN_DEBUG",
+    value: "1",
+    comment:
+      "Enables khotan debug routes and CLI plug debugging in development only.",
+  },
+  {
+    key: "KHOTAN_WEBHOOK_URL",
+    value: "https://example.ngrok.app",
+    comment: "Public base URL for webhook callbacks during local development.",
+  },
+  {
+    key: "CRON_SECRET",
+    value: "",
+    comment:
+      "Bearer token for /api/khotan/cron in production. Generate with: openssl rand -hex 32",
+  },
+];
+
+export interface EnvTemplateResult {
+  status: "created" | "updated" | "skipped";
+  path: string;
+  keys: string[];
+}
+
+function hasEnvKey(content: string, key: string): boolean {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\s*(?:export\\s+)?${escaped}\\s*=`, "m").test(content);
+}
+
+function renderEnvEntry(entry: (typeof ENV_TEMPLATE_ENTRIES)[number]): string {
+  return `# ${entry.comment}\n${entry.key}=${entry.value}\n`;
+}
+
+export function ensureEnvTemplate(cwd: string): EnvTemplateResult {
+  const envPath = path.join(cwd, ".env.template");
+
+  if (!fs.existsSync(envPath)) {
+    const content =
+      `# Khotan environment template\n` +
+      `# Copy values into .env.local or your deployment environment.\n\n` +
+      ENV_TEMPLATE_ENTRIES.map(renderEnvEntry).join("\n");
+    fs.writeFileSync(
+      envPath,
+      content.endsWith("\n") ? content : `${content}\n`,
+    );
+    return {
+      status: "created",
+      path: envPath,
+      keys: ENV_TEMPLATE_ENTRIES.map((entry) => entry.key),
+    };
+  }
+
+  const content = fs.readFileSync(envPath, "utf-8");
+  const missing = ENV_TEMPLATE_ENTRIES.filter(
+    (entry) => !hasEnvKey(content, entry.key),
+  );
+
+  if (missing.length === 0) {
+    return { status: "skipped", path: envPath, keys: [] };
+  }
+
+  const separator = content.endsWith("\n") ? "\n" : "\n\n";
+  fs.appendFileSync(
+    envPath,
+    `${separator}# Added by khotan init\n${missing.map(renderEnvEntry).join("\n")}`,
+    "utf-8",
+  );
+
+  return {
+    status: "updated",
+    path: envPath,
+    keys: missing.map((entry) => entry.key),
+  };
+}
 
 /**
  * Scaffold the core khotan files (khotan.ts instance + route.ts).
@@ -110,24 +202,12 @@ export function scaffoldCoreFiles(cwd: string, outputDir: string): string[] {
  */
 export function scaffoldDrizzleSetup(cwd: string): StepResult {
   const srcLayout = hasSrcLayout(cwd);
-  const schemaDirRel = srcLayout ? "src/db/schema" : "db/schema";
+  const schemaDirRel = defaultDrizzleSchemaDir(cwd);
   const dbDirRel = srcLayout ? "src/db" : "db";
   const created: string[] = [];
 
-  const drizzleConfigPath = path.join(cwd, "drizzle.config.ts");
-  if (!fs.existsSync(drizzleConfigPath)) {
-    const content =
-      `import { defineConfig } from "drizzle-kit";\n` +
-      `\n` +
-      `export default defineConfig({\n` +
-      `  dialect: "postgresql",\n` +
-      `  schema: "./${schemaDirRel}/*",\n` +
-      `  out: "./drizzle",\n` +
-      `  dbCredentials: {\n` +
-      `    url: process.env.DATABASE_URL!,\n` +
-      `  },\n` +
-      `});\n`;
-    fs.writeFileSync(drizzleConfigPath, content, "utf-8");
+  const drizzleConfig = scaffoldDrizzleConfig(cwd, schemaDirRel);
+  if (drizzleConfig.status === "created") {
     created.push("drizzle.config.ts");
   }
 
@@ -332,6 +412,19 @@ async function runFullSetup(
   // Step 4b: Scaffold Drizzle config + db instance so `@/db` resolves
   results.push(scaffoldDrizzleSetup(cwd));
 
+  const envTemplate = ensureEnvTemplate(cwd);
+  const envRelPath = path.relative(cwd, envTemplate.path);
+  if (envTemplate.status === "created") {
+    console.log(`✓ Created ${envRelPath}`);
+    results.push({ name: `Create ${envRelPath}`, status: "success" });
+  } else if (envTemplate.status === "updated") {
+    console.log(`✓ Updated ${envRelPath}: ${envTemplate.keys.join(", ")}`);
+    results.push({ name: `Update ${envRelPath}`, status: "success" });
+  } else {
+    console.log(`✓ ${envRelPath} already has khotan variables, skipping`);
+    results.push({ name: `Update ${envRelPath}`, status: "skipped" });
+  }
+
   // Step 5: Install khotan-data package
   results.push(ensureKhotanDataInstalled(cwd));
 
@@ -385,6 +478,13 @@ export async function runInit(cwd: string): Promise<boolean> {
   }
 
   scaffoldCoreFiles(cwd, outputDir);
+  const envTemplate = ensureEnvTemplate(cwd);
+  const envRelPath = path.relative(cwd, envTemplate.path);
+  if (envTemplate.status === "created") {
+    console.log(`✓ Created ${envRelPath}`);
+  } else if (envTemplate.status === "updated") {
+    console.log(`✓ Updated ${envRelPath}: ${envTemplate.keys.join(", ")}`);
+  }
   ensureKhotanDataInstalled(cwd);
   warnAboutWorkflowProxy(cwd);
 
@@ -442,13 +542,23 @@ export const initCommand = new Command("init")
     "--skills-only",
     "Only install agent skills; skip config, core files, and package install",
   )
+  .option("--schema", "Also scaffold the Drizzle khotan schema")
   .option("-y, --yes", "Auto-accept all prompts (non-interactive mode)")
   .action(
-    async (opts: { full?: boolean; skillsOnly?: boolean; yes?: boolean }) => {
+    async (opts: {
+      full?: boolean;
+      skillsOnly?: boolean;
+      schema?: boolean;
+      yes?: boolean;
+    }) => {
       const cwd = process.cwd();
 
       if (opts.skillsOnly && opts.full) {
         console.error("✗ --skills-only cannot be combined with --full");
+        process.exit(1);
+      }
+      if (opts.skillsOnly && opts.schema) {
+        console.error("✗ --skills-only cannot be combined with --schema");
         process.exit(1);
       }
 
@@ -493,6 +603,15 @@ export const initCommand = new Command("init")
           console.log("\nAll done! Your project is ready for khotan.");
         }
 
+        if (opts.schema) {
+          console.log("\nAdding khotan Drizzle schema...\n");
+          const { addCommand } = await import("./add.js");
+          await addCommand.parseAsync(
+            ["schema", ...(opts.yes ? ["--yes"] : [])],
+            { from: "user" },
+          );
+        }
+
         return;
       }
 
@@ -507,6 +626,16 @@ export const initCommand = new Command("init")
       }
 
       const coreFiles = scaffoldCoreFiles(cwd, outputDir);
+
+      const envTemplate = ensureEnvTemplate(cwd);
+      const envRelPath = path.relative(cwd, envTemplate.path);
+      if (envTemplate.status === "created") {
+        console.log(`✓ Created ${envRelPath}`);
+      } else if (envTemplate.status === "updated") {
+        console.log(`✓ Updated ${envRelPath}: ${envTemplate.keys.join(", ")}`);
+      } else {
+        console.log(`✓ ${envRelPath} already has khotan variables, skipping`);
+      }
 
       ensureKhotanDataInstalled(cwd);
 
@@ -539,9 +668,19 @@ export const initCommand = new Command("init")
 
       if (allFiles.length > 0 || coreFiles.length > 0) {
         console.log("\nNext steps:");
-        console.log("  1. Update the db import in your khotan config file");
-        console.log("  2. Run `npx khotan add plug` to add the HTTP client");
-        console.log("  3. Run `npx khotan migrate` to create database tables");
+        console.log("  1. Fill in .env.template values in .env.local");
+        console.log("  2. Update the db import in your khotan config file");
+        console.log("  3. Run `npx khotan add plug` to add the HTTP client");
+        console.log("  4. Run `npx khotan migrate` to create database tables");
+      }
+
+      if (opts.schema) {
+        console.log("\nAdding khotan Drizzle schema...\n");
+        const { addCommand } = await import("./add.js");
+        await addCommand.parseAsync(
+          ["schema", ...(opts.yes ? ["--yes"] : [])],
+          { from: "user" },
+        );
       }
     },
   );
