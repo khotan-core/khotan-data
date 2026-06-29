@@ -746,6 +746,7 @@ export function drizzleAdapter(db: PgDatabase<any, any, any>): KhotanAdapter {
           variant: run.variant,
           source: run.source,
           status: run.status as KhotanRunStatus,
+          metadata: run.metadata ?? null,
         })
         .returning({ id: khotanRuns.id });
       return { id: rows[0]!.id };
