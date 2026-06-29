@@ -3,10 +3,12 @@ import {
   Plug,
   PlugError,
   apiKey,
+  authorizationCode,
   basic,
   bearer,
   cursorPagination,
   custom,
+  hmacSignature,
   keysetPagination,
   offsetPagination,
   plug,
@@ -122,6 +124,47 @@ describe("auth strategies", () => {
     expect(fn).toHaveBeenCalled();
     const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
     expect(headers.get("X-Signature")).toBe("sig_abc");
+  });
+
+  it("hmacSignature — signs with resolved URL, query, method, body, and vars", async () => {
+    const sign = vi.fn((ctx) =>
+      [
+        ctx.method,
+        ctx.url,
+        ctx.query,
+        JSON.stringify(ctx.body),
+        ctx.vars["secret"],
+      ].join("|"),
+    );
+    const w = plug({
+      baseUrl: BASE,
+      auth: hmacSignature({
+        algorithm: "sha256",
+        header: "api-auth-signature",
+        sign,
+      }),
+      retry: false,
+    });
+
+    await w.post("/orders", {
+      params: { page: 1, status: "open" },
+      body: { sku: "abc" },
+      vars: { secret: "shh" },
+    });
+
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        url: `${BASE}/orders?page=1&status=open`,
+        query: "page=1&status=open",
+        body: { sku: "abc" },
+        vars: { secret: "shh" },
+      }),
+    );
+    const headers = vi.mocked(fetch).mock.calls[0][1]!.headers as Headers;
+    expect(headers.get("api-auth-signature")).toBe(
+      'POST|https://api.example.com/orders?page=1&status=open|page=1&status=open|{"sku":"abc"}|shh',
+    );
   });
 });
 
@@ -616,5 +659,228 @@ describe("tokenExchange body encoding", () => {
     expect((tokenInit.headers as Headers).get("Content-Type")).toBe(
       "application/json",
     );
+  });
+
+  it("loads a persisted token from tokenStore across auth instances", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ access_token: "persisted_tok", expires_in: 3600 }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    let stored: {
+      accessToken: string;
+      expiresAt?: number;
+      refreshToken?: string;
+      tokenType?: string;
+    } | null = null;
+    const tokenStore = {
+      get: vi.fn(() => stored),
+      set: vi.fn((token: NonNullable<typeof stored>) => {
+        stored = token;
+      }),
+      clear: vi.fn(() => {
+        stored = null;
+      }),
+    };
+    const buildAuth = () =>
+      tokenExchange({
+        getVariables: () => ({ clientId: "id" }),
+        tokenEndpoint: "/oauth/token",
+        tokenStore,
+        buildTokenRequest: () => ({
+          body: { grant_type: "client_credentials" },
+        }),
+        parseTokenResponse: (data) => ({
+          accessToken: (data as { access_token: string }).access_token,
+          expiresIn: (data as { expires_in: number }).expires_in,
+        }),
+      });
+
+    await plug({ baseUrl: BASE, auth: buildAuth(), retry: false }).get("/one");
+    await plug({ baseUrl: BASE, auth: buildAuth(), retry: false }).get("/two");
+
+    expect(tokenStore.set).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[0][0]).toBe(`${BASE}/oauth/token`);
+    expect(fetchSpy.mock.calls[2][0]).toBe(`${BASE}/two`);
+    const secondHeaders = fetchSpy.mock.calls[2][1]!.headers as Headers;
+    expect(secondHeaders.get("Authorization")).toBe("Bearer persisted_tok");
+  });
+});
+
+describe("authorizationCode auth", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("builds a PKCE authorization URL and exchanges the code for a bearer token", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "oauth_access",
+          refresh_token: "oauth_refresh",
+          expires_in: 3600,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    let stored: {
+      accessToken: string;
+      expiresAt?: number;
+      refreshToken?: string;
+      tokenType?: string;
+    } | null = null;
+    const auth = authorizationCode({
+      authorizationEndpoint: "/oauth/authorize",
+      tokenEndpoint: "/oauth/token",
+      clientId: "client_123",
+      redirectUri: "https://app.example.com/callback",
+      scopes: ["offline_access", "mail.read"],
+      pkce: { challengeMethod: "plain" },
+      tokenStore: {
+        get: () => stored,
+        set: (token) => {
+          stored = token;
+        },
+      },
+    });
+    const w = plug({ baseUrl: BASE, auth, retry: false });
+
+    const authorization = await auth.getAuthorizationUrl({
+      state: "state_123",
+      codeVerifier: "verifier_123",
+    });
+    const authorizationUrl = new URL(authorization.url);
+    expect(authorizationUrl.pathname).toBe("/oauth/authorize");
+    expect(authorizationUrl.searchParams.get("response_type")).toBe("code");
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("client_123");
+    expect(authorizationUrl.searchParams.get("scope")).toBe(
+      "offline_access mail.read",
+    );
+    expect(authorizationUrl.searchParams.get("code_challenge")).toBe(
+      "verifier_123",
+    );
+    expect(authorization.codeVerifier).toBe("verifier_123");
+
+    await auth.exchangeCode("code_abc", { codeVerifier: "verifier_123" });
+    const tokenCall = fetchSpy.mock.calls[0];
+    expect(tokenCall[0]).toBe(`${BASE}/oauth/token`);
+    const tokenBody = tokenCall[1]!.body as URLSearchParams;
+    expect(tokenBody.get("grant_type")).toBe("authorization_code");
+    expect(tokenBody.get("code")).toBe("code_abc");
+    expect(tokenBody.get("code_verifier")).toBe("verifier_123");
+
+    await w.get("/me");
+    const apiHeaders = fetchSpy.mock.calls[1][1]!.headers as Headers;
+    expect(apiHeaders.get("Authorization")).toBe("Bearer oauth_access");
+    expect(stored?.refreshToken).toBe("oauth_refresh");
+  });
+
+  it("refreshes an expired stored authorization-code token before a request", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ access_token: "fresh_access", expires_in: 3600 }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    let stored: {
+      accessToken: string;
+      expiresAt?: number;
+      refreshToken?: string;
+      tokenType?: string;
+    } | null = {
+      accessToken: "expired_access",
+      expiresAt: Date.now() - 1000,
+      refreshToken: "refresh_123",
+    };
+    const auth = authorizationCode({
+      authorizationEndpoint: "/oauth/authorize",
+      tokenEndpoint: "/oauth/token",
+      clientId: "client_123",
+      clientSecret: "secret_123",
+      redirectUri: "https://app.example.com/callback",
+      tokenStore: {
+        get: () => stored,
+        set: (token) => {
+          stored = token;
+        },
+      },
+    });
+
+    await plug({ baseUrl: BASE, auth, retry: false }).get("/me");
+
+    const refreshBody = fetchSpy.mock.calls[0][1]!.body as URLSearchParams;
+    expect(refreshBody.get("grant_type")).toBe("refresh_token");
+    expect(refreshBody.get("refresh_token")).toBe("refresh_123");
+    expect(refreshBody.get("client_secret")).toBe("secret_123");
+    const apiHeaders = fetchSpy.mock.calls[1][1]!.headers as Headers;
+    expect(apiHeaders.get("Authorization")).toBe("Bearer fresh_access");
+    expect(stored?.refreshToken).toBe("refresh_123");
+  });
+
+  it("uses request vars for authorization-code credentials during a 401 refresh retry", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ error: "expired" }, { status: 401 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ access_token: "tenant_fresh", expires_in: 3600 }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    let stored: {
+      accessToken: string;
+      expiresAt?: number;
+      refreshToken?: string;
+      tokenType?: string;
+    } | null = {
+      accessToken: "tenant_stale",
+      expiresAt: Date.now() + 3600_000,
+      refreshToken: "refresh_tenant",
+    };
+    const auth = authorizationCode({
+      getVariables: () => ({
+        clientId: "global_client",
+        clientSecret: "global_secret",
+        redirectUri: "https://global.example.com/callback",
+      }),
+      authorizationEndpoint: "/oauth/authorize",
+      tokenEndpoint: "/oauth/token",
+      clientId: (vars) => vars["clientId"]!,
+      clientSecret: (vars) => vars["clientSecret"]!,
+      redirectUri: (vars) => vars["redirectUri"]!,
+      includeRedirectUriOnRefresh: true,
+      tokenStore: {
+        get: () => stored,
+        set: (token) => {
+          stored = token;
+        },
+      },
+    });
+
+    await plug({ baseUrl: BASE, auth, retry: false }).get("/me", {
+      vars: {
+        clientId: "tenant_client",
+        clientSecret: "tenant_secret",
+        redirectUri: "https://tenant.example.com/callback",
+      },
+    });
+
+    const firstHeaders = fetchSpy.mock.calls[0][1]!.headers as Headers;
+    expect(firstHeaders.get("Authorization")).toBe("Bearer tenant_stale");
+    const refreshBody = fetchSpy.mock.calls[1][1]!.body as URLSearchParams;
+    expect(refreshBody.get("grant_type")).toBe("refresh_token");
+    expect(refreshBody.get("refresh_token")).toBe("refresh_tenant");
+    expect(refreshBody.get("client_id")).toBe("tenant_client");
+    expect(refreshBody.get("client_secret")).toBe("tenant_secret");
+    expect(refreshBody.get("redirect_uri")).toBe(
+      "https://tenant.example.com/callback",
+    );
+    expect(refreshBody.get("client_id")).not.toBe("global_client");
+    expect(refreshBody.get("client_secret")).not.toBe("global_secret");
+    expect(refreshBody.get("redirect_uri")).not.toBe(
+      "https://global.example.com/callback",
+    );
+    const retriedHeaders = fetchSpy.mock.calls[2][1]!.headers as Headers;
+    expect(retriedHeaders.get("Authorization")).toBe("Bearer tenant_fresh");
+    expect(stored?.refreshToken).toBe("refresh_tenant");
   });
 });
